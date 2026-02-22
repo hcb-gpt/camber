@@ -418,11 +418,11 @@ Deno.serve(async (req: Request) => {
     .limit(1)
     .maybeSingle();
 
-  let transcript = transcriptData?.transcript || "";
+  let transcript = (transcriptData?.transcript || "").trim();
   let transcriptSource: string | null = transcript ? "transcripts_comparison" : null;
 
+  // Fallback 2: canonical raw call transcript source
   if (!transcript) {
-    // Fallback 2: canonical raw call transcript source
     const { data: callsRawData, error: callsRawErr } = await db
       .from("calls_raw")
       .select("transcript")
@@ -432,12 +432,9 @@ Deno.serve(async (req: Request) => {
       .maybeSingle();
 
     if (callsRawErr) {
-      console.error("[admin-reseed] Failed to fetch calls_raw transcript:", callsRawErr.message);
-      return jsonResponse({ ok: false, error: "db_read_failed", detail: `calls_raw: ${callsRawErr.message}` }, 500);
-    }
-
-    if (callsRawData?.transcript) {
-      transcript = callsRawData.transcript;
+      console.warn("[admin-reseed] Failed to fetch calls_raw transcript:", callsRawErr.message);
+    } else if (callsRawData?.transcript) {
+      transcript = callsRawData.transcript.trim();
       transcriptSource = "calls_raw";
       console.log(
         `[admin-reseed] Using calls_raw transcript fallback for interaction=${interaction_id}, length=${transcript.length}`,
