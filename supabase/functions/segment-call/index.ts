@@ -1,5 +1,5 @@
 /**
- * segment-call Edge Function v2.5.3
+ * segment-call Edge Function v2.6.2
  * Multi-span producer: calls segment-llm, writes N conversation_spans, then chains each span to
  * context-assembly → ai-router.
  *
@@ -17,6 +17,16 @@
  * - Deepgram canonical overrides request_body transcript; emits warning when overriding.
  * - Adds transcript_source to response JSON and segment_metadata.
  *
+ * v2.6.1:
+ * - Stopline R1 guardrail: after span generation + chain attempts, enforce coverage invariant:
+ *   every active span must have span_attributions OR pending review_queue.
+ * - Auto-backfills uncovered spans into review_queue with module='attribution' and reason_codes=['coverage_gap'].
+ * - Fails closed with error_code='coverage_invariant_failed' if uncovered spans remain after backfill.
+ *
+ * v2.6.2:
+ * - On per-span chain failure (context-assembly/ai-router), enqueue coverage_gap review_queue row immediately.
+ * - Coverage-gap enqueue is best-effort: duplicate inserts are ignored; insert failures are logged.
+ *
  * Auth (internal gate; verify_jwt=false):
  * - X-Edge-Secret == EDGE_SHARED_SECRET, OR
  * - JWT + ALLOWED_EMAILS verified via auth.getUser() (debug path)
@@ -24,8 +34,9 @@
 import "jsr:@supabase/functions-js/edge-runtime.d.ts";
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
 
-const SEGMENT_CALL_VERSION = "v2.6.0";
+const SEGMENT_CALL_VERSION = "v2.6.2";
 const MAX_SEGMENT_CHARS_HARD_LIMIT = 3000;
+const MAX_HOOK_NON2XX_DIAGNOSTICS = 3;
 
 const SUPABASE_URL = Deno.env.get("SUPABASE_URL")!;
 const SEGMENT_LLM_URL = `${SUPABASE_URL}/functions/v1/segment-llm`;
@@ -172,6 +183,277 @@ async function logDiagnostic(
   } catch (e) {
     console.warn(`[segment-call] diagnostic_logs insert failed: ${(e as Error)?.message || e}`);
   }
+}
+
+type CoverageSpanRow = {
+  span_id: string;
+  interaction_id: string;
+  span_index: number | null;
+  transcript_segment: string | null;
+};
+
+type CoverageInvariantResult = {
+  before_count: number;
+  after_count: number;
+  backfilled_count: number;
+  backfilled_span_ids: string[];
+  error: string | null;
+};
+
+type CoverageGapEnqueueInput = CoverageSpanRow & {
+  error_code: string;
+  error_detail: string | null;
+  context_assembly_status: number | null;
+  ai_router_status: number | null;
+};
+
+type CoverageGapEnqueueResult = {
+  queued: boolean;
+  duplicate: boolean;
+  legacy_mode: boolean;
+  error: string | null;
+};
+
+function isReviewQueueCompatColumnMissing(message: string): boolean {
+  const text = String(message || "").toLowerCase();
+  return text.includes("does not exist") &&
+    (
+      text.includes("module") ||
+      text.includes("dedupe_key") ||
+      text.includes("reason_codes")
+    );
+}
+
+function isDuplicateKeyError(error: any): boolean {
+  const code = String(error?.code || "");
+  const message = String(error?.message || "").toLowerCase();
+  const details = String(error?.details || "").toLowerCase();
+  return code === "23505" || message.includes("duplicate key") || details.includes("already exists");
+}
+
+async function enqueueCoverageGapReview(
+  db: any,
+  input: CoverageGapEnqueueInput,
+): Promise<CoverageGapEnqueueResult> {
+  try {
+    const nowIso = new Date().toISOString();
+    const contextPayload = {
+      source: "segment-call",
+      stopline: "r1_stopline_zero_dropped_spans",
+      reason_codes: ["coverage_gap"],
+      interaction_id: input.interaction_id,
+      span_id: input.span_id,
+      span_index: input.span_index,
+      error_code: input.error_code,
+      error_detail: input.error_detail,
+      context_assembly_status: input.context_assembly_status,
+      ai_router_status: input.ai_router_status,
+      transcript_snippet: (input.transcript_segment || "").slice(0, 600),
+      detected_at_utc: nowIso,
+    };
+
+    const modernPayload = {
+      span_id: input.span_id,
+      interaction_id: input.interaction_id,
+      status: "pending",
+      module: "attribution",
+      dedupe_key: `coverage_gap:${input.span_id}`,
+      reason_codes: ["coverage_gap"],
+      reasons: ["coverage_gap"],
+      context_payload: contextPayload,
+    };
+
+    let { error } = await db
+      .from("review_queue")
+      .insert(modernPayload);
+
+    if (!error) {
+      return { queued: true, duplicate: false, legacy_mode: false, error: null };
+    }
+
+    if (isDuplicateKeyError(error)) {
+      return { queued: false, duplicate: true, legacy_mode: false, error: null };
+    }
+
+    if (isReviewQueueCompatColumnMissing(error.message || "")) {
+      const legacyPayload = {
+        span_id: input.span_id,
+        interaction_id: input.interaction_id,
+        status: "pending",
+        reasons: ["coverage_gap"],
+        context_payload: contextPayload,
+      };
+
+      const legacyInsert = await db
+        .from("review_queue")
+        .insert(legacyPayload);
+      error = legacyInsert.error ?? null;
+
+      if (!error) {
+        return { queued: true, duplicate: false, legacy_mode: true, error: null };
+      }
+      if (isDuplicateKeyError(error)) {
+        return { queued: false, duplicate: true, legacy_mode: true, error: null };
+      }
+    }
+
+    return {
+      queued: false,
+      duplicate: false,
+      legacy_mode: false,
+      error: error?.message || "coverage_gap_enqueue_failed_unknown",
+    };
+  } catch (error: any) {
+    return {
+      queued: false,
+      duplicate: false,
+      legacy_mode: false,
+      error: `coverage_gap_enqueue_exception:${error?.message || "unknown"}`,
+    };
+  }
+}
+
+async function listUncoveredActiveSpans(
+  db: any,
+  interactionId: string,
+): Promise<{ rows: CoverageSpanRow[]; error: string | null }> {
+  const { data: activeSpans, error: activeErr } = await db
+    .from("conversation_spans")
+    .select("id, interaction_id, span_index, transcript_segment")
+    .eq("interaction_id", interactionId)
+    .eq("is_superseded", false);
+
+  if (activeErr) return { rows: [], error: `active_spans_query_failed:${activeErr.message}` };
+  if (!Array.isArray(activeSpans) || activeSpans.length === 0) return { rows: [], error: null };
+
+  const spanIds = activeSpans.map((s: any) => s.id).filter(Boolean);
+  if (spanIds.length === 0) return { rows: [], error: null };
+
+  const { data: attributionRows, error: attrErr } = await db
+    .from("span_attributions")
+    .select("span_id")
+    .in("span_id", spanIds);
+  if (attrErr) return { rows: [], error: `span_attributions_query_failed:${attrErr.message}` };
+
+  const { data: reviewRows, error: reviewErr } = await db
+    .from("review_queue")
+    .select("span_id")
+    .in("span_id", spanIds)
+    .eq("status", "pending");
+  if (reviewErr) return { rows: [], error: `review_queue_query_failed:${reviewErr.message}` };
+
+  const attributed = new Set((attributionRows || []).map((r: any) => String(r.span_id)));
+  const inReview = new Set((reviewRows || []).map((r: any) => String(r.span_id)));
+
+  const uncovered = (activeSpans || [])
+    .filter((s: any) => !attributed.has(String(s.id)) && !inReview.has(String(s.id)))
+    .map((s: any) => ({
+      span_id: String(s.id),
+      interaction_id: String(s.interaction_id ?? interactionId),
+      span_index: s.span_index == null ? null : Number(s.span_index),
+      transcript_segment: typeof s.transcript_segment === "string" ? s.transcript_segment : null,
+    }));
+
+  return { rows: uncovered, error: null };
+}
+
+async function enforceCoverageInvariant(
+  db: any,
+  interactionId: string,
+): Promise<CoverageInvariantResult> {
+  const before = await listUncoveredActiveSpans(db, interactionId);
+  if (before.error) {
+    return {
+      before_count: 0,
+      after_count: 0,
+      backfilled_count: 0,
+      backfilled_span_ids: [],
+      error: before.error,
+    };
+  }
+
+  if (before.rows.length > 0) {
+    const nowIso = new Date().toISOString();
+    const baseContextPayload = (row: CoverageSpanRow) => ({
+      source: "segment-call",
+      stopline: "r1_stopline_zero_dropped_spans",
+      reason_codes: ["coverage_gap"],
+      interaction_id: row.interaction_id,
+      span_id: row.span_id,
+      span_index: row.span_index,
+      transcript_snippet: (row.transcript_segment || "").slice(0, 600),
+      detected_at_utc: nowIso,
+    });
+
+    const payload = before.rows.map((row) => ({
+      span_id: row.span_id,
+      interaction_id: row.interaction_id,
+      status: "pending",
+      module: "attribution",
+      dedupe_key: `coverage_gap:${row.span_id}`,
+      reason_codes: ["coverage_gap"],
+      reasons: ["coverage_gap"],
+      context_payload: baseContextPayload(row),
+    }));
+
+    let { error: backfillErr } = await db
+      .from("review_queue")
+      .upsert(payload, { onConflict: "span_id" });
+
+    if (backfillErr) {
+      const message = (backfillErr.message || "").toLowerCase();
+      const missingCompatColumns = message.includes("does not exist") &&
+        (
+          message.includes("module") ||
+          message.includes("dedupe_key") ||
+          message.includes("reason_codes")
+        );
+
+      if (missingCompatColumns) {
+        const legacyPayload = before.rows.map((row) => ({
+          span_id: row.span_id,
+          interaction_id: row.interaction_id,
+          status: "pending",
+          reasons: ["coverage_gap"],
+          context_payload: baseContextPayload(row),
+        }));
+
+        const legacyUpsert = await db
+          .from("review_queue")
+          .upsert(legacyPayload, { onConflict: "span_id" });
+        backfillErr = legacyUpsert.error ?? null;
+      }
+    }
+
+    if (backfillErr) {
+      return {
+        before_count: before.rows.length,
+        after_count: before.rows.length,
+        backfilled_count: 0,
+        backfilled_span_ids: before.rows.map((r) => r.span_id),
+        error: `coverage_backfill_failed:${backfillErr.message}`,
+      };
+    }
+  }
+
+  const after = await listUncoveredActiveSpans(db, interactionId);
+  if (after.error) {
+    return {
+      before_count: before.rows.length,
+      after_count: before.rows.length,
+      backfilled_count: 0,
+      backfilled_span_ids: before.rows.map((r) => r.span_id),
+      error: after.error,
+    };
+  }
+
+  return {
+    before_count: before.rows.length,
+    after_count: after.rows.length,
+    backfilled_count: Math.max(0, before.rows.length - after.rows.length),
+    backfilled_span_ids: before.rows.map((r) => r.span_id),
+    error: null,
+  };
 }
 
 // v2.6.0: Evidence assembler + decision auditor feature flag
@@ -704,6 +986,12 @@ Deno.serve(async (req: Request) => {
 
     insertedSpans.sort((a, b) => a.span_index - b.span_index);
 
+    // Keep span transcript snippets available for per-span failure queue fallbacks.
+    const transcriptBySpanIndex = new Map<number, string>();
+    for (const row of spanRowsWithMetadata) {
+      transcriptBySpanIndex.set(row.span_index, row.transcript_segment);
+    }
+
     const spanIds = insertedSpans.map((s) => s.id);
     const spanCount = insertedSpans.length;
 
@@ -713,6 +1001,13 @@ Deno.serve(async (req: Request) => {
     // 5) PER-SPAN CHAIN: context-assembly → ai-router
     // ============================================================
     const chainStatuses: SpanChainStatus[] = [];
+    let hookNon2xxDiagnostics = 0;
+
+    const tryConsumeHookNon2xxDiagnosticBudget = (): boolean => {
+      if (hookNon2xxDiagnostics >= MAX_HOOK_NON2XX_DIAGNOSTICS) return false;
+      hookNon2xxDiagnostics += 1;
+      return true;
+    };
 
     for (const span of insertedSpans) {
       const status: SpanChainStatus = {
@@ -724,6 +1019,37 @@ Deno.serve(async (req: Request) => {
         error_detail: null,
         striking_detect_fired: false,
         journal_extract_fired: false,
+      };
+
+      const enqueueCoverageGapForFailure = async () => {
+        if (!status.error_code) return;
+        const enqueueResult = await enqueueCoverageGapReview(db, {
+          span_id: status.span_id,
+          interaction_id,
+          span_index: status.span_index,
+          transcript_segment: transcriptBySpanIndex.get(status.span_index) ?? null,
+          error_code: status.error_code,
+          error_detail: status.error_detail,
+          context_assembly_status: status.context_assembly_status,
+          ai_router_status: status.ai_router_status,
+        });
+
+        if (enqueueResult.error) {
+          console.warn(
+            `[segment-call] coverage-gap enqueue failed for span=${status.span_id}: ${enqueueResult.error}`,
+          );
+          await logDiagnostic("STOPLINE_COVERAGE_GAP_ENQUEUE_FAILED", {
+            interaction_id,
+            stopline: "r1_stopline_zero_dropped_spans",
+            span_id: status.span_id,
+            span_index: status.span_index,
+            error_code: status.error_code,
+            error_detail: status.error_detail,
+            context_assembly_status: status.context_assembly_status,
+            ai_router_status: status.ai_router_status,
+            enqueue_error: enqueueResult.error,
+          }, "warning");
+        }
       };
 
       // context-assembly
@@ -746,6 +1072,7 @@ Deno.serve(async (req: Request) => {
         if (!ctxResp.ok) {
           status.error_code = "context_assembly_failed";
           status.error_detail = await ctxResp.text();
+          await enqueueCoverageGapForFailure();
           chainStatuses.push(status);
           continue;
         }
@@ -754,6 +1081,7 @@ Deno.serve(async (req: Request) => {
       } catch (e: any) {
         status.error_code = "context_assembly_exception";
         status.error_detail = e?.message || "unknown";
+        await enqueueCoverageGapForFailure();
         chainStatuses.push(status);
         continue;
       }
@@ -761,6 +1089,7 @@ Deno.serve(async (req: Request) => {
       if (!contextData?.context_package) {
         status.error_code = "no_context_package";
         status.error_detail = "context-assembly returned no context_package";
+        await enqueueCoverageGapForFailure();
         chainStatuses.push(status);
         continue;
       }
@@ -823,6 +1152,7 @@ Deno.serve(async (req: Request) => {
         if (!routerResp.ok) {
           status.error_code = "ai_router_failed";
           status.error_detail = await routerResp.text();
+          await enqueueCoverageGapForFailure();
           chainStatuses.push(status);
           continue;
         }
@@ -840,7 +1170,7 @@ Deno.serve(async (req: Request) => {
 
         // HOOK 1: striking-detect (runs on every span)
         try {
-          fetch(STRIKING_DETECT_URL, {
+          void fetch(STRIKING_DETECT_URL, {
             method: "POST",
             headers: {
               "Content-Type": "application/json",
@@ -849,17 +1179,45 @@ Deno.serve(async (req: Request) => {
             body: JSON.stringify({
               span_id: span.id,
               interaction_id,
+              call_id: interaction_id,
               source: "segment-call",
             }),
-          }).catch((e: any) => {
-            console.error(`[segment-call] striking-detect fire-and-forget error: ${e?.message}`);
-            void logDiagnostic("DOWNSTREAM_CALL_FAILED", {
-              hook: "striking-detect",
-              interaction_id,
-              span_id: span.id,
-              error: e?.message || "unknown",
+          })
+            .then(async (hookResp) => {
+              if (hookResp.ok) return;
+              if (!tryConsumeHookNon2xxDiagnosticBudget()) return;
+
+              let responseDetail: string | null = null;
+              try {
+                responseDetail = (await hookResp.text()).slice(0, 300) || null;
+              } catch {
+                responseDetail = null;
+              }
+
+              console.warn(
+                `[segment-call] striking-detect non-2xx response: ${hookResp.status}`,
+              );
+              void logDiagnostic("DOWNSTREAM_CALL_NON_2XX", {
+                hook: "striking-detect",
+                interaction_id,
+                span_id: span.id,
+                status: hookResp.status,
+                response_detail: responseDetail,
+                diagnostics_cap: MAX_HOOK_NON2XX_DIAGNOSTICS,
+                diagnostics_used: hookNon2xxDiagnostics,
+              }, "warning");
+            })
+            .catch((e: any) => {
+              console.error(
+                `[segment-call] striking-detect fire-and-forget error: ${e?.message}`,
+              );
+              void logDiagnostic("DOWNSTREAM_CALL_FAILED", {
+                hook: "striking-detect",
+                interaction_id,
+                span_id: span.id,
+                error: e?.message || "unknown",
+              });
             });
-          });
           status.striking_detect_fired = true;
         } catch {
           await logDiagnostic("DOWNSTREAM_CALL_FAILED", {
@@ -915,8 +1273,10 @@ Deno.serve(async (req: Request) => {
         let auditorResult: any = null;
         let auditorTriggered = false;
 
-        if (ASSEMBLER_MODE !== "off" && routerData?.decision &&
-            shouldRunAuditor(routerData.decision, routerData.confidence || 0)) {
+        if (
+          ASSEMBLER_MODE !== "off" && routerData?.decision &&
+          shouldRunAuditor(routerData.decision, routerData.confidence || 0)
+        ) {
           auditorTriggered = true;
           status.auditor_triggered = true;
           try {
@@ -988,6 +1348,7 @@ Deno.serve(async (req: Request) => {
       } catch (e: any) {
         status.error_code = "ai_router_exception";
         status.error_detail = e?.message || "unknown";
+        await enqueueCoverageGapForFailure();
         chainStatuses.push(status);
         continue;
       }
@@ -1000,6 +1361,60 @@ Deno.serve(async (req: Request) => {
       s.ai_router_status === 200 &&
       !s.error_code
     );
+
+    const coverageInvariant = await enforceCoverageInvariant(db, interaction_id);
+    if (coverageInvariant.backfilled_count > 0) {
+      await logDiagnostic("STOPLINE_COVERAGE_BACKFILL", {
+        interaction_id,
+        stopline: "r1_stopline_zero_dropped_spans",
+        before_count: coverageInvariant.before_count,
+        after_count: coverageInvariant.after_count,
+        backfilled_count: coverageInvariant.backfilled_count,
+        sample_span_ids: coverageInvariant.backfilled_span_ids.slice(0, 10),
+      }, "warning");
+    }
+
+    if (coverageInvariant.error || coverageInvariant.after_count > 0) {
+      await logDiagnostic("STOPLINE_COVERAGE_GAP", {
+        reason: coverageInvariant.error || "uncovered_spans_remain_after_backfill",
+        interaction_id,
+        stopline: "r1_stopline_zero_dropped_spans",
+        before_count: coverageInvariant.before_count,
+        after_count: coverageInvariant.after_count,
+        backfilled_count: coverageInvariant.backfilled_count,
+        sample_span_ids: coverageInvariant.backfilled_span_ids.slice(0, 10),
+      });
+      return new Response(
+        JSON.stringify({
+          ok: false,
+          error: "coverage_invariant_failed",
+          error_code: "coverage_invariant_failed",
+          version: SEGMENT_CALL_VERSION,
+          interaction_id,
+          transcript_source: transcriptSource,
+          spans_written,
+          spans_write_ok,
+          span_ids: spanIds,
+          span_count: spanCount,
+          segmenter_version: segmenterVersion,
+          segmenter_warnings: segmenterWarnings,
+          parent_interaction_sync: {
+            applied: parent_interaction_sync_applied,
+            transcript_chars: parent_interaction_transcript_chars,
+            error: parent_interaction_sync_error,
+          },
+          chain: {
+            attempted: true,
+            auth_mode: "X-Edge-Secret",
+            statuses: chainStatuses,
+          },
+          coverage_invariant: coverageInvariant,
+          dry_run,
+          ms: Date.now() - t0,
+        }),
+        { status: 500, headers: jsonHeaders },
+      );
+    }
 
     if (!allSuccess) {
       await logDiagnostic("DOWNSTREAM_CALL_FAILED", {
@@ -1041,6 +1456,7 @@ Deno.serve(async (req: Request) => {
             auth_mode: "X-Edge-Secret",
             statuses: chainStatuses,
           },
+          coverage_invariant: coverageInvariant,
           dry_run,
           ms: Date.now() - t0,
         }),
@@ -1106,6 +1522,7 @@ Deno.serve(async (req: Request) => {
           auth_mode: "X-Edge-Secret",
           statuses: chainStatuses,
         },
+        coverage_invariant: coverageInvariant,
         post_hooks: {
           generate_summary_fired: generateSummaryFired,
         },
