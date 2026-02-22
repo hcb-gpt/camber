@@ -12,7 +12,7 @@
 import "jsr:@supabase/functions-js/edge-runtime.d.ts";
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
 import Anthropic from "npm:@anthropic-ai/sdk@0.39.0";
-import { requireEdgeSecret, authErrorResponse } from "../_shared/auth.ts";
+import { authErrorResponse, requireEdgeSecret } from "../_shared/auth.ts";
 import { parseLlmJson } from "../_shared/llm_json.ts";
 
 const FUNCTION_VERSION = "v0.1.0";
@@ -181,7 +181,8 @@ TRANSCRIPT (first 2000 chars):
     }`;
   }
 
-  prompt += `\n\nAudit this assignment. Check for contradictions, stronger alternatives, anchor validity, and missing evidence.`;
+  prompt +=
+    `\n\nAudit this assignment. Check for contradictions, stronger alternatives, anchor validity, and missing evidence.`;
   return prompt;
 }
 
@@ -261,9 +262,7 @@ Deno.serve(async (req: Request) => {
       try {
         const altResult = await Promise.race([
           fetchAlternativeCandidates(db, transcript),
-          new Promise<never>((_, reject) =>
-            setTimeout(() => reject(new Error("tool_timeout")), TOOL_TIMEOUT_MS)
-          ),
+          new Promise<never>((_, reject) => setTimeout(() => reject(new Error("tool_timeout")), TOOL_TIMEOUT_MS)),
         ]);
         alternativeCandidates = altResult.rows;
         toolCallLog.push({
@@ -300,18 +299,14 @@ Deno.serve(async (req: Request) => {
         system: AUDITOR_SYSTEM_PROMPT,
         messages: [{ role: "user", content: userPrompt }],
       }),
-      new Promise<never>((_, reject) =>
-        setTimeout(() => reject(new Error("llm_timeout")), LLM_TIMEOUT_MS)
-      ),
+      new Promise<never>((_, reject) => setTimeout(() => reject(new Error("llm_timeout")), LLM_TIMEOUT_MS)),
     ]);
 
     const textBlock = (llmResponse as any).content?.find((b: any) => b.type === "text");
     const responseText = textBlock?.text || "";
     const parsed = parseLlmJson<any>(responseText).value;
 
-    const verdict = ["confirm", "downgrade", "escalate"].includes(parsed.verdict)
-      ? parsed.verdict
-      : "confirm";
+    const verdict = ["confirm", "downgrade", "escalate"].includes(parsed.verdict) ? parsed.verdict : "confirm";
 
     const auditReport: AuditReport = {
       span_id,

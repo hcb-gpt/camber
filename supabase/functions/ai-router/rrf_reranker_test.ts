@@ -1,8 +1,4 @@
-import {
-  classifyEvidenceTier,
-  rerankCandidates,
-  TIER_WEIGHTS,
-} from "./rrf_reranker.ts";
+import { classifyEvidenceTier, rerankCandidates, TIER_WEIGHTS } from "./rrf_reranker.ts";
 
 function assert(condition: boolean, message: string): void {
   if (!condition) throw new Error(message);

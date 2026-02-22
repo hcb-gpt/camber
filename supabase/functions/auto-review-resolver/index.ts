@@ -86,12 +86,8 @@ Deno.serve(async (req: Request) => {
 
   const dryRun = body.dry_run === true;
   const limit = Number.isInteger(body.limit) ? Number(body.limit) : DEFAULT_LIMIT;
-  const high = typeof body.high_confidence_threshold === "number"
-    ? body.high_confidence_threshold
-    : DEFAULT_HIGH_CONF;
-  const low = typeof body.low_confidence_threshold === "number"
-    ? body.low_confidence_threshold
-    : DEFAULT_LOW_CONF;
+  const high = typeof body.high_confidence_threshold === "number" ? body.high_confidence_threshold : DEFAULT_HIGH_CONF;
+  const low = typeof body.low_confidence_threshold === "number" ? body.low_confidence_threshold : DEFAULT_LOW_CONF;
   const actor = (body.actor && body.actor.trim()) || "system:auto_review_resolver_edge";
 
   if (!Number.isFinite(high) || !Number.isFinite(low) || low < 0 || high > 1 || low >= high) {
@@ -374,9 +370,7 @@ async function applyHighConfidenceFallback(
       resolved_at: nowIso,
       resolved_by: actor,
       resolution_action: "auto_resolve",
-      resolution_notes: candidate.span_id
-        ? "auto_high_confidence_fallback"
-        : "auto_high_confidence_queue_only_no_span",
+      resolution_notes: candidate.span_id ? "auto_high_confidence_fallback" : "auto_high_confidence_queue_only_no_span",
     })
     .eq("id", candidate.review_queue_id)
     .eq("status", "pending")

@@ -71,9 +71,7 @@ export async function queryTrigramFacts(
   // Truncate span_text to avoid excessive query payload (pg_trgm handles long strings
   // but there's no benefit past a certain length for similarity matching)
   const MAX_QUERY_CHARS = 2000;
-  const queryText = span_text.length > MAX_QUERY_CHARS
-    ? span_text.slice(0, MAX_QUERY_CHARS)
-    : span_text;
+  const queryText = span_text.length > MAX_QUERY_CHARS ? span_text.slice(0, MAX_QUERY_CHARS) : span_text;
 
   // Build the raw SQL query using pg_trgm similarity function.
   // The % operator uses the GIN trigram index on search_text.
@@ -190,7 +188,9 @@ async function queryTrigramFallback(
 
   const { data: rows, error } = await db
     .from("project_facts")
-    .select("project_id, fact_kind, fact_payload, as_of_at, observed_at, interaction_id, evidence_event_id, search_text")
+    .select(
+      "project_id, fact_kind, fact_payload, as_of_at, observed_at, interaction_id, evidence_event_id, search_text",
+    )
     .in("project_id", candidate_project_ids)
     .lte("as_of_at", t_call)
     .lte("observed_at", t_call)
@@ -211,14 +211,12 @@ async function queryTrigramFallback(
     if (rowEvidenceEventId && current_evidence_event_ids.has(rowEvidenceEventId)) continue;
 
     // Use search_text if available (generated column), else reconstruct
-    const factText = row.search_text
-      ? String(row.search_text).toLowerCase()
-      : [
-        String(row.fact_kind),
-        (row.fact_payload || {}).feature || "",
-        (row.fact_payload || {}).value != null ? String((row.fact_payload || {}).value) : "",
-        (row.fact_payload || {}).notes || "",
-      ].join(" ").toLowerCase();
+    const factText = row.search_text ? String(row.search_text).toLowerCase() : [
+      String(row.fact_kind),
+      (row.fact_payload || {}).feature || "",
+      (row.fact_payload || {}).value != null ? String((row.fact_payload || {}).value) : "",
+      (row.fact_payload || {}).notes || "",
+    ].join(" ").toLowerCase();
     const factTrigrams = computeTrigrams(factText);
     const score = trigramSimilarity(queryTrigrams, factTrigrams);
 

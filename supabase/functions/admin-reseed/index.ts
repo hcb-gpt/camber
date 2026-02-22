@@ -338,7 +338,10 @@ Deno.serve(async (req: Request) => {
         .in("span_id", allSpanIdsForDelete);
       if (ssErr) {
         console.error("[admin-reseed] Force cascade: striking_signals delete failed:", ssErr.message);
-        return jsonResponse({ ok: false, error: "cascade_delete_failed", detail: `striking_signals: ${ssErr.message}` }, 500);
+        return jsonResponse(
+          { ok: false, error: "cascade_delete_failed", detail: `striking_signals: ${ssErr.message}` },
+          500,
+        );
       }
 
       // 2. journal_claims
@@ -348,7 +351,10 @@ Deno.serve(async (req: Request) => {
         .in("span_id", allSpanIdsForDelete);
       if (jcErr) {
         console.error("[admin-reseed] Force cascade: journal_claims delete failed:", jcErr.message);
-        return jsonResponse({ ok: false, error: "cascade_delete_failed", detail: `journal_claims: ${jcErr.message}` }, 500);
+        return jsonResponse(
+          { ok: false, error: "cascade_delete_failed", detail: `journal_claims: ${jcErr.message}` },
+          500,
+        );
       }
 
       // 3. span_attributions
@@ -358,7 +364,11 @@ Deno.serve(async (req: Request) => {
         .in("span_id", allSpanIdsForDelete);
       if (saErr) {
         console.error("[admin-reseed] Force cascade: span_attributions delete failed:", saErr.message);
-        return jsonResponse({ ok: false, error: "cascade_delete_failed", detail: `span_attributions: ${saErr.message}` }, 500);
+        return jsonResponse({
+          ok: false,
+          error: "cascade_delete_failed",
+          detail: `span_attributions: ${saErr.message}`,
+        }, 500);
       }
 
       // 4. conversation_spans (all for this interaction)
@@ -368,10 +378,16 @@ Deno.serve(async (req: Request) => {
         .eq("interaction_id", interaction_id);
       if (csErr) {
         console.error("[admin-reseed] Force cascade: conversation_spans delete failed:", csErr.message);
-        return jsonResponse({ ok: false, error: "cascade_delete_failed", detail: `conversation_spans: ${csErr.message}` }, 500);
+        return jsonResponse({
+          ok: false,
+          error: "cascade_delete_failed",
+          detail: `conversation_spans: ${csErr.message}`,
+        }, 500);
       }
 
-      console.log(`[admin-reseed] Force cascade delete completed: ${allSpanIdsForDelete.length} spans + dependencies removed`);
+      console.log(
+        `[admin-reseed] Force cascade delete completed: ${allSpanIdsForDelete.length} spans + dependencies removed`,
+      );
     }
   }
 

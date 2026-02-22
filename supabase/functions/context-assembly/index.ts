@@ -2861,7 +2861,9 @@ Deno.serve(async (req: Request) => {
           weak_only: weakOnly || undefined,
           common_word_alias_demoted: commonWordAliasDemoted || undefined,
           corroboration_count: countCorroborationCategories(
-            meta.sources, meta.assigned, !!(meta.geo_signal && meta.geo_signal.score > 0),
+            meta.sources,
+            meta.assigned,
+            !!(meta.geo_signal && meta.geo_signal.score > 0),
           ),
         },
       });

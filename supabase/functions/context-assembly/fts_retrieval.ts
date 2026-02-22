@@ -78,21 +78,26 @@ export async function queryFtsFacts(
   // plainto_tsquery handles long strings fine but there's no benefit
   // past the point where the query plan is saturated.
   const MAX_QUERY_CHARS = 3000;
-  const queryText = span_text.length > MAX_QUERY_CHARS
-    ? span_text.slice(0, MAX_QUERY_CHARS)
-    : span_text;
+  const queryText = span_text.length > MAX_QUERY_CHARS ? span_text.slice(0, MAX_QUERY_CHARS) : span_text;
 
   // Over-fetch to account for same-call exclusion filtering
   const fetchLimit = limit * 2;
 
   // Try raw SQL via exec_sql RPC to get ts_rank scoring
   const rpcResult = await queryFtsWithRank(
-    db, queryText, candidate_project_ids, t_call, fetchLimit,
+    db,
+    queryText,
+    candidate_project_ids,
+    t_call,
+    fetchLimit,
   );
 
   if (rpcResult !== null) {
     return applyExclusions(
-      rpcResult, current_interaction_id, current_evidence_event_ids, limit,
+      rpcResult,
+      current_interaction_id,
+      current_evidence_event_ids,
+      limit,
     );
   }
 

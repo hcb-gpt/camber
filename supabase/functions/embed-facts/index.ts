@@ -24,8 +24,7 @@ function jsonResponse(payload: unknown, status = 200): Response {
     headers: {
       "Content-Type": "application/json",
       "Access-Control-Allow-Origin": "*",
-      "Access-Control-Allow-Headers":
-        "authorization, x-client-info, apikey, content-type, x-edge-secret, x-source",
+      "Access-Control-Allow-Headers": "authorization, x-client-info, apikey, content-type, x-edge-secret, x-source",
     },
   });
 }
@@ -101,8 +100,7 @@ Deno.serve(async (req: Request) => {
   }
 
   // Auth gate
-  const edgeSecret =
-    req.headers.get("X-Edge-Secret") || req.headers.get("x-edge-secret");
+  const edgeSecret = req.headers.get("X-Edge-Secret") || req.headers.get("x-edge-secret");
   const expectedSecret = Deno.env.get("EDGE_SHARED_SECRET");
   if (!expectedSecret || edgeSecret !== expectedSecret) {
     return jsonResponse(

@@ -12,7 +12,7 @@
 import "jsr:@supabase/functions-js/edge-runtime.d.ts";
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
 import Anthropic from "npm:@anthropic-ai/sdk@0.39.0";
-import { requireEdgeSecret, authErrorResponse } from "../_shared/auth.ts";
+import { authErrorResponse, requireEdgeSecret } from "../_shared/auth.ts";
 import { parseLlmJson } from "../_shared/llm_json.ts";
 
 const FUNCTION_VERSION = "v0.1.0";
@@ -112,9 +112,7 @@ const SAFE_TOOL_WHITELIST = new Set([
 function withTimeout<T>(promise: Promise<T>, ms: number): Promise<T> {
   return Promise.race([
     promise,
-    new Promise<never>((_, reject) =>
-      setTimeout(() => reject(new Error(`tool_timeout_${ms}ms`)), ms)
-    ),
+    new Promise<never>((_, reject) => setTimeout(() => reject(new Error(`tool_timeout_${ms}ms`)), ms)),
   ]);
 }
 
@@ -453,8 +451,12 @@ CONTEXT PACKAGE SUMMARY:
 - Contact: ${JSON.stringify(contact)}
 - Candidates (${candidates.length}): ${JSON.stringify(candidates)}
 - Transcript (first 3000 chars): """${transcript}"""
-- Journal context available: ${Array.isArray(contextPackage.project_journal) && contextPackage.project_journal.length > 0 ? "yes" : "no"}
-- Email context available: ${Array.isArray(contextPackage.email_context) && contextPackage.email_context.length > 0 ? "yes" : "no"}
+- Journal context available: ${
+    Array.isArray(contextPackage.project_journal) && contextPackage.project_journal.length > 0 ? "yes" : "no"
+  }
+- Email context available: ${
+    Array.isArray(contextPackage.email_context) && contextPackage.email_context.length > 0 ? "yes" : "no"
+  }
 - Place mentions: ${Array.isArray(contextPackage.place_mentions) ? contextPackage.place_mentions.length : 0}`;
 
   if (priorToolResults.length > 0) {
@@ -572,9 +574,7 @@ Deno.serve(async (req: Request) => {
           system: ASSEMBLER_SYSTEM_PROMPT,
           messages: [{ role: "user", content: userPrompt }],
         }),
-        new Promise<never>((_, reject) =>
-          setTimeout(() => reject(new Error("llm_timeout")), LLM_TIMEOUT_MS)
-        ),
+        new Promise<never>((_, reject) => setTimeout(() => reject(new Error("llm_timeout")), LLM_TIMEOUT_MS)),
       ]);
 
       const textBlock = (llmResponse as any).content?.find((b: any) => b.type === "text");
@@ -675,8 +675,8 @@ Deno.serve(async (req: Request) => {
 
     // If we exhausted iterations without "done", produce a partial brief
     // by asking Sonnet one final time to synthesize what we have
-    const finalPrompt = buildAssemblerUserPrompt(context_package, MAX_ITERATIONS + 1, priorToolResults)
-      + "\n\nBUDGET EXHAUSTED. You MUST output status='done' with your best assessment now.";
+    const finalPrompt = buildAssemblerUserPrompt(context_package, MAX_ITERATIONS + 1, priorToolResults) +
+      "\n\nBUDGET EXHAUSTED. You MUST output status='done' with your best assessment now.";
 
     const finalResponse = await Promise.race([
       anthropic.messages.create({
@@ -685,9 +685,7 @@ Deno.serve(async (req: Request) => {
         system: ASSEMBLER_SYSTEM_PROMPT,
         messages: [{ role: "user", content: finalPrompt }],
       }),
-      new Promise<never>((_, reject) =>
-        setTimeout(() => reject(new Error("llm_timeout_final")), LLM_TIMEOUT_MS)
-      ),
+      new Promise<never>((_, reject) => setTimeout(() => reject(new Error("llm_timeout_final")), LLM_TIMEOUT_MS)),
     ]);
 
     const finalText = (finalResponse as any).content?.find((b: any) => b.type === "text")?.text || "";

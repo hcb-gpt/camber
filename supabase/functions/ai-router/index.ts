@@ -563,7 +563,13 @@ function evaluateSafeLowConfidenceAssign(opts: {
 
   // Safe path 1: anchored contact with strong alias match on this project
   if (opts.fanout_class === "anchored") {
-    const strongMatchTypes = new Set(["exact_project_name", "alias", "address_fragment", "client_name", "chain_continuity"]);
+    const strongMatchTypes = new Set([
+      "exact_project_name",
+      "alias",
+      "address_fragment",
+      "client_name",
+      "chain_continuity",
+    ]);
     const hasStrongMatch = chosen.evidence.alias_matches.some((m) => strongMatchTypes.has(m.match_type));
     if (hasStrongMatch) {
       return { promoted: true, reason: "safe_anchored_contact_strong_match" };
