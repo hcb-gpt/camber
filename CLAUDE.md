@@ -19,11 +19,13 @@ Immediately after role is set, boot via MCP by fetching these four Orbit docs
 3) `role-boundaries`
 4) `charter`
 
-Use `mcp__camber__fetch` with `id="<slug>"`.
+Use whichever Orbit/Camber fetch tool is available (e.g. `mcp__camber__fetch`,
+`orbit.fetch`, MCP connector, or equivalent) with `id="<slug>"`.
 
 If any fetch fails (blocked / not_found / empty), stop and report via TRAM:
 
-- Tool: `mcp__camber__tram_create`
+- Tool: whichever TRAM create tool is available (e.g. `mcp__camber__tram_create`
+  or equivalent MCP connector)
 - `to="STRAT"`, `from=SESSION_ROLE`
 - `subject="boot_failed_" + SESSION_ROLE`
 - `kind="test"`, `priority="high"`, `thread="boot"`
@@ -351,3 +353,7 @@ Success criteria:
 
 Protocol marker:
 - You may write **CHAIN WRITE VERIFIED** only after the query above shows N spans and N attribution rows (or after a fail-closed 500 is observed with logged `error_code`).
+
+## Agent Teams
+Always propose and use agent teams for any non-trivial task.
+Default to spawning specialized teammates rather than working sequentially.

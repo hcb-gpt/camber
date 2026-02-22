@@ -12,7 +12,7 @@
 import "jsr:@supabase/functions-js/edge-runtime.d.ts";
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
 
-const FUNCTION_VERSION = "v1.0.0";
+const FUNCTION_VERSION = "v1.0.1";
 const DEFAULT_MODEL = "text-embedding-3-small";
 const DEFAULT_EMBEDDING_VERSION = "v1";
 const DEFAULT_LIMIT = 100;
@@ -37,6 +37,25 @@ type ClaimRow = {
   embedding_version: string | null;
   created_at: string | null;
 };
+
+type FailureClass =
+  | "embedding_batch_failed"
+  | "embedding_dimension_mismatch"
+  | "db_update_failed"
+  | "other";
+
+function classifyFailure(errorText: string): FailureClass {
+  if (errorText.startsWith("openai_embeddings_") || errorText === "embedding_batch_failed") {
+    return "embedding_batch_failed";
+  }
+  if (errorText.startsWith("embedding_dimension_mismatch_")) {
+    return "embedding_dimension_mismatch";
+  }
+  if (errorText.length > 0) {
+    return "db_update_failed";
+  }
+  return "other";
+}
 
 function jsonResponse(payload: unknown, status = 200): Response {
   return new Response(JSON.stringify(payload), {
@@ -134,6 +153,7 @@ async function createEmbeddings(
 
 Deno.serve(async (req: Request) => {
   const startedAt = Date.now();
+  const requestId = crypto.randomUUID();
   if (req.method !== "GET" && req.method !== "POST") {
     return jsonResponse({ ok: false, error: "GET or POST only" }, 405);
   }
@@ -205,7 +225,6 @@ Deno.serve(async (req: Request) => {
     .from("journal_claims")
     .select("id", { count: "exact", head: true })
     .eq("active", true)
-    .not("project_id", "is", null)
     .not("claim_text", "is", null);
 
   if (!force) {
@@ -235,9 +254,9 @@ Deno.serve(async (req: Request) => {
         "search_text,embedding,embedding_model,embedding_version,created_at",
     )
     .eq("active", true)
-    .not("project_id", "is", null)
     .not("claim_text", "is", null)
-    .order("created_at", { ascending: true })
+    // Prioritize freshest claims so live reliability checks reflect current write health.
+    .order("created_at", { ascending: false })
     .limit(limit);
 
   if (!force) {
@@ -272,9 +291,27 @@ Deno.serve(async (req: Request) => {
   });
 
   if (candidateRows.length === 0) {
+    console.log(
+      JSON.stringify({
+        event: "journal_embed_backfill_summary",
+        request_id: requestId,
+        stage_metrics: {
+          selected_rows: selectedRows.length,
+          candidate_rows: 0,
+          prepared_rows: 0,
+          batch_count: 0,
+          batch_failures: 0,
+          update_attempted: 0,
+          updated_count: 0,
+          failed_count: 0,
+        },
+        outcome: "no_eligible_claims",
+      }),
+    );
     return jsonResponse({
       ok: true,
       function_version: FUNCTION_VERSION,
+      request_id: requestId,
       model,
       embedding_version: embeddingVersion,
       dry_run: dryRun,
@@ -295,9 +332,27 @@ Deno.serve(async (req: Request) => {
     .filter((item) => item.searchText.length > 0);
 
   if (preparedRows.length === 0) {
+    console.warn(
+      JSON.stringify({
+        event: "journal_embed_backfill_zero_write_warning",
+        request_id: requestId,
+        reason: "all_candidate_rows_missing_search_text",
+        stage_metrics: {
+          selected_rows: selectedRows.length,
+          candidate_rows: candidateRows.length,
+          prepared_rows: 0,
+          batch_count: 0,
+          batch_failures: 0,
+          update_attempted: 0,
+          updated_count: 0,
+          failed_count: candidateRows.length,
+        },
+      }),
+    );
     return jsonResponse({
       ok: true,
       function_version: FUNCTION_VERSION,
+      request_id: requestId,
       model,
       embedding_version: embeddingVersion,
       dry_run: dryRun,
@@ -308,15 +363,44 @@ Deno.serve(async (req: Request) => {
       selected_rows: candidateRows.length,
       updated_count: 0,
       failed_count: candidateRows.length,
+      stage_metrics: {
+        selected_rows: selectedRows.length,
+        candidate_rows: candidateRows.length,
+        prepared_rows: 0,
+        batch_count: 0,
+        batch_failures: 0,
+        update_attempted: 0,
+      },
+      zero_write_warning: {
+        warning: true,
+        reason: "all_candidate_rows_missing_search_text",
+      },
       duration_ms: Date.now() - startedAt,
       message: "all_candidate_rows_missing_search_text",
     });
   }
 
   if (dryRun) {
+    console.log(
+      JSON.stringify({
+        event: "journal_embed_backfill_dry_run",
+        request_id: requestId,
+        stage_metrics: {
+          selected_rows: selectedRows.length,
+          candidate_rows: candidateRows.length,
+          prepared_rows: preparedRows.length,
+          batch_count: Math.ceil(preparedRows.length / batchSize),
+          batch_failures: 0,
+          update_attempted: 0,
+          updated_count: 0,
+          failed_count: 0,
+        },
+      }),
+    );
     return jsonResponse({
       ok: true,
       function_version: FUNCTION_VERSION,
+      request_id: requestId,
       model,
       embedding_version: embeddingVersion,
       dry_run: true,
@@ -326,14 +410,30 @@ Deno.serve(async (req: Request) => {
       estimated_pending: estimatedPending || 0,
       selected_rows: candidateRows.length,
       prepared_rows: preparedRows.length,
+      stage_metrics: {
+        selected_rows: selectedRows.length,
+        candidate_rows: candidateRows.length,
+        prepared_rows: preparedRows.length,
+        batch_count: Math.ceil(preparedRows.length / batchSize),
+        batch_failures: 0,
+        update_attempted: 0,
+      },
       sample_ids: preparedRows.slice(0, 10).map((r) => r.row.id),
       duration_ms: Date.now() - startedAt,
     });
   }
 
   const failures: { id: string; error: string }[] = [];
+  const failureClassCounts: Record<FailureClass, number> = {
+    embedding_batch_failed: 0,
+    embedding_dimension_mismatch: 0,
+    db_update_failed: 0,
+    other: 0,
+  };
   let updatedCount = 0;
   let failedCount = 0;
+  let batchFailures = 0;
+  let updateAttempted = 0;
 
   for (let i = 0; i < preparedRows.length; i += batchSize) {
     const chunk = preparedRows.slice(i, i + batchSize);
@@ -344,9 +444,12 @@ Deno.serve(async (req: Request) => {
       embeddings = await createEmbeddings(openaiKey!, model, inputs);
     } catch (error: any) {
       const detail = error?.message || "embedding_batch_failed";
+      batchFailures++;
+      const klass = classifyFailure(detail);
       for (const item of chunk) {
         failures.push({ id: item.row.id, error: detail });
         failedCount++;
+        failureClassCounts[klass]++;
       }
       continue;
     }
@@ -355,14 +458,17 @@ Deno.serve(async (req: Request) => {
       const current = chunk[j];
       const embedding = embeddings[j];
       if (!Array.isArray(embedding) || embedding.length !== EMBEDDING_DIMENSIONS) {
+        const errorText = `embedding_dimension_mismatch_${embedding?.length ?? "null"}`;
         failures.push({
           id: current.row.id,
-          error: `embedding_dimension_mismatch_${embedding?.length ?? "null"}`,
+          error: errorText,
         });
         failedCount++;
+        failureClassCounts[classifyFailure(errorText)]++;
         continue;
       }
 
+      updateAttempted++;
       const { error: updateError } = await db
         .from("journal_claims")
         .update({
@@ -376,15 +482,49 @@ Deno.serve(async (req: Request) => {
       if (updateError) {
         failures.push({ id: current.row.id, error: updateError.message });
         failedCount++;
+        failureClassCounts[classifyFailure(updateError.message)]++;
       } else {
         updatedCount++;
       }
     }
   }
 
+  const stageMetrics = {
+    selected_rows: selectedRows.length,
+    candidate_rows: candidateRows.length,
+    prepared_rows: preparedRows.length,
+    batch_count: Math.ceil(preparedRows.length / batchSize),
+    batch_failures: batchFailures,
+    update_attempted: updateAttempted,
+    updated_count: updatedCount,
+    failed_count: failedCount,
+  };
+
+  if (preparedRows.length > 0 && updatedCount === 0) {
+    console.warn(
+      JSON.stringify({
+        event: "journal_embed_backfill_zero_write_warning",
+        request_id: requestId,
+        reason: failedCount > 0 ? "all_updates_failed" : "no_updates_attempted",
+        stage_metrics: stageMetrics,
+        failure_class_counts: failureClassCounts,
+      }),
+    );
+  } else {
+    console.log(
+      JSON.stringify({
+        event: "journal_embed_backfill_summary",
+        request_id: requestId,
+        stage_metrics: stageMetrics,
+        failure_class_counts: failureClassCounts,
+      }),
+    );
+  }
+
   return jsonResponse({
     ok: true,
     function_version: FUNCTION_VERSION,
+    request_id: requestId,
     model,
     embedding_version: embeddingVersion,
     dry_run: false,
@@ -400,6 +540,16 @@ Deno.serve(async (req: Request) => {
     prepared_rows: preparedRows.length,
     updated_count: updatedCount,
     failed_count: failedCount,
+    stage_metrics: stageMetrics,
+    failure_class_counts: failureClassCounts,
+    zero_write_warning: preparedRows.length > 0 && updatedCount === 0
+      ? {
+        warning: true,
+        reason: failedCount > 0 ? "all_updates_failed" : "no_updates_attempted",
+      }
+      : {
+        warning: false,
+      },
     failures: failures.slice(0, 25),
     duration_ms: Date.now() - startedAt,
   });

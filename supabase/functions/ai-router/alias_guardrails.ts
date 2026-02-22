@@ -24,6 +24,7 @@ const STRONG_NON_ALIAS_TYPES = new Set([
   "exact_project_name",
   "address_fragment",
   "client_name",
+  "chain_continuity",
 ]);
 
 const PROJECT_DISAMBIGUATOR_TOKENS = new Set([

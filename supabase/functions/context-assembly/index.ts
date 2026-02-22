@@ -411,6 +411,7 @@ interface CandidateEvidence {
   material_budget_tier_terms?: string[];
   weak_only?: boolean; // true if ALL alias evidence is weak (first-name-only, short token)
   common_word_alias_demoted?: boolean;
+  corroboration_count?: number; // v2.3.0: count of independent evidence categories
 }
 
 interface Candidate {
@@ -857,6 +858,34 @@ function normalizeAliasTerms(terms: string[]): string[] {
     out.push(t);
   }
   return out;
+}
+
+/** v2.3.0: Count independent evidence categories for corroboration scoring.
+ *  Maps raw source strings to categories so that e.g. two transcript sources count as 1. */
+function countCorroborationCategories(sources: string[], assigned: boolean, hasGeoSignal: boolean): number {
+  const categories = new Set<string>();
+  for (const src of sources) {
+    if (src === "rpc_scan_transcript_for_projects" || src === "fts_transcript_match") {
+      categories.add("transcript");
+    } else if (src === "correspondent_project_affinity") {
+      categories.add("affinity");
+    } else if (src === "cross_contact_claim_match" || src === "claim_content_match") {
+      categories.add("claim");
+    } else if (src === "geo_proximity") {
+      categories.add("geo");
+    } else if (src === "interactions_existing_project") {
+      categories.add("assignment");
+    } else if (src === "material_budget_tier_match") {
+      categories.add("material");
+    } else if (src === "world_model_project_facts") {
+      categories.add("world_model");
+    } else {
+      categories.add(src); // unknown source gets its own category
+    }
+  }
+  if (assigned && !categories.has("assignment")) categories.add("assignment");
+  if (hasGeoSignal && !categories.has("geo")) categories.add("geo");
+  return categories.size;
 }
 
 /** PHONETIC-ADJACENT-ONLY: Classify whether an alias match is strong or weak.
@@ -1883,6 +1912,39 @@ Deno.serve(async (req: Request) => {
         }
       } catch { /* RPC may not exist */ }
 
+      // POST-PROCESS: first-name unique anchor (Lever 2)
+      // When a weak single-word first-name alias match uniquely identifies
+      // exactly one candidate in the pool, promote it to first_name_unique.
+      // Safety: only for candidates already present from another source.
+      {
+        // Build map: lowercase single-word term -> set of project_ids that matched it
+        const termToProjects = new Map<string, Set<string>>();
+        for (const [pid, meta] of candidatesById) {
+          for (const m of meta.alias_matches) {
+            const t = m.term.trim();
+            if (!t.includes(" ") && t.length >= 3 && t.length < 6) {
+              const key = t.toLowerCase();
+              if (!termToProjects.has(key)) termToProjects.set(key, new Set());
+              termToProjects.get(key)!.add(pid);
+            }
+          }
+        }
+        // Promote unique first-name matches on multi-source candidates
+        for (const [, meta] of candidatesById) {
+          const hasOtherSource = meta.sources.some((s) => s !== "transcript_scan");
+          if (!hasOtherSource) continue;
+          for (const m of meta.alias_matches) {
+            const t = m.term.trim();
+            if (t.includes(" ") || t.length < 3 || t.length >= 6) continue;
+            const key = t.toLowerCase();
+            const matchingPids = termToProjects.get(key);
+            if (matchingPids && matchingPids.size === 1) {
+              m.match_type = "first_name_unique";
+            }
+          }
+        }
+      }
+
       // ========================================
       // SOURCE 7: GEO + ENROUTE DETECTION
       // POLICY (STRAT-1 BLOCK):
@@ -2798,12 +2860,17 @@ Deno.serve(async (req: Request) => {
           material_budget_tier_terms: meta.material_budget_tier_terms?.slice(0, MATERIAL_BUDGET_EVIDENCE_TERM_LIMIT),
           weak_only: weakOnly || undefined,
           common_word_alias_demoted: commonWordAliasDemoted || undefined,
+          corroboration_count: countCorroborationCategories(
+            meta.sources,
+            meta.assigned,
+            !!(meta.geo_signal && meta.geo_signal.score > 0),
+          ),
         },
       });
     }
 
     // Sort by evidence strength
-    // Priority: assigned > weak_only > alias_matches > source_strength > claim_crossref > affinity_weight > geo
+    // Priority: assigned > weak_only > corroboration > alias_matches > source_strength > claim_crossref > affinity_weight > geo
     // v2.1.0: source_strength (transcript evidence quality) now ranks ABOVE affinity_weight
     // v2.2.0: claim_crossref (journal semantic overlap) now ranks after source_strength.
     const sortCandidates = (list: Candidate[]) =>
@@ -2816,6 +2883,10 @@ Deno.serve(async (req: Request) => {
         const aDemoted = a.evidence.common_word_alias_demoted === true;
         const bDemoted = b.evidence.common_word_alias_demoted === true;
         if (aDemoted !== bDemoted) return aDemoted ? 1 : -1;
+        // v2.3.0: multi-source corroboration ranks above single-source
+        const aCorr = (a.evidence.corroboration_count || 0) >= 2 ? 1 : 0;
+        const bCorr = (b.evidence.corroboration_count || 0) >= 2 ? 1 : 0;
+        if (bCorr !== aCorr) return bCorr - aCorr;
         if (b.evidence.alias_matches.length !== a.evidence.alias_matches.length) {
           return b.evidence.alias_matches.length - a.evidence.alias_matches.length;
         }

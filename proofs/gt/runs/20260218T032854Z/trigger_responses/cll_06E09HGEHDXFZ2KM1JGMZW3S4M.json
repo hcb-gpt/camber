@@ -1,0 +1,58 @@
+{
+  "http_status": 200,
+  "response": {
+    "ok": true,
+    "receipt": {
+      "ok": true,
+      "interaction_id": "cll_06E09HGEHDXFZ2KM1JGMZW3S4M",
+      "idempotency_key": "gt-batch-20260218T032854Z-010-cll_06E09HGEHDXFZ2KM1JGMZW3S4M",
+      "mode": "resegment_and_reroute",
+      "span_count_before": 11,
+      "span_count_after": 8,
+      "attrib_count_before": 11,
+      "attrib_count_after": 8,
+      "status": "success",
+      "human_lock_count": 0,
+      "human_lock_carryforward_count": 0,
+      "superseded_span_ids": [
+        "f321982f-83e2-460b-9da3-fb148ee8c6c0",
+        "6d2c6ca9-812a-467b-9705-ff4d7ddfb120",
+        "6862180d-72c1-4ecf-af6e-5d0a09bea52c",
+        "2fef3b91-90e1-4053-855d-5b465073f0c7",
+        "8f6369e0-f229-4b07-8615-22fdc88442c8",
+        "792d5d05-22b1-4f81-a4a3-f0691ec8f79f",
+        "37d8fa07-cc64-4209-aa87-98d72762f634",
+        "4b71244c-e03c-45bb-8474-25949a0a260e",
+        "2c49dfff-bf28-4410-a9d1-4091a42d8dc3",
+        "33eab1b1-7f94-41d1-8236-7be8eeed2dbb",
+        "665beb2b-d590-41cb-b3ea-c98c152ef4fb"
+      ],
+      "new_span_ids": [
+        "939711b6-c0ac-4f16-98de-87e9a9d6842c",
+        "74e5bfbb-91ec-41e2-a581-c65d4312f1db",
+        "8bdac17c-dbcb-49fa-bb4c-0369934f4887",
+        "57b04683-fff5-4949-9ff3-8b37e9e23da1",
+        "c8f18cc1-48b0-435f-89f7-d0179d4ddfb0",
+        "8afc29bd-fae0-4c68-bf70-ffec18ce00b4",
+        "8b5fd8b1-8c9f-4104-8927-8a8fd7106868",
+        "6ac3d722-b78a-4342-a5db-fe59f487e58a"
+      ],
+      "reroute_triggered": true,
+      "insert_conflict_recovered": false,
+      "conflict_constraint": null,
+      "adopted_generation": null,
+      "reroute_attempted": 8,
+      "reroute_succeeded": 8,
+      "reroute_failed": 0,
+      "close_loop_applied": false,
+      "close_loop_attempts": 0,
+      "close_loop_missing_before": 0,
+      "close_loop_missing_after": 0,
+      "close_loop_fallback_inserted": 0,
+      "close_loop_stale_pending_dismissed": 0,
+      "close_loop_pending_on_superseded_after": 0,
+      "close_loop_pending_null_after": 0,
+      "ms": 48432
+    }
+  }
+}

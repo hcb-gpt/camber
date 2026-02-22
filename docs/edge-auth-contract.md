@@ -33,6 +33,7 @@ comparison. For simpler functions, inline check is acceptable but MUST exist.
 **Functions using Pattern A:**
 | Function | Auth Code | Source Allowlist | Notes |
 |----------|-----------|------------------|-------|
+| auto-review-resolver | Inline | Yes | Accepts `X-Edge-Secret` (preferred) or service-role via `Authorization`/`apikey` |
 | process-call | Dual (A+B) | N/A | Also accepts JWT |
 | segment-call | Inline | No | |
 | segment-llm | Inline | No | |
@@ -129,6 +130,17 @@ The smoke test verifies:
 1. **Auth gate:** Request without X-Edge-Secret returns 401
 2. **Auth pass:** Request with correct X-Edge-Secret returns 200
 3. **Response structure:** Response is valid JSON with expected fields
+
+### Auto-Review Resolver Invocation Notes
+
+For `auto-review-resolver`, use one of these paths:
+
+1. Preferred: `X-Edge-Secret` + `X-Source` allowlist.
+2. Compatibility: service-role credentials via either:
+   - `Authorization: Bearer <SUPABASE_SERVICE_ROLE_KEY>`
+   - `apikey: <SUPABASE_SERVICE_ROLE_KEY>`
+
+If both `Authorization` and `apikey` are provided, either may satisfy service-role auth.
 
 ## Security Gaps Identified and Fixed
 

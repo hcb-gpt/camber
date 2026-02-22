@@ -1,0 +1,46 @@
+{
+  "http_status": 200,
+  "response": {
+    "ok": true,
+    "receipt": {
+      "ok": true,
+      "interaction_id": "cll_06DYSFZRN1R95CXS3X0Y6DPVN4",
+      "idempotency_key": "gt-batch-20260218T032854Z-002-cll_06DYSFZRN1R95CXS3X0Y6DPVN4",
+      "mode": "resegment_and_reroute",
+      "span_count_before": 0,
+      "span_count_after": 8,
+      "attrib_count_before": 0,
+      "attrib_count_after": 8,
+      "status": "success",
+      "human_lock_count": 0,
+      "human_lock_carryforward_count": 0,
+      "superseded_span_ids": [],
+      "new_span_ids": [
+        "c42fde7d-9456-405b-90ec-aca1deefdf41",
+        "b14ba622-6344-4302-9cce-5ef05968711e",
+        "30ba4aa6-9192-482d-9ebc-4bdc3d0b1f4f",
+        "304ac417-27ef-482a-9b5b-e024f3412add",
+        "5f3820e6-b89f-4e88-96b7-0372748d46aa",
+        "a07b750f-8ac2-4968-96f9-9f6078f1f4ec",
+        "a2cffcfc-6a21-4d89-af7f-3a3e6a1e81b9",
+        "6376fc1f-3f01-489b-9737-6ef6149fa62f"
+      ],
+      "reroute_triggered": true,
+      "insert_conflict_recovered": false,
+      "conflict_constraint": null,
+      "adopted_generation": null,
+      "reroute_attempted": 8,
+      "reroute_succeeded": 8,
+      "reroute_failed": 0,
+      "close_loop_applied": false,
+      "close_loop_attempts": 0,
+      "close_loop_missing_before": 0,
+      "close_loop_missing_after": 0,
+      "close_loop_fallback_inserted": 0,
+      "close_loop_stale_pending_dismissed": 0,
+      "close_loop_pending_on_superseded_after": 0,
+      "close_loop_pending_null_after": 0,
+      "ms": 39670
+    }
+  }
+}

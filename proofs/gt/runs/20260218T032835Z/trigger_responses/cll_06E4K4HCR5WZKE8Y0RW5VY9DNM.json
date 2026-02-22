@@ -1,0 +1,26 @@
+{
+  "http_status": 200,
+  "response": {
+    "ok": true,
+    "receipt": {
+      "ok": true,
+      "interaction_id": "cll_06E4K4HCR5WZKE8Y0RW5VY9DNM",
+      "idempotency_key": "gt-batch-20260218T032835Z-040-cll_06E4K4HCR5WZKE8Y0RW5VY9DNM",
+      "mode": "resegment_and_reroute",
+      "span_count_before": 0,
+      "span_count_after": 0,
+      "attrib_count_before": 0,
+      "attrib_count_after": 0,
+      "status": "success",
+      "human_lock_count": 0,
+      "human_lock_carryforward_count": 0,
+      "superseded_span_ids": [],
+      "new_span_ids": [],
+      "reroute_triggered": false,
+      "insert_conflict_recovered": false,
+      "conflict_constraint": null,
+      "adopted_generation": null,
+      "ms": 667
+    }
+  }
+}

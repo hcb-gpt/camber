@@ -1,0 +1,19 @@
+{
+  "run_id": "20260216T035357Z",
+  "run_dir": "/Users/chadbarlow/gh/hcb-gpt/camber-calls/proofs/gt/runs/20260216T035357Z",
+  "mode": "reseed",
+  "reseed_mode": "reseed_and_close_loop",
+  "input_file": "/Users/chadbarlow/gh/hcb-gpt/camber-calls/proofs/gt/inputs/2026-02-16/gt_batch_v1_woodbery_subset.csv",
+  "total_rows": 37,
+  "expected_rows": 37,
+  "correct_rows": 20,
+  "accuracy": 0.5405,
+  "review_rate": 0.5405,
+  "homeowner_override_fail_count": 1,
+  "staff_leak_count": 5,
+  "multi_project_span_count": 0,
+  "missing_char_offsets_count": 0,
+  "trigger_fail_count": 19,
+  "failures_count": 17,
+  "generated_at_utc": "2026-02-16T03:57:20.200340Z"
+}

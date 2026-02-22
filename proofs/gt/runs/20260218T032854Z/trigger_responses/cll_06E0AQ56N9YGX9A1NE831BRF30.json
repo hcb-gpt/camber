@@ -1,0 +1,40 @@
+{
+  "http_status": 200,
+  "response": {
+    "ok": true,
+    "receipt": {
+      "ok": true,
+      "interaction_id": "cll_06E0AQ56N9YGX9A1NE831BRF30",
+      "idempotency_key": "gt-batch-20260218T032854Z-018-cll_06E0AQ56N9YGX9A1NE831BRF30",
+      "mode": "resegment_and_reroute",
+      "span_count_before": 0,
+      "span_count_after": 2,
+      "attrib_count_before": 0,
+      "attrib_count_after": 2,
+      "status": "success",
+      "human_lock_count": 0,
+      "human_lock_carryforward_count": 0,
+      "superseded_span_ids": [],
+      "new_span_ids": [
+        "f14c5557-6868-434b-b2d2-895b81f37b11",
+        "f809e322-2189-470d-9b12-47f17035e5a5"
+      ],
+      "reroute_triggered": true,
+      "insert_conflict_recovered": false,
+      "conflict_constraint": null,
+      "adopted_generation": null,
+      "reroute_attempted": 2,
+      "reroute_succeeded": 2,
+      "reroute_failed": 0,
+      "close_loop_applied": false,
+      "close_loop_attempts": 0,
+      "close_loop_missing_before": 0,
+      "close_loop_missing_after": 0,
+      "close_loop_fallback_inserted": 0,
+      "close_loop_stale_pending_dismissed": 0,
+      "close_loop_pending_on_superseded_after": 0,
+      "close_loop_pending_null_after": 0,
+      "ms": 20306
+    }
+  }
+}

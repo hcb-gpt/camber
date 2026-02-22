@@ -448,6 +448,37 @@ def preserve_baseline_artifacts(baseline_metrics_path: Path, run_dir: Path) -> O
     return target_file
 
 
+def run_preflight(database_url: str, psql_bin: str, supabase_url: str, headers: dict, first_interaction_id: str, run_id: str, timeout: int) -> bool:
+    """Run preflight checks: DB connectivity + edge function reachability."""
+    print("PREFLIGHT: checking DB connectivity...")
+    try:
+        run_psql_sql(database_url, psql_bin, "SELECT 1")
+        print("  DB: OK")
+    except Exception as e:
+        print(f"  DB: FAILED ({e})")
+        return False
+
+    print("PREFLIGHT: checking edge function reachability...")
+    idem_key = f"preflight-{run_id}"
+    payload = {
+        "interaction_id": first_interaction_id,
+        "mode": "resegment_and_reroute",
+        "idempotency_key": idem_key,
+        "reason": "preflight_check",
+        "requested_by": "gt_batch_runner_preflight",
+        "force": False,
+        "dry_run": True,
+    }
+    url = f"{supabase_url}/functions/v1/admin-reseed"
+    status, resp = post_json(url, payload, headers, timeout=timeout)
+    if status > 0:
+        print(f"  Edge function: OK (HTTP {status})")
+        return True
+    else:
+        print(f"  Edge function: FAILED (no HTTP response)")
+        return False
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description="GT regression batch runner v1")
     parser.add_argument("--input", required=True, help="path to gt_batch_v1 csv/json")
@@ -461,6 +492,11 @@ def main() -> int:
     parser.add_argument("--wait-seconds", type=int, default=6)
     parser.add_argument("--timeout-seconds", type=int, default=180)
     parser.add_argument("--baseline", default="", help="optional prior run dir or metrics.json for diff")
+    parser.add_argument("--force", action="store_true", help="pass force=true to admin-reseed (cascade delete before re-segment)")
+    parser.add_argument("--preflight-only", action="store_true", help="run preflight checks then exit (no batch)")
+    parser.add_argument("--rate-limit", type=int, default=0, help="max requests per minute (0=unlimited)")
+    parser.add_argument("--max-consecutive-failures", type=int, default=3, help="abort after N consecutive trigger failures")
+    parser.add_argument("--max-failure-pct", type=int, default=50, help="abort if failure %% exceeds N (checked after 5+ attempts)")
     args = parser.parse_args()
 
     supabase_url = ensure_env("SUPABASE_URL")
@@ -501,13 +537,39 @@ def main() -> int:
         "Authorization": f"Bearer {service_role}",
         "apikey": service_role,
         "X-Edge-Secret": edge_secret,
-        "X-Source": "gt-batch-runner",
+        "X-Source": "admin-reseed",
     }
+
+    # --- Preflight checks ---
+    if unique_interactions:
+        preflight_ok = run_preflight(
+            database_url=database_url,
+            psql_bin=psql_bin,
+            supabase_url=supabase_url,
+            headers=headers,
+            first_interaction_id=unique_interactions[0],
+            run_id=run_id,
+            timeout=args.timeout_seconds,
+        )
+        if not preflight_ok:
+            print("PREFLIGHT_FAILED")
+            return 1
+        if args.preflight_only:
+            print("PREFLIGHT_OK")
+            return 0
+        print("PREFLIGHT_OK — proceeding with batch")
 
     trigger_rows: List[Dict[str, str]] = []
     interaction_map: Dict[str, str] = {}
+    consecutive_failures = 0
+    total_trigger_attempted = 0
+    total_trigger_failed = 0
+    abort_reason = ""
+    abort_at_index = 0
 
     for idx, interaction_id in enumerate(unique_interactions, start=1):
+        request_t0 = time.time()
+
         if args.mode == "none":
             interaction_map[interaction_id] = interaction_id
             trigger_rows.append(
@@ -543,10 +605,16 @@ def main() -> int:
                 "idempotency_key": idem_key,
                 "reason": "gt_batch_runner_v1",
                 "requested_by": "dev-1",
+                "force": args.force,
             }
             url = f"{supabase_url}/functions/v1/admin-reseed"
 
         status, resp = post_json(url, payload, headers, timeout=args.timeout_seconds)
+        # Retry once on 504 Gateway Timeout with 10s backoff
+        if status == 504:
+            print(f"  [{idx}/{len(unique_interactions)}] {interaction_id}: 504 timeout, retrying in 10s...")
+            time.sleep(10)
+            status, resp = post_json(url, payload, headers, timeout=args.timeout_seconds)
         response_file = trigger_dir / f"{interaction_id}.json"
         response_file.write_text(json.dumps({"http_status": status, "response": resp}, indent=2), encoding="utf-8")
 
@@ -579,6 +647,33 @@ def main() -> int:
                 "response_file": str(response_file),
             }
         )
+
+        # --- Failure tracking / cost fuse ---
+        total_trigger_attempted += 1
+        if not ok:
+            consecutive_failures += 1
+            total_trigger_failed += 1
+            if consecutive_failures >= args.max_consecutive_failures:
+                abort_reason = f"consecutive_failures={consecutive_failures}"
+                abort_at_index = idx
+                print(f"ABORT: {abort_reason} at index {idx}")
+                break
+            if total_trigger_attempted >= 5:
+                fail_pct = (total_trigger_failed / total_trigger_attempted) * 100
+                if fail_pct >= args.max_failure_pct:
+                    abort_reason = f"failure_pct={fail_pct:.1f}%"
+                    abort_at_index = idx
+                    print(f"ABORT: {abort_reason} at index {idx}")
+                    break
+        else:
+            consecutive_failures = 0
+
+        # --- Rate limiting ---
+        if args.rate_limit > 0:
+            min_interval_s = 60.0 / args.rate_limit
+            elapsed = time.time() - request_t0
+            if elapsed < min_interval_s:
+                time.sleep(min_interval_s - elapsed)
 
     write_csv(run_dir / "trigger_results.csv", TRIGGER_FIELDS, trigger_rows)
 
@@ -735,6 +830,8 @@ where interaction_id in ({in_list})
         "missing_char_offsets_count": missing_char_offsets_count,
         "trigger_fail_count": trigger_fail_count,
         "failures_count": len(failures),
+        "abort_reason": abort_reason,
+        "abort_at_index": abort_at_index,
         "generated_at_utc": dt.datetime.utcnow().isoformat() + "Z",
     }
 

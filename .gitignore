@@ -38,5 +38,9 @@ supabase/.temp/
 # Artifacts (backfill runs, spotcheck outputs)
 artifacts/
 
+# Scratch (ephemeral proofs, GT runs, debug output)
+.scratch/
+proofs/
+
 # Claude Code local settings
 .claude/

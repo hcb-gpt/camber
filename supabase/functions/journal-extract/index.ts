@@ -1,10 +1,19 @@
 /**
- * journal-extract Edge Function v1.3.0
+ * journal-extract Edge Function v1.3.2
  * Extracts structured epistemic claims from attributed conversation spans
  *
- * @version 1.3.0
+ * @version 1.3.2
  * @date 2026-02-14
  * @purpose D1 deliverable - journal claim extraction from spans
+ *
+ * v1.3.2 changes (DEV-3):
+ *   - Dedup open-loop inserts by (call_id, project_id, loop_type, description, status=open)
+ *     to prevent duplicate loop rows on extract retries/replays.
+ *   - Fire loop-closure trigger when either claims or open-loops are written.
+ *
+ * v1.3.1 changes (DEV-3):
+ *   - Fire-and-forget chain to loop-closure after successful claim writes.
+ *   - Adds bounded timeout for loop-closure trigger and response telemetry.
  *
  * v1.3.0 changes (DEV-4):
  *   - Add optional write gate to block claim writes when attribution decision
@@ -67,13 +76,14 @@
 import "jsr:@supabase/functions-js/edge-runtime.d.ts";
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
 
-const FUNCTION_VERSION = "v1.3.0";
+const FUNCTION_VERSION = "v1.3.2";
 const PROMPT_VERSION = "journal-extract-v2";
 const MAX_TOKENS = 4096;
 const DEFAULT_MODEL = "claude-3-haiku-20240307";
 const DEFAULT_TIMEOUT_MS = 30000;
 const MAX_TRANSCRIPT_CHARS = 8000; // Cap transcript to prevent inference timeouts
 const JOURNAL_CONSOLIDATE_TIMEOUT_MS = 120000;
+const LOOP_CLOSURE_TRIGGER_TIMEOUT_MS = 45000;
 const SKIP_NON_ASSIGN_WRITES = (() => {
   const raw = (Deno.env.get("JOURNAL_EXTRACT_SKIP_NON_ASSIGN_WRITES") || "").trim().toLowerCase();
   return raw === "1" || raw === "true" || raw === "yes" || raw === "on";
@@ -108,6 +118,7 @@ const VALID_EPISTEMIC_STATUSES = [
 ] as const;
 const VALID_WARRANT_LEVELS = ["high", "medium", "low"] as const;
 const VALID_TESTIMONY_TYPES = ["direct", "reported", "inferred"] as const;
+const VALID_LOOP_TYPES = ["question", "blocker", "follow_up", "action_item"] as const;
 
 type ClaimType = typeof VALID_CLAIM_TYPES[number];
 type EpistemicStatus = typeof VALID_EPISTEMIC_STATUSES[number];
@@ -125,6 +136,29 @@ interface ExtractedClaim {
   end_sec: number | null;
   is_open_loop: boolean;
   open_loop_type: string | null;
+}
+
+function normalizeLoopType(openLoopType: string | null, claimType: ClaimType): string {
+  const raw = (openLoopType || claimType || "").trim().toLowerCase().replaceAll("-", "_");
+
+  if (raw && VALID_LOOP_TYPES.includes(raw as typeof VALID_LOOP_TYPES[number])) {
+    return raw;
+  }
+
+  if (raw.includes("question")) return "question";
+  if (raw.includes("block") || raw.includes("concern") || raw.includes("risk")) return "blocker";
+  if (raw.includes("action") || raw.includes("todo") || raw.includes("task")) return "action_item";
+  if (raw.includes("follow") || raw.includes("deadline") || raw.includes("commitment")) return "follow_up";
+
+  switch (claimType) {
+    case "question":
+      return "question";
+    case "blocker":
+    case "concern":
+      return "blocker";
+    default:
+      return "follow_up";
+  }
 }
 
 interface ExtractionResponse {
@@ -296,6 +330,49 @@ async function triggerJournalConsolidate(
     }
   } catch (err: any) {
     console.warn(`[journal-extract] journal-consolidate trigger failed for run ${runId}: ${err.message}`);
+  }
+}
+
+async function triggerLoopClosure(
+  baseUrl: string,
+  edgeSecret: string,
+  interactionId: string,
+  projectId: string,
+): Promise<void> {
+  try {
+    const timeoutMs = Number(Deno.env.get("LOOP_CLOSURE_TRIGGER_TIMEOUT_MS")) || LOOP_CLOSURE_TRIGGER_TIMEOUT_MS;
+    const controller = new AbortController();
+    const timeoutHandle = setTimeout(() => controller.abort(), timeoutMs);
+
+    try {
+      const resp = await fetch(`${baseUrl}/functions/v1/loop-closure`, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          "X-Edge-Secret": edgeSecret,
+        },
+        body: JSON.stringify({ interaction_id: interactionId, project_id: projectId }),
+        signal: controller.signal,
+      });
+
+      if (!resp.ok) {
+        const errBody = await resp.text().catch(() => "unknown");
+        console.warn(
+          `[journal-extract] loop-closure trigger ${resp.status}: ${errBody.slice(0, 200)}`,
+        );
+        return;
+      }
+
+      const payload = await resp.json().catch(() => null);
+      console.log(
+        `[journal-extract] loop-closure trigger OK: interaction_id=${interactionId}, ` +
+          `loops_closed=${payload?.loops_closed ?? "?"}, loops_checked=${payload?.loops_checked ?? "?"}`,
+      );
+    } finally {
+      clearTimeout(timeoutHandle);
+    }
+  } catch (err: any) {
+    console.warn(`[journal-extract] loop-closure trigger failed for interaction ${interactionId}: ${err.message}`);
   }
 }
 
@@ -743,6 +820,7 @@ Deno.serve(async (req: Request) => {
     let blocked_by_write_gate_claims = 0;
     const attribution_decision = attribution?.decision || null;
     let journal_consolidate_fired = false;
+    let loop_closure_fired = false;
 
     if (!dry_run && extraction.claims.length > 0) {
       // ── NULL PROJECT_ID GUARD ────────────────────────────────────
@@ -872,31 +950,61 @@ Deno.serve(async (req: Request) => {
 
         const openLoopClaims = extraction.claims.filter((c) => c.is_open_loop);
         if (openLoopClaims.length > 0) {
-          const loopRows = openLoopClaims.map((c) => ({
+          const loopRowsRaw = openLoopClaims.map((c) => ({
             run_id,
             call_id: interaction_id,
             project_id,
-            loop_type: c.open_loop_type || c.claim_type,
+            loop_type: normalizeLoopType(c.open_loop_type, c.claim_type),
             description: c.claim_text,
             start_sec: c.start_sec,
             end_sec: c.end_sec,
             status: "open",
           }));
 
-          const { error: loopErr } = await db.from("journal_open_loops").insert(loopRows);
-          if (loopErr) {
-            console.error("[journal-extract] journal_open_loops insert failed:", loopErr.message);
-            return new Response(
-              JSON.stringify({
-                ok: false,
-                error_code: "journal_open_loops_write_failed",
-                error: loopErr.message,
-                interaction_id,
-                span_id,
-              }),
-              { status: 500, headers: { "Content-Type": "application/json" } },
+          let loopRows = loopRowsRaw;
+          const { data: existingLoops, error: existingLoopsErr } = await db
+            .from("journal_open_loops")
+            .select("loop_type, description")
+            .eq("call_id", interaction_id)
+            .eq("project_id", project_id)
+            .eq("status", "open");
+
+          if (existingLoopsErr) {
+            console.warn("[journal-extract] journal_open_loops dedup lookup failed:", existingLoopsErr.message);
+          } else if (existingLoops && existingLoops.length > 0) {
+            const existingKeys = new Set(
+              existingLoops.map((row: any) =>
+                `${String(row.loop_type || "").trim().toLowerCase()}|${String(row.description || "").trim()}`
+              ),
             );
-          } else {
+            loopRows = loopRowsRaw.filter((row) =>
+              !existingKeys.has(`${row.loop_type.trim().toLowerCase()}|${row.description.trim()}`)
+            );
+          }
+
+          if (loopRows.length > 0) {
+            const { error: loopErr } = await db.from("journal_open_loops").insert(loopRows);
+            if (loopErr) {
+              console.error("[journal-extract] journal_open_loops insert failed:", loopErr.message);
+              // Best-effort: mark run failed so it doesn't remain stuck in running.
+              try {
+                await db.from("journal_runs").update({
+                  status: "failed",
+                  completed_at: new Date().toISOString(),
+                  error_message: `journal_open_loops_write_failed: ${loopErr.message}`.slice(0, 500),
+                }).eq("run_id", run_id);
+              } catch { /* best-effort */ }
+              return new Response(
+                JSON.stringify({
+                  ok: false,
+                  error_code: "journal_open_loops_write_failed",
+                  error: loopErr.message,
+                  interaction_id,
+                  span_id,
+                }),
+                { status: 500, headers: { "Content-Type": "application/json" } },
+              );
+            }
             loops_written = loopRows.length;
           }
         }
@@ -920,11 +1028,17 @@ Deno.serve(async (req: Request) => {
           );
         }
 
-        if (claims_written > 0 && project_id && run_id && expectedSecret) {
+        if (project_id && run_id && expectedSecret) {
           const supabaseUrl = Deno.env.get("SUPABASE_URL");
           if (supabaseUrl) {
-            journal_consolidate_fired = true;
-            void triggerJournalConsolidate(supabaseUrl, expectedSecret, run_id);
+            if (claims_written > 0) {
+              journal_consolidate_fired = true;
+              void triggerJournalConsolidate(supabaseUrl, expectedSecret, run_id);
+            }
+            if (claims_written > 0 || loops_written > 0) {
+              loop_closure_fired = true;
+              void triggerLoopClosure(supabaseUrl, expectedSecret, interaction_id, project_id);
+            }
           }
         }
       }
@@ -951,6 +1065,7 @@ Deno.serve(async (req: Request) => {
         ...(skipped_no_project ? { reason: "no_project_attribution: re-trigger after ai-router attributes span" } : {}),
         model,
         journal_consolidate_fired,
+        loop_closure_fired,
         tokens_used,
         inference_ms,
         retried,

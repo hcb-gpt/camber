@@ -1,0 +1,2 @@
+# verify_jwt = false: internal machine-to-machine auth via X-Edge-Secret + X-Source
+verify_jwt = false

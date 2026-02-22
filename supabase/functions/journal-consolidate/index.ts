@@ -1,9 +1,9 @@
 /**
- * journal-consolidate Edge Function v1.0.2
+ * journal-consolidate Edge Function v1.0.3
  * Compares new claims against existing project knowledge to determine relationships
  *
- * @version 1.0.2
- * @date 2026-02-09
+ * @version 1.0.3
+ * @date 2026-02-22
  * @purpose D1 deliverable - world model consolidation layer
  *
  * Input: { project_id } or { claim_ids: [...] } or { run_id }
@@ -11,11 +11,12 @@
  * Output: updated relationship fields, conflict records, review queue entries
  *
  * v1.0.2: Fix journal_runs status='success' (constraint requires 'success' not 'completed')
+ * v1.0.3: Hotfix - remove confirmed-only filter from existing-claims read path.
  */
 import "jsr:@supabase/functions-js/edge-runtime.d.ts";
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
 
-const FUNCTION_VERSION = "v1.0.2";
+const FUNCTION_VERSION = "v1.0.3";
 const PROMPT_VERSION = "journal-consolidate-v1";
 const MAX_TOKENS = 4096;
 const DEFAULT_MODEL = "claude-sonnet-4-5-20250929";
@@ -255,7 +256,6 @@ Deno.serve(async (req: Request) => {
       .select("claim_id, call_id, claim_type, claim_text, epistemic_status, warrant_level, relationship, created_at")
       .eq("project_id", project_id)
       .eq("active", true)
-      .eq("claim_confirmation_state", "confirmed")
       .not("claim_id", "in", `(${newClaimIds.join(",")})`)
       .order("created_at", { ascending: true })
       .limit(MAX_EXISTING_CLAIMS_CONTEXT);
@@ -337,6 +337,7 @@ If there are no existing claims, mark everything as "new" with confidence 1.0.`;
     let remained_new = 0;
     let review_queue_entries = 0;
     let human_override_skips = 0;
+    let promotion_result: any = null;
 
     if (!dry_run) {
       for (const j of result.judgments) {
@@ -460,6 +461,20 @@ If there are no existing claims, mark everything as "new" with confidence 1.0.`;
         conflicts_detected,
         routed_to_review: review_queue_entries,
       }).eq("run_id", run_id);
+
+      // Promotion bridge:
+      // When journal-consolidate is triggered from journal-extract (body.run_id),
+      // immediately run promotion for that extraction run so belief_claims stays live.
+      if (body.run_id) {
+        const { data: promoteData, error: promoteErr } = await db.rpc(
+          "promote_journal_claims_to_belief",
+          { p_run_id: body.run_id },
+        );
+        if (promoteErr) {
+          throw new Error(`promote_belief_failed: ${promoteErr.message}`);
+        }
+        promotion_result = promoteData || null;
+      }
     }
 
     if (dry_run) {
@@ -482,6 +497,7 @@ If there are no existing claims, mark everything as "new" with confidence 1.0.`;
         judgments: { superseded, corroborated, conflicts_detected, remained_new, human_override_skips },
         review_queue_entries: dry_run ? 0 : review_queue_entries,
         cross_project_signals: result.cross_project_signals.length,
+        promotion_result: dry_run ? null : promotion_result,
         raw_judgments: dry_run ? result.judgments : undefined,
         model,
         tokens_used,

@@ -113,7 +113,7 @@ import {
 
 const PROMPT_VERSION_BASE = "v1.13.0";
 const FUNCTION_VERSION = "v1.15.0";
-const MODEL_ID = "claude-3-haiku-20240307";
+const MODEL_ID = Deno.env.get("AI_ROUTER_MODEL") || "claude-3-haiku-20240307";
 const MAX_TOKENS = 1024;
 const WORLD_MODEL_FACTS_ENABLED = parseBoolEnv(Deno.env.get("WORLD_MODEL_FACTS_ENABLED"), false);
 const WORLD_MODEL_FACTS_MAX_PER_PROJECT = Math.max(
@@ -269,6 +269,7 @@ interface ContextPackage {
   project_facts?: ProjectFactsPack[];
   email_context?: EmailContextItem[];
   email_lookup_meta?: EmailLookupMeta | null;
+  evidence_brief?: any;
 }
 
 type TranscriptSanitizeMode = "default" | "strict";
@@ -495,6 +496,7 @@ const STRONG_ANCHOR_TYPES = [
   "alias",
   "address_fragment",
   "client_name",
+  "chain_continuity",
 ];
 
 const _WEAK_ANCHOR_TYPES = [
@@ -561,7 +563,13 @@ function evaluateSafeLowConfidenceAssign(opts: {
 
   // Safe path 1: anchored contact with strong alias match on this project
   if (opts.fanout_class === "anchored") {
-    const strongMatchTypes = new Set(["exact_project_name", "alias", "address_fragment", "client_name"]);
+    const strongMatchTypes = new Set([
+      "exact_project_name",
+      "alias",
+      "address_fragment",
+      "client_name",
+      "chain_continuity",
+    ]);
     const hasStrongMatch = chosen.evidence.alias_matches.some((m) => strongMatchTypes.has(m.match_type));
     if (hasStrongMatch) {
       return { promoted: true, reason: "safe_anchored_contact_strong_match" };
@@ -723,14 +731,34 @@ GEO CONTEXT (when available):
 - Destination/origin roles can increase confidence inside review band when transcript anchors already exist.
 - If geo conflicts with strong transcript anchors, trust transcript anchors.
 
+EVIDENCE BRIEF (from evidence-assembler):
+For each candidate, you may see a structured assessment across 8 evidence
+dimensions. Each dimension has a verdict: supports, contradicts, neutral,
+or missing.
+
+Interpretation rules:
+- 3+ "supports" with 0 "contradicts" = STRONG candidate.
+- Any "contradicts" requires explanation or use review.
+- "missing" = signal unavailable, not evidence against.
+- corroboration_count >= 3 enables the multi-source exception (0.65 threshold).
+- alias_uniqueness "supports" + "alias_unique_single_project" = treat as exact_project_name anchor.
+- chain_continuity "supports" with receipt from span_attributions = STRONG anchor.
+
 CONFIDENCE THRESHOLDS (3-band policy):
 - 0.75-1.00: Strong transcript-grounded evidence, safe to auto-assign
 - 0.25-0.74: Some evidence exists, needs human review — ALWAYS include your best candidate project_id and reasoning
 - 0.00-0.24: No meaningful evidence at all, truly no project match
 
+MULTI-SOURCE CORROBORATION EXCEPTION:
+When a candidate project's evidence includes 3 or more independent source categories
+(e.g., transcript mention + affinity + journal claim + project_facts + geo),
+a confidence of 0.65 or higher is sufficient for decision="assign".
+This exception applies ONLY when the sources are genuinely independent — multiple
+transcript matches from the same passage count as one source category.
+
 ANCHOR STRENGTH POLICY:
 To use decision="assign", you MUST have at least one STRONG anchor type:
-- STRONG: exact_project_name, alias, address_fragment, client_name
+- STRONG: exact_project_name, alias, address_fragment, client_name, chain_continuity
 - WEAK: city_or_location, mentioned_contact, phonetic_or_pronunciation, continuity_callback, other
 
 If your ONLY evidence is weak anchors (e.g., city name, zip code, county), you MUST use decision="review".
@@ -750,7 +778,7 @@ OUTPUT FORMAT (JSON only, no markdown):
     {
       "text": "<the matched term/phrase>",
       "candidate_project_id": "<uuid of the project this evidence supports>",
-      "match_type": "<exact_project_name|alias|address_fragment|city_or_location|client_name|mentioned_contact|phonetic_or_pronunciation|continuity_callback|other>",
+      "match_type": "<exact_project_name|alias|address_fragment|city_or_location|client_name|mentioned_contact|phonetic_or_pronunciation|continuity_callback|chain_continuity|other>",
       "quote": "<EXACT quote from transcript, max 50 chars>"
     }
   ],
@@ -846,6 +874,24 @@ function buildUserPrompt(
       ? buildWorldModelFactsCandidateSummary(c.project_id, projectFacts, 3)
       : null;
 
+    // Evidence brief dimensions (from evidence-assembler, when present)
+    const briefDims = (c as any).evidence_brief_dimensions;
+    let briefSummary = "";
+    if (briefDims && typeof briefDims === "object") {
+      const dimLines = Object.entries(briefDims)
+        .map(([dim, assessment]: [string, any]) => {
+          if (!assessment || !assessment.verdict) return null;
+          const rc = assessment.reason_code ? ` (${assessment.reason_code})` : "";
+          return `     ${dim}: ${assessment.verdict}${rc}`;
+        })
+        .filter(Boolean);
+      if (dimLines.length > 0) {
+        const corr = (c as any).corroboration_count ?? "?";
+        const contra = (c as any).contradiction_count ?? "?";
+        briefSummary = `   - Evidence Brief [corr=${corr}, contra=${contra}]:\n${dimLines.join("\n")}`;
+      }
+    }
+
     return `${i + 1}. ${c.project_name}
    - ID: ${c.project_id}
    - Address: ${c.address || "N/A"}
@@ -858,7 +904,7 @@ function buildUserPrompt(
     }, sources=[${c.evidence.sources.join(",")}]
    - ${geoSummary}
    - ${aliasMatchSummary}
-${journalSummary}${worldModelSummary ? `\n${worldModelSummary}` : ""}`;
+${briefSummary ? `${briefSummary}\n` : ""}${journalSummary}${worldModelSummary ? `\n${worldModelSummary}` : ""}`;
   }).join("\n\n");
 
   const recentProjectList = ctx.contact.recent_projects.length > 0

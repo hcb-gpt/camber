@@ -1,0 +1,40 @@
+{
+  "http_status": 200,
+  "response": {
+    "ok": true,
+    "receipt": {
+      "ok": true,
+      "interaction_id": "cll_06E0QPHWXXTSH2AC66B2FGCDAM",
+      "idempotency_key": "gt-batch-20260218T032854Z-030-cll_06E0QPHWXXTSH2AC66B2FGCDAM",
+      "mode": "resegment_and_reroute",
+      "span_count_before": 0,
+      "span_count_after": 2,
+      "attrib_count_before": 0,
+      "attrib_count_after": 2,
+      "status": "success",
+      "human_lock_count": 0,
+      "human_lock_carryforward_count": 0,
+      "superseded_span_ids": [],
+      "new_span_ids": [
+        "40fb1b12-9b89-45cb-8d46-3488fb3518e9",
+        "1de8077d-e8b2-46ea-b606-daef74f8528d"
+      ],
+      "reroute_triggered": true,
+      "insert_conflict_recovered": false,
+      "conflict_constraint": null,
+      "adopted_generation": null,
+      "reroute_attempted": 2,
+      "reroute_succeeded": 1,
+      "reroute_failed": 1,
+      "close_loop_applied": false,
+      "close_loop_attempts": 0,
+      "close_loop_missing_before": 1,
+      "close_loop_missing_after": 0,
+      "close_loop_fallback_inserted": 0,
+      "close_loop_stale_pending_dismissed": 0,
+      "close_loop_pending_on_superseded_after": 0,
+      "close_loop_pending_null_after": 0,
+      "ms": 26415
+    }
+  }
+}

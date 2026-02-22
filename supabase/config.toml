@@ -47,3 +47,9 @@ verify_jwt = false
 
 [functions.gt-apply]
 verify_jwt = false
+
+[functions.evidence-assembler]
+verify_jwt = false
+
+[functions.decision-auditor]
+verify_jwt = false

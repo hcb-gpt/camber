@@ -1,0 +1,11 @@
+{
+  "baseline_metrics": "proofs/gt/runs/20260218T032835Z/baseline_preserved/20260218T032717Z/metrics.json",
+  "baseline_metrics_source": "proofs/gt/runs/20260218T032717Z/metrics.json",
+  "baseline_metrics_preserved": "proofs/gt/runs/20260218T032835Z/baseline_preserved/20260218T032717Z/metrics.json",
+  "delta_accuracy": 0.0,
+  "delta_review_rate": 0.0,
+  "delta_staff_leak_count": 0,
+  "delta_homeowner_override_fail_count": 0,
+  "delta_multi_project_span_count": 0,
+  "delta_missing_char_offsets_count": 0
+}

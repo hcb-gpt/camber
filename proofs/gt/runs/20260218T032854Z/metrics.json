@@ -1,0 +1,19 @@
+{
+  "run_id": "20260218T032854Z",
+  "run_dir": "proofs/gt/runs/20260218T032854Z",
+  "mode": "reseed",
+  "reseed_mode": "resegment_and_reroute",
+  "input_file": "/Users/chadbarlow/gh/hcb-gpt/camber-calls/artifacts/gt/batches/gt_batch_v1_full.csv",
+  "total_rows": 146,
+  "expected_rows": 146,
+  "correct_rows": 20,
+  "accuracy": 0.137,
+  "review_rate": 0.4844,
+  "homeowner_override_fail_count": 0,
+  "staff_leak_count": 0,
+  "multi_project_span_count": 0,
+  "missing_char_offsets_count": 0,
+  "trigger_fail_count": 0,
+  "failures_count": 126,
+  "generated_at_utc": "2026-02-18T03:44:19.534857Z"
+}

@@ -1,0 +1,52 @@
+{
+  "http_status": 200,
+  "response": {
+    "ok": true,
+    "receipt": {
+      "ok": true,
+      "interaction_id": "cll_06E0B0JR69Y1K8CGEJJ82GFVBR",
+      "idempotency_key": "gt-batch-20260218T032854Z-020-cll_06E0B0JR69Y1K8CGEJJ82GFVBR",
+      "mode": "resegment_and_reroute",
+      "span_count_before": 8,
+      "span_count_after": 5,
+      "attrib_count_before": 8,
+      "attrib_count_after": 5,
+      "status": "success",
+      "human_lock_count": 0,
+      "human_lock_carryforward_count": 0,
+      "superseded_span_ids": [
+        "9282f8d0-c9c6-411c-a190-b331625795b8",
+        "0194804f-0075-4e15-aa3c-89551d2de644",
+        "f71c2cd4-bc99-41ea-8165-24c1857e893e",
+        "c79ae0fb-d570-4ff9-80b7-aaf4e64f4ce5",
+        "0d7bad00-146d-415d-8193-d8ab67507250",
+        "6bdbc570-e8f3-4bda-b541-89e9635570a1",
+        "b5f510b7-ffff-47c0-bf17-b0a1b32c3cf0",
+        "2b97ab5b-24d2-4a9d-811f-1c832dc7e367"
+      ],
+      "new_span_ids": [
+        "61eff855-41b9-415c-98ea-7fc007356023",
+        "4751fc6d-8236-4be6-a2ba-dbad78265cc2",
+        "097b7668-3984-41fc-98e5-48be9330a4da",
+        "44302f24-eb5b-4ee2-bc19-2abe0e0625be",
+        "e1f7669d-dc7b-4c48-bb9f-ec1bdb65e190"
+      ],
+      "reroute_triggered": true,
+      "insert_conflict_recovered": false,
+      "conflict_constraint": null,
+      "adopted_generation": null,
+      "reroute_attempted": 5,
+      "reroute_succeeded": 4,
+      "reroute_failed": 1,
+      "close_loop_applied": false,
+      "close_loop_attempts": 0,
+      "close_loop_missing_before": 1,
+      "close_loop_missing_after": 0,
+      "close_loop_fallback_inserted": 0,
+      "close_loop_stale_pending_dismissed": 0,
+      "close_loop_pending_on_superseded_after": 0,
+      "close_loop_pending_null_after": 0,
+      "ms": 38476
+    }
+  }
+}
