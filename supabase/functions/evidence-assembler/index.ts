@@ -300,7 +300,7 @@ async function checkContactFanout(
 // TOOL DISPATCH
 // ============================================================
 
-async function dispatchTool(
+function dispatchTool(
   name: string,
   params: any,
   db: any,
@@ -531,7 +531,7 @@ Deno.serve(async (req: Request) => {
     });
   }
 
-  const { context_package, interaction_id, span_id, dry_run } = body;
+  const { context_package, span_id } = body;
   if (!context_package || !span_id) {
     return new Response(
       JSON.stringify({ error: "missing_context_package_or_span_id" }),

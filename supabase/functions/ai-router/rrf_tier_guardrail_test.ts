@@ -1,9 +1,5 @@
 import { applyRrfTierGuardrail } from "./rrf_tier_guardrail.ts";
 
-function assert(condition: boolean, message: string): void {
-  if (!condition) throw new Error(message);
-}
-
 function assertEquals<T>(actual: T, expected: T, message: string): void {
   if (actual !== expected) {
     throw new Error(`${message}: expected=${String(expected)} actual=${String(actual)}`);

@@ -1930,7 +1930,7 @@ Deno.serve(async (req: Request) => {
           }
         }
         // Promote unique first-name matches on multi-source candidates
-        for (const [pid, meta] of candidatesById) {
+        for (const [, meta] of candidatesById) {
           const hasOtherSource = meta.sources.some((s) => s !== "transcript_scan");
           if (!hasOtherSource) continue;
           for (const m of meta.alias_matches) {

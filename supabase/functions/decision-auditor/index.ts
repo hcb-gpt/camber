@@ -20,7 +20,6 @@ const MODEL_ID = "claude-sonnet-4-5-20250514";
 const MAX_TOKENS = 1024;
 
 // Budget caps
-const MAX_ITERATIONS = 2;
 const MAX_TOOL_CALLS = 4;
 const WALL_CLOCK_MS = 15_000;
 const LLM_TIMEOUT_MS = 12_000;
@@ -220,9 +219,7 @@ Deno.serve(async (req: Request) => {
     enriched_context_package,
     ai_router_decision,
     evidence_brief,
-    interaction_id,
     span_id,
-    dry_run,
   } = body;
 
   if (!enriched_context_package || !ai_router_decision || !span_id) {
