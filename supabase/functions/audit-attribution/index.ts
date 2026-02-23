@@ -210,8 +210,29 @@ function normalizeToken(v: string, maxLen: number): string {
     .slice(0, maxLen);
 }
 
+// Allowed failure_tags vocabulary — must match the DB check constraint
+// attribution_audit_failure_tags_vocab. Tags not in this set are dropped
+// before persist to prevent constraint violations from LLM-generated tags.
+const FAILURE_TAGS_VOCAB = new Set([
+  "missing_alias_anchor", "wrong_vendor_binding", "multi_project_span_ambiguity",
+  "known_asof_violation", "same_call_leakage", "insufficient_provenance_pointer_quality",
+  "competing_candidate_too_close", "location_anchor_overweight", "floater_confusion",
+  "timeline_anchor_missing", "doc_anchor_missing", "matched_terms_spurious",
+  "reviewer_runtime_error", "pointer_or_provenance_gap", "same_call_leakage_detected",
+  "future_context_leakage_detected", "asof_mode_not_known_as_of",
+  "same_call_exclusion_not_asserted", "fake_assigned_confidence",
+  "missing_assigned_project", "missing_transcript_segment",
+  "missing_project_context", "missing_evidence_packet", "missing_evidence_events",
+  "provenance_context_missing", "span_attribution_id_missing_for_ledger",
+  "top_candidate_disagrees_with_assignment", "assignment_disagreement",
+]);
+
 function normalizeTagList(values: string[]): string[] {
   return uniqueStrings(values.map((v) => normalizeToken(v, 80)).filter(Boolean)).slice(0, 24);
+}
+
+function sanitizeTagsForLedger(tags: string[]): string[] {
+  return tags.filter((t) => FAILURE_TAGS_VOCAB.has(t));
 }
 
 function normalizeMissingEvidenceList(values: string[]): string[] {
@@ -700,11 +721,16 @@ async function persistToLedger(
   const spanCharEnd = asNumber(packet.span_bounds.char_end);
   const transcriptSpanHash = packet.transcript_segment ? await sha256Hex(packet.transcript_segment) : null;
   const evidenceEventIds = extractEvidenceEventIds(packet);
-  const failureTags = normalizeTagList(output.failure_mode_tags);
+  let failureTags = sanitizeTagsForLedger(normalizeTagList(output.failure_mode_tags));
   const missingEvidence = normalizeMissingEvidenceList(output.missing_evidence);
   const pointerQualityViolation = evidenceEventIds.length === 0 ||
     failureTags.some((tag) => tag.includes("pointer") || tag.includes("provenance")) ||
     missingEvidence.some((tag) => tag.includes("pointer") || tag.includes("provenance"));
+  // DB constraint: when evidence_event_ids is empty, failure_tags MUST include
+  // 'insufficient_provenance_pointer_quality' alongside pointer_quality_violation=true
+  if (pointerQualityViolation && !failureTags.includes("insufficient_provenance_pointer_quality")) {
+    failureTags = [...failureTags, "insufficient_provenance_pointer_quality"];
+  }
   const topCandidateConfidence = asNumber(asRecord(output.top_candidates[0]).confidence);
   const competingMargin = topCandidateConfidence !== null && assignedConfidence !== null
     ? Number((topCandidateConfidence - assignedConfidence).toFixed(4))
@@ -1135,9 +1161,9 @@ Deno.serve(async (req: Request) => {
   } catch { /* lineage emission must never block the response */ }
 
   // Canonical ledger tags for policy evaluation (available in both dry_run and persist modes)
-  const ledger_failure_tags = normalizeTagList(
+  const ledger_failure_tags = sanitizeTagsForLedger(normalizeTagList(
     uniqueStrings([...output.failure_mode_tags, ...deterministicTags]),
-  );
+  ));
   const ledger_failure_mode_bucket = deriveFailureModeBucket(output.verdict, ledger_failure_tags);
 
   return new Response(
