@@ -57,99 +57,187 @@ function buildPage(
   <title>Operator Validation</title>
   <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2/dist/umd/supabase.min.js"><\/script>
   <style>
-    @import url("https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@400;500;700&family=IBM+Plex+Mono:wght@400;600&display=swap");
+    @import url("https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;500;700&family=DM+Mono:wght@400;500&display=swap");
 
     :root {
-      --bg: #f5f7f2; --ink: #11231f; --muted: #44615c;
-      --card: #ffffff; --line: #c7d8d2;
-      --accent: #0b8f72; --accent-soft: #dff6ef;
-      --warn: #bc5f14; --warn-soft: #fdeedc;
-      --high: #9f2222; --high-soft: #f9e3e3;
-      --correct: #0b8f72; --incorrect: #9f2222; --unsure: #bc5f14;
+      --bg: #0d1017; --bg2: #131820; --card: #171d27;
+      --ink: #d4dae3; --bright: #edf0f5; --muted: #6b7689;
+      --line: #252d3a; --line2: #1e2532;
+      --accent: #22c55e; --accent-soft: rgba(34,197,94,0.12);
+      --warn: #f59e0b; --warn-soft: rgba(245,158,11,0.12);
+      --high: #ef4444; --high-soft: rgba(239,68,68,0.12);
+      --blue: #3b82f6; --blue-soft: rgba(59,130,246,0.12);
     }
-    * { box-sizing: border-box; }
+    * { box-sizing: border-box; margin: 0; }
     body {
-      margin: 0;
-      font-family: "Space Grotesk", "Avenir Next", "Segoe UI", sans-serif;
-      color: var(--ink);
-      background: radial-gradient(circle at 90% -10%, #d8efe8 0%, rgba(216,239,232,0) 48%),
-                  linear-gradient(160deg, #f7faf6 0%, #edf3ee 100%);
+      font-family: "DM Sans", system-ui, sans-serif;
+      color: var(--ink); background: var(--bg);
+      min-height: 100vh;
     }
-    .wrap { max-width: 1200px; margin: 0 auto; padding: 24px; }
-    h1 { margin: 0 0 4px; font-size: clamp(1.5rem, 3vw, 2.4rem); letter-spacing: -0.02em; }
-    .meta { margin: 0 0 16px; color: var(--muted); font-size: 0.9rem; }
-    .toolbar { display: flex; gap: 10px; align-items: center; flex-wrap: wrap; margin-bottom: 16px; }
+    .wrap { max-width: 960px; margin: 0 auto; padding: 24px 20px; }
+    h1 { font-size: 1.5rem; font-weight: 700; color: var(--bright); letter-spacing: -0.02em; }
+    .subtitle { color: var(--muted); font-size: 0.85rem; margin-top: 4px; }
+
+    .toolbar {
+      display: flex; gap: 8px; align-items: center; flex-wrap: wrap;
+      margin: 16px 0; padding: 12px 14px;
+      background: var(--bg2); border: 1px solid var(--line); border-radius: 10px;
+    }
     .toolbar select, .toolbar button {
-      padding: 8px 14px; border: 1px solid var(--line); border-radius: 8px;
-      font-family: inherit; font-size: 0.9rem; background: var(--card); cursor: pointer;
+      padding: 7px 12px; border: 1px solid var(--line); border-radius: 6px;
+      font-family: inherit; font-size: 0.84rem; background: var(--card);
+      color: var(--ink); cursor: pointer;
     }
-    .toolbar button:hover { background: var(--accent-soft); }
-    .stats { display: flex; gap: 12px; flex-wrap: wrap; margin-bottom: 16px; }
-    .stat { background: var(--card); border: 1px solid var(--line); border-radius: 10px; padding: 10px 16px; }
-    .stat-label { font-size: 0.78rem; text-transform: uppercase; letter-spacing: 0.07em; color: var(--muted); }
-    .stat-value { font-size: 1.4rem; font-weight: 700; margin-top: 2px; }
+    .toolbar select:focus, .toolbar button:focus { outline: 1px solid var(--accent); }
+    .toolbar button:hover { border-color: var(--accent); color: var(--accent); }
+    .toolbar .spacer { flex: 1; }
+
+    .stats {
+      display: grid; grid-template-columns: repeat(auto-fit, minmax(120px, 1fr));
+      gap: 8px; margin-bottom: 16px;
+    }
+    .stat {
+      background: var(--card); border: 1px solid var(--line); border-radius: 8px;
+      padding: 10px 12px; text-align: center;
+    }
+    .stat-label { font-size: 0.7rem; text-transform: uppercase; letter-spacing: 0.08em; color: var(--muted); }
+    .stat-value { font-size: 1.3rem; font-weight: 700; color: var(--bright); margin-top: 2px; }
+    .stat-value.green { color: var(--accent); }
+    .stat-value.red { color: var(--high); }
+    .stat-value.amber { color: var(--warn); }
 
     .span-card {
-      background: var(--card); border: 1px solid var(--line); border-radius: 14px;
-      padding: 18px; margin-bottom: 14px; box-shadow: 0 4px 12px rgba(27,51,45,0.04);
+      background: var(--card); border: 1px solid var(--line); border-radius: 10px;
+      padding: 16px; margin-bottom: 10px;
+      transition: border-color 0.15s;
     }
-    .span-header { display: flex; justify-content: space-between; align-items: flex-start; gap: 12px; flex-wrap: wrap; margin-bottom: 10px; }
-    .span-project { font-weight: 700; font-size: 1.05rem; }
-    .span-ids { font-family: "IBM Plex Mono", monospace; font-size: 0.76rem; color: var(--muted); }
-    .span-meta { display: flex; gap: 16px; flex-wrap: wrap; margin-bottom: 8px; font-size: 0.85rem; color: var(--muted); }
-    .span-meta span { white-space: nowrap; }
-    .pill { display: inline-block; border-radius: 999px; padding: 2px 10px; font-size: 0.8rem; font-weight: 600; }
+    .span-card:hover { border-color: #344054; }
+    .span-card.has-verdict { opacity: 0.7; }
+    .span-card.has-verdict:hover { opacity: 1; }
+
+    .card-top { display: flex; justify-content: space-between; align-items: flex-start; gap: 8px; }
+    .card-project { font-weight: 700; color: var(--bright); font-size: 0.95rem; }
+    .card-ids {
+      font-family: "DM Mono", monospace; font-size: 0.72rem; color: var(--muted);
+      display: flex; gap: 10px; flex-wrap: wrap; margin-top: 4px;
+    }
+
+    .pill {
+      display: inline-block; border-radius: 4px; padding: 2px 8px;
+      font-size: 0.74rem; font-weight: 500; font-family: "DM Mono", monospace;
+    }
     .pill-assign { color: var(--accent); background: var(--accent-soft); }
     .pill-review { color: var(--warn); background: var(--warn-soft); }
-    .pill-none { color: var(--muted); background: #eee; }
+    .pill-none { color: var(--muted); background: rgba(107,118,137,0.12); }
 
-    .evidence-section { margin-top: 8px; }
-    .evidence-label { font-size: 0.78rem; text-transform: uppercase; letter-spacing: 0.06em; color: var(--muted); margin-bottom: 4px; }
-    .reasoning { font-size: 0.88rem; line-height: 1.5; margin-bottom: 8px; padding: 8px 12px; background: #f8faf9; border-radius: 8px; border-left: 3px solid var(--accent); }
-    .anchors { display: flex; flex-direction: column; gap: 4px; margin-bottom: 8px; }
-    .anchor { font-size: 0.84rem; padding: 6px 10px; background: #f0f6f3; border-radius: 6px; }
-    .anchor-type { font-size: 0.72rem; color: var(--muted); text-transform: uppercase; margin-right: 6px; }
-
-    .verdict-bar { display: flex; gap: 8px; align-items: center; margin-top: 12px; padding-top: 12px; border-top: 1px solid var(--line); }
-    .verdict-btn {
-      padding: 8px 18px; border: 2px solid transparent; border-radius: 8px;
-      font-family: inherit; font-size: 0.88rem; font-weight: 600; cursor: pointer;
-      transition: all 0.15s;
+    .card-meta {
+      display: flex; gap: 14px; flex-wrap: wrap;
+      margin: 8px 0; font-size: 0.8rem; color: var(--muted);
+      font-family: "DM Mono", monospace;
     }
-    .verdict-btn:hover { transform: translateY(-1px); }
-    .btn-correct { background: var(--accent-soft); color: var(--correct); border-color: var(--correct); }
-    .btn-incorrect { background: var(--high-soft); color: var(--incorrect); border-color: var(--incorrect); }
-    .btn-unsure { background: var(--warn-soft); color: var(--unsure); border-color: var(--unsure); }
-    .btn-correct.active { background: var(--correct); color: #fff; }
-    .btn-incorrect.active { background: var(--incorrect); color: #fff; }
-    .btn-unsure.active { background: var(--unsure); color: #fff; }
-    .verdict-btn:disabled { opacity: 0.5; cursor: not-allowed; transform: none; }
-    .verdict-status { font-size: 0.82rem; color: var(--muted); margin-left: 8px; }
-    .verdict-saved { font-size: 0.82rem; color: var(--accent); font-weight: 600; margin-left: 8px; }
+    .conf-high { color: var(--accent); }
+    .conf-med { color: var(--warn); }
+    .conf-low { color: var(--high); }
 
-    .auth-container { max-width: 420px; margin: 80px auto; padding: 32px; background: var(--card); border: 1px solid var(--line); border-radius: 16px; box-shadow: 0 10px 24px rgba(27,51,45,0.06); }
-    .auth-container h2 { margin: 0 0 4px; font-size: 1.4rem; }
-    .auth-container p { margin: 0 0 20px; color: var(--muted); font-size: 0.9rem; }
-    .auth-container label { display: block; margin-bottom: 4px; font-size: 0.85rem; font-weight: 500; color: var(--muted); }
-    .auth-container input { width: 100%; padding: 10px 12px; margin-bottom: 14px; border: 1px solid var(--line); border-radius: 8px; font-size: 0.95rem; font-family: inherit; }
-    .auth-container button {
-      width: 100%; padding: 12px; border: none; border-radius: 8px;
-      background: var(--accent); color: #fff; font-size: 1rem; font-weight: 600;
+    .reasoning {
+      font-size: 0.84rem; line-height: 1.55; margin: 8px 0;
+      padding: 10px 12px; background: var(--bg2); border-radius: 6px;
+      border-left: 3px solid var(--blue); color: var(--ink);
+    }
+    .section-label {
+      font-size: 0.7rem; text-transform: uppercase; letter-spacing: 0.08em;
+      color: var(--muted); margin: 10px 0 4px;
+    }
+    .anchors { display: flex; flex-direction: column; gap: 4px; }
+    .anchor {
+      font-size: 0.82rem; padding: 6px 10px;
+      background: var(--bg2); border-radius: 4px; color: var(--ink);
+    }
+    .anchor-type {
+      font-family: "DM Mono", monospace; font-size: 0.68rem;
+      color: var(--blue); margin-right: 6px; text-transform: uppercase;
+    }
+
+    .verdict-bar {
+      display: flex; gap: 6px; align-items: center; flex-wrap: wrap;
+      margin-top: 12px; padding-top: 12px; border-top: 1px solid var(--line2);
+    }
+    .verdict-btn {
+      padding: 6px 16px; border: 1.5px solid transparent; border-radius: 6px;
+      font-family: "DM Mono", monospace; font-size: 0.8rem; font-weight: 500;
+      cursor: pointer; transition: all 0.12s; background: transparent;
+    }
+    .verdict-btn:hover:not(:disabled) { transform: translateY(-1px); }
+    .btn-correct { color: var(--accent); border-color: var(--accent); }
+    .btn-correct:hover:not(:disabled) { background: var(--accent-soft); }
+    .btn-correct.active { background: var(--accent); color: #000; }
+    .btn-incorrect { color: var(--high); border-color: var(--high); }
+    .btn-incorrect:hover:not(:disabled) { background: var(--high-soft); }
+    .btn-incorrect.active { background: var(--high); color: #fff; }
+    .btn-unsure { color: var(--warn); border-color: var(--warn); }
+    .btn-unsure:hover:not(:disabled) { background: var(--warn-soft); }
+    .btn-unsure.active { background: var(--warn); color: #000; }
+    .verdict-btn:disabled { opacity: 0.4; cursor: default; transform: none; }
+
+    .verdict-msg { font-size: 0.78rem; margin-left: 6px; font-family: "DM Mono", monospace; }
+    .verdict-msg.ok { color: var(--accent); }
+    .verdict-msg.err { color: var(--high); }
+    .verdict-msg.prior { color: var(--muted); }
+
+    .notes-row {
+      display: flex; gap: 6px; margin-top: 6px; align-items: center;
+    }
+    .notes-input {
+      flex: 1; padding: 6px 10px; border: 1px solid var(--line); border-radius: 6px;
+      background: var(--bg2); color: var(--ink); font-family: "DM Mono", monospace;
+      font-size: 0.8rem;
+    }
+    .notes-input::placeholder { color: var(--muted); }
+
+    /* Auth */
+    .auth-wrap {
+      max-width: 380px; margin: 80px auto; padding: 28px;
+      background: var(--card); border: 1px solid var(--line); border-radius: 10px;
+    }
+    .auth-wrap h2 { font-size: 1.3rem; color: var(--bright); margin-bottom: 4px; }
+    .auth-wrap .desc { color: var(--muted); font-size: 0.85rem; margin-bottom: 20px; }
+    .auth-wrap label { display: block; font-size: 0.8rem; color: var(--muted); margin-bottom: 4px; }
+    .auth-wrap input {
+      width: 100%; padding: 10px 12px; margin-bottom: 12px;
+      border: 1px solid var(--line); border-radius: 6px; font-size: 0.92rem;
+      font-family: inherit; background: var(--bg2); color: var(--ink);
+    }
+    .auth-wrap input:focus { outline: 1px solid var(--accent); }
+    .auth-wrap button {
+      width: 100%; padding: 11px; border: none; border-radius: 6px;
+      background: var(--accent); color: #000; font-size: 0.95rem; font-weight: 600;
       font-family: inherit; cursor: pointer;
     }
-    .auth-container button:hover { opacity: 0.9; }
-    .auth-error { margin-top: 12px; padding: 10px 12px; border-radius: 8px; background: var(--high-soft); color: var(--high); font-size: 0.88rem; display: none; }
+    .auth-wrap button:hover { opacity: 0.9; }
+    .auth-error {
+      margin-top: 10px; padding: 8px 10px; border-radius: 6px;
+      background: var(--high-soft); color: var(--high); font-size: 0.84rem; display: none;
+    }
 
-    .loading { text-align: center; padding: 60px 20px; color: var(--muted); font-size: 1.1rem; }
-    .loading::after { content: ""; display: block; width: 32px; height: 32px; margin: 16px auto 0; border: 3px solid var(--line); border-top-color: var(--accent); border-radius: 50%; animation: spin 0.8s linear infinite; }
+    .loading {
+      text-align: center; padding: 80px 20px; color: var(--muted); font-size: 1rem;
+    }
+    .loading::after {
+      content: ""; display: block; width: 28px; height: 28px; margin: 14px auto 0;
+      border: 2px solid var(--line); border-top-color: var(--accent);
+      border-radius: 50%; animation: spin 0.7s linear infinite;
+    }
     @keyframes spin { to { transform: rotate(360deg); } }
 
     #auth-section, #main-section { display: none; }
 
-    @media (max-width: 760px) {
-      .wrap { padding: 14px; }
-      .span-header { flex-direction: column; }
-      .verdict-bar { flex-wrap: wrap; }
+    .empty { text-align: center; padding: 40px; color: var(--muted); }
+
+    @media (max-width: 640px) {
+      .wrap { padding: 14px 12px; }
+      .card-top { flex-direction: column; }
+      .verdict-bar { gap: 4px; }
+      .verdict-btn { padding: 6px 10px; font-size: 0.76rem; }
     }
   </style>
 </head>
@@ -157,9 +245,9 @@ function buildPage(
   <div id="loading-section" class="loading">Checking session...</div>
 
   <div id="auth-section">
-    <div class="auth-container">
+    <div class="auth-wrap">
       <h2>Operator Validation</h2>
-      <p>Sign in with your Camber account to review attributions.</p>
+      <p class="desc">Sign in to review AI attributions.</p>
       <form id="login-form">
         <label for="email">Email</label>
         <input type="email" id="email" name="email" required autocomplete="email" />
@@ -174,7 +262,8 @@ function buildPage(
   <div id="main-section">
     <main class="wrap">
       <h1>Operator Validation</h1>
-      <p class="meta" id="page-meta"></p>
+      <p class="subtitle" id="page-meta"></p>
+
       <div class="toolbar">
         <select id="filter-select">
           <option value="needs_review">Needs Review</option>
@@ -182,14 +271,16 @@ function buildPage(
           <option value="all">All</option>
         </select>
         <select id="limit-select">
-          <option value="25">25 spans</option>
-          <option value="50" selected>50 spans</option>
-          <option value="100">100 spans</option>
-          <option value="200">200 spans</option>
+          <option value="25">25</option>
+          <option value="50" selected>50</option>
+          <option value="100">100</option>
+          <option value="200">200</option>
         </select>
         <button id="refresh-btn">Refresh</button>
-        <button id="signout-btn" style="margin-left:auto;background:none;color:var(--muted);border-color:var(--line);">Sign Out</button>
+        <div class="spacer"></div>
+        <button id="signout-btn">Sign Out</button>
       </div>
+
       <div class="stats" id="stats-bar"></div>
       <div id="span-list"></div>
     </main>
@@ -215,24 +306,41 @@ function buildPage(
       mainEl.style.display = name === "main" ? "block" : "none";
     }
 
-    function esc(s) {
-      var d = document.createElement("div");
-      d.textContent = s;
-      return d.innerHTML;
+    function el(tag, attrs, children) {
+      var e = document.createElement(tag);
+      if (attrs) for (var k in attrs) {
+        if (k === "cls") e.className = attrs[k];
+        else if (k === "text") e.textContent = attrs[k];
+        else e.setAttribute(k, attrs[k]);
+      }
+      if (children) children.forEach(function(c) {
+        if (typeof c === "string") e.appendChild(document.createTextNode(c));
+        else if (c) e.appendChild(c);
+      });
+      return e;
     }
 
-    function createEl(tag, attrs, children) {
-      var el = document.createElement(tag);
-      if (attrs) Object.keys(attrs).forEach(function(k) {
-        if (k === "className") el.className = attrs[k];
-        else if (k === "textContent") el.textContent = attrs[k];
-        else el.setAttribute(k, attrs[k]);
-      });
-      if (children) children.forEach(function(c) {
-        if (typeof c === "string") { el.appendChild(document.createTextNode(c)); }
-        else if (c) { el.appendChild(c); }
-      });
-      return el;
+    function confClass(c) {
+      if (c >= 0.8) return "conf-high";
+      if (c >= 0.6) return "conf-med";
+      return "conf-low";
+    }
+
+    function pillCls(decision) {
+      if (decision === "assign") return "pill pill-assign";
+      if (decision === "review") return "pill pill-review";
+      return "pill pill-none";
+    }
+
+    function shortId(id) {
+      if (!id) return "?";
+      return id.length > 12 ? id.slice(0, 8) + "..." : id;
+    }
+
+    function fmtDate(iso) {
+      if (!iso) return "";
+      try { return new Date(iso).toLocaleDateString("en-US", { month: "short", day: "numeric", hour: "2-digit", minute: "2-digit" }); }
+      catch(e) { return iso; }
     }
 
     async function fetchSpans() {
@@ -242,11 +350,11 @@ function buildPage(
       var resp = await fetch(url, {
         headers: currentToken ? { "Authorization": "Bearer " + currentToken } : {}
       });
-      if (!resp.ok) throw new Error("API returned " + resp.status);
+      if (!resp.ok) throw new Error("API " + resp.status);
       return resp.json();
     }
 
-    async function submitVerdict(spanId, verdict, interactionId, projectId) {
+    async function submitVerdict(spanId, verdict, interactionId, notes) {
       var resp = await fetch(API_URL, {
         method: "POST",
         headers: {
@@ -257,8 +365,7 @@ function buildPage(
           span_id: spanId,
           verdict: verdict,
           interaction_id: interactionId || null,
-          project_id: projectId || null,
-          notes: "operator-validation-ui/" + FUNCTION_VERSION
+          notes: notes || null
         })
       });
       return resp.json();
@@ -269,27 +376,26 @@ function buildPage(
       bar.replaceChildren();
       var total = data.count || 0;
       var fb = data.feedback_map || {};
-      var reviewed = 0; var correct = 0; var incorrect = 0; var unsure = 0;
-      Object.keys(fb).forEach(function(k) {
+      var reviewed = 0, correct = 0, incorrect = 0, unsure = 0;
+      for (var k in fb) {
         reviewed++;
         if (fb[k] === "CORRECT") correct++;
         else if (fb[k] === "INCORRECT") incorrect++;
         else unsure++;
-      });
-      var pairs = [
-        ["Spans Loaded", total],
-        ["Already Reviewed", reviewed],
-        ["Correct", correct],
-        ["Incorrect", incorrect],
-        ["Unsure", unsure],
-        ["Unreviewed", total - reviewed]
+      }
+      var items = [
+        ["Loaded", total, ""],
+        ["Reviewed", reviewed, ""],
+        ["Correct", correct, "green"],
+        ["Incorrect", incorrect, "red"],
+        ["Unsure", unsure, "amber"],
+        ["Remaining", total - reviewed, ""]
       ];
-      pairs.forEach(function(p) {
-        var card = createEl("div", { className: "stat" }, [
-          createEl("div", { className: "stat-label", textContent: p[0] }),
-          createEl("div", { className: "stat-value", textContent: String(p[1]) })
-        ]);
-        bar.appendChild(card);
+      items.forEach(function(it) {
+        bar.appendChild(el("div", { cls: "stat" }, [
+          el("div", { cls: "stat-label", text: it[0] }),
+          el("div", { cls: "stat-value" + (it[2] ? " " + it[2] : ""), text: String(it[1]) })
+        ]));
       });
     }
 
@@ -306,101 +412,130 @@ function buildPage(
       renderStats(data);
 
       if (spans.length === 0) {
-        list.appendChild(createEl("p", { textContent: "No spans found.", className: "meta" }));
+        list.appendChild(el("p", { cls: "empty", text: "No spans match this filter." }));
         return;
       }
 
-      spans.forEach(function(span) {
-        var existingVerdict = fb[span.span_id] || null;
-        var card = document.createElement("div");
-        card.className = "span-card";
+      spans.forEach(function(s) {
+        var existing = fb[s.span_id] || null;
+        var card = el("div", { cls: "span-card" + (existing ? " has-verdict" : "") });
 
-        // Header
-        var pillClass = span.decision === "assign" ? "pill-assign" : span.decision === "review" ? "pill-review" : "pill-none";
-        var header = createEl("div", { className: "span-header" }, [
-          createEl("div", {}, [
-            createEl("span", { className: "span-project", textContent: span.assigned_project || "No Project" }),
-            createEl("span", { className: "pill " + pillClass, textContent: span.decision || "?", style: "margin-left:10px" })
+        // project + decision
+        var project = s.applied_project || s.assigned_project || "Unassigned";
+        var top = el("div", { cls: "card-top" }, [
+          el("div", {}, [
+            el("span", { cls: "card-project", text: project }),
+            el("span", { cls: pillCls(s.decision), text: s.decision || "?", style: "margin-left:8px" })
           ]),
-          createEl("div", { className: "span-ids", textContent: span.span_id || "" })
+          el("div", { cls: "card-ids" }, [
+            el("span", { text: "span:" + (s.span_index != null ? s.span_index : "?") }),
+            el("span", { text: shortId(s.span_id) }),
+            el("span", { text: fmtDate(s.attributed_at) })
+          ])
         ]);
-        card.appendChild(header);
+        card.appendChild(top);
 
-        // Meta
-        var meta = createEl("div", { className: "span-meta" }, [
-          createEl("span", { textContent: "Conf: " + (span.confidence != null ? Number(span.confidence).toFixed(2) : "n/a") }),
-          createEl("span", { textContent: "Tier: " + (span.evidence_tier != null ? span.evidence_tier : "n/a") }),
-          createEl("span", { textContent: "Source: " + (span.attribution_source || "n/a") }),
-          createEl("span", { textContent: "Anchors: " + (span.total_anchors || 0) })
+        // interaction id
+        if (s.interaction_id) {
+          card.appendChild(el("div", { cls: "card-ids", style: "margin-top:2px" }, [
+            el("span", { text: s.interaction_id })
+          ]));
+        }
+
+        // meta row
+        var conf = s.confidence != null ? Number(s.confidence) : null;
+        var meta = el("div", { cls: "card-meta" }, [
+          conf !== null ? el("span", { cls: confClass(conf), text: "conf:" + conf.toFixed(2) }) : null,
+          s.evidence_tier != null ? el("span", { text: "tier:" + s.evidence_tier }) : null,
+          s.attribution_source ? el("span", { text: "src:" + s.attribution_source }) : null,
+          s.total_anchors ? el("span", { text: "anchors:" + s.total_anchors }) : null,
+          s.needs_review ? el("span", { cls: "conf-low", text: "NEEDS_REVIEW" }) : null
         ]);
         card.appendChild(meta);
 
-        // Reasoning
-        if (span.reasoning_summary) {
-          var evSection = createEl("div", { className: "evidence-section" });
-          evSection.appendChild(createEl("div", { className: "evidence-label", textContent: "Reasoning" }));
-          evSection.appendChild(createEl("div", { className: "reasoning", textContent: span.reasoning_summary }));
-          card.appendChild(evSection);
+        // reasoning
+        if (s.reasoning_summary) {
+          card.appendChild(el("div", { cls: "reasoning", text: s.reasoning_summary }));
         }
 
-        // Anchors
-        var anchorSection = createEl("div", { className: "evidence-section" });
+        // anchors
         var hasAnchors = false;
+        var anchorsDiv = el("div", { cls: "anchors" });
         for (var i = 1; i <= 3; i++) {
-          var text = span["anchor_" + i + "_text"] || span["anchor_" + i + "_quote"];
-          var type = span["anchor_" + i + "_type"];
-          if (text) {
-            if (!hasAnchors) {
-              anchorSection.appendChild(createEl("div", { className: "evidence-label", textContent: "Anchors" }));
-              hasAnchors = true;
-            }
-            var anchorsDiv = anchorSection.querySelector(".anchors") || createEl("div", { className: "anchors" });
-            if (!anchorsDiv.parentNode) anchorSection.appendChild(anchorsDiv);
-            anchorsDiv.appendChild(createEl("div", { className: "anchor" }, [
-              type ? createEl("span", { className: "anchor-type", textContent: type }) : null,
-              document.createTextNode(text)
+          var txt = s["anchor_" + i + "_text"] || s["anchor_" + i + "_quote"];
+          var atype = s["anchor_" + i + "_type"];
+          if (txt) {
+            hasAnchors = true;
+            anchorsDiv.appendChild(el("div", { cls: "anchor" }, [
+              atype ? el("span", { cls: "anchor-type", text: atype }) : null,
+              document.createTextNode(txt)
             ]));
           }
         }
-        if (hasAnchors) card.appendChild(anchorSection);
+        if (hasAnchors) {
+          card.appendChild(el("div", { cls: "section-label", text: "Anchors" }));
+          card.appendChild(anchorsDiv);
+        }
 
-        // Verdict bar
-        var verdictBar = createEl("div", { className: "verdict-bar" });
+        // verdict bar
+        var vbar = el("div", { cls: "verdict-bar" });
         var verdicts = ["CORRECT", "INCORRECT", "UNSURE"];
-        var btnClasses = { CORRECT: "btn-correct", INCORRECT: "btn-incorrect", UNSURE: "btn-unsure" };
+        var btnMap = { CORRECT: "btn-correct", INCORRECT: "btn-incorrect", UNSURE: "btn-unsure" };
+        var statusEl = el("span", { cls: "verdict-msg" + (existing ? " prior" : "") });
+        if (existing) statusEl.textContent = "Previously: " + existing;
+
+        // optional notes input
+        var notesInput = el("input", {
+          cls: "notes-input", type: "text",
+          placeholder: "Optional notes...", style: "display:none"
+        });
 
         verdicts.forEach(function(v) {
-          var btn = createEl("button", {
-            className: "verdict-btn " + btnClasses[v] + (existingVerdict === v ? " active" : ""),
-            textContent: v
+          var btn = el("button", {
+            cls: "verdict-btn " + btnMap[v] + (existing === v ? " active" : ""),
+            text: v
           });
-          if (existingVerdict) {
+          if (existing) {
             btn.disabled = true;
           } else {
             btn.addEventListener("click", async function() {
-              verdictBar.querySelectorAll("button").forEach(function(b) { b.disabled = true; });
-              var statusEl = verdictBar.querySelector(".verdict-status");
-              if (statusEl) statusEl.textContent = "Saving...";
-              var result = await submitVerdict(span.span_id, v, span.interaction_id, null);
-              if (result.ok) {
-                btn.classList.add("active");
-                if (statusEl) { statusEl.className = "verdict-saved"; statusEl.textContent = "Saved"; }
-              } else {
-                if (statusEl) statusEl.textContent = "Error: " + (result.error || "unknown");
-                verdictBar.querySelectorAll("button").forEach(function(b) { b.disabled = false; });
+              vbar.querySelectorAll("button").forEach(function(b) { b.disabled = true; });
+              statusEl.className = "verdict-msg";
+              statusEl.textContent = "Saving...";
+              try {
+                var result = await submitVerdict(s.span_id, v, s.interaction_id, notesInput.value);
+                if (result.ok) {
+                  btn.classList.add("active");
+                  statusEl.className = "verdict-msg ok";
+                  statusEl.textContent = "Saved " + v;
+                  card.classList.add("has-verdict");
+                  notesInput.style.display = "none";
+                } else {
+                  statusEl.className = "verdict-msg err";
+                  statusEl.textContent = result.error || "Error";
+                  vbar.querySelectorAll("button").forEach(function(b) { b.disabled = false; });
+                }
+              } catch (err) {
+                statusEl.className = "verdict-msg err";
+                statusEl.textContent = err.message;
+                vbar.querySelectorAll("button").forEach(function(b) { b.disabled = false; });
               }
             });
           }
-          verdictBar.appendChild(btn);
+          vbar.appendChild(btn);
         });
 
-        if (existingVerdict) {
-          verdictBar.appendChild(createEl("span", { className: "verdict-saved", textContent: "Previously: " + existingVerdict }));
-        } else {
-          verdictBar.appendChild(createEl("span", { className: "verdict-status" }));
+        vbar.appendChild(statusEl);
+        card.appendChild(vbar);
+
+        // notes row (shown for unreviewed spans)
+        if (!existing) {
+          var notesRow = el("div", { cls: "notes-row" });
+          notesInput.style.display = "block";
+          notesRow.appendChild(notesInput);
+          card.appendChild(notesRow);
         }
 
-        card.appendChild(verdictBar);
         list.appendChild(card);
       });
     }
@@ -431,7 +566,6 @@ function buildPage(
       currentToken = null;
       showSection("auth");
     });
-
     document.getElementById("refresh-btn").addEventListener("click", function() { loadAndRender(); });
     document.getElementById("filter-select").addEventListener("change", function() { loadAndRender(); });
     document.getElementById("limit-select").addEventListener("change", function() { loadAndRender(); });
