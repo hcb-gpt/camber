@@ -157,10 +157,19 @@ Deno.serve(async (req: Request) => {
       reviewTopInteractions = topRows as unknown as ReviewQueueTopInteraction[];
     }
 
-    // Fetch per-call attribution details (10 most recent)
+    // Collect manifest project IDs for attribution detail coverage
+    const manifestProjectIds: string[] = [];
+    if (manifestRows) {
+      for (const m of manifestRows) {
+        const pid = (m as Record<string, unknown>).project_id;
+        if (pid) manifestProjectIds.push(String(pid));
+      }
+    }
+
+    // Fetch per-call attribution details (recent + per-project coverage)
     let attributionDetails: CallAttributionDetail[] = [];
     try {
-      attributionDetails = await fetchAttributionDetails(db);
+      attributionDetails = await fetchAttributionDetails(db, manifestProjectIds);
     } catch (attrErr) {
       console.warn(
         "[morning-manifest-ui] attribution details fetch failed:",
@@ -263,8 +272,9 @@ function buildExcerpt(
 
 async function fetchAttributionDetails(
   db: SupabaseClient,
+  manifestProjectIds: string[] = [],
 ): Promise<CallAttributionDetail[]> {
-  // Step 1: Get 10 most recent non-shadow, non-test interaction_ids
+  // Step 1a: Get 10 most recent non-shadow, non-test interaction_ids
   const { data: recentSpans, error: spanErr } = await db
     .from("conversation_spans")
     .select("interaction_id")
@@ -273,20 +283,48 @@ async function fetchAttributionDetails(
     .order("created_at", { ascending: false })
     .limit(200);
 
-  if (spanErr || !recentSpans || recentSpans.length === 0) {
-    console.warn("[morning-manifest-ui] attribution query failed or empty:", spanErr?.message);
-    return [];
+  if (spanErr) {
+    console.warn("[morning-manifest-ui] attribution query failed:", spanErr?.message);
   }
 
   // Deduplicate interaction_ids, keep order, limit to 10
   const seen = new Set<string>();
   const interactionIds: string[] = [];
-  for (const row of recentSpans) {
-    const iid = String(row.interaction_id);
-    if (!seen.has(iid)) {
-      seen.add(iid);
-      interactionIds.push(iid);
-      if (interactionIds.length >= 10) break;
+  if (recentSpans) {
+    for (const row of recentSpans) {
+      const iid = String(row.interaction_id);
+      if (!seen.has(iid)) {
+        seen.add(iid);
+        interactionIds.push(iid);
+        if (interactionIds.length >= 10) break;
+      }
+    }
+  }
+
+  // Step 1b: Ensure coverage — for each manifest project, find recent interactions
+  // that have span_attributions pointing to that project.
+  if (manifestProjectIds.length > 0) {
+    const PROJ_BATCH = 80;
+    for (let i = 0; i < manifestProjectIds.length; i += PROJ_BATCH) {
+      const batch = manifestProjectIds.slice(i, i + PROJ_BATCH);
+      const { data: projSpans } = await db
+        .from("span_attributions")
+        .select("span_id, conversation_spans!inner(interaction_id)")
+        .in("project_id", batch)
+        .order("attributed_at", { ascending: false })
+        .limit(200);
+
+      if (projSpans) {
+        for (const row of projSpans) {
+          // deno-lint-ignore no-explicit-any
+          const cs = (row as any).conversation_spans;
+          const iid = cs ? String(cs.interaction_id) : "";
+          if (iid && !seen.has(iid) && !/SHADOW|_TEST_/i.test(iid)) {
+            seen.add(iid);
+            interactionIds.push(iid);
+          }
+        }
+      }
     }
   }
 
