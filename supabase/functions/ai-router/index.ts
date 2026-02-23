@@ -1,10 +1,17 @@
 /**
- * ai-router Edge Function v1.17.1
+ * ai-router Edge Function v1.19.0
  * LLM-based project attribution for conversation spans
  *
- * @version 1.17.1
+ * @version 1.19.0
  * @date 2026-02-22
  * @purpose Use Claude Haiku to attribute spans to projects with anchored evidence
+ *
+ * v1.19.0 Changes (name-vs-content weighting fix, rebased onto v1.18.0):
+ * - Adds name-content guardrail: downgrades assign->review when chosen project
+ *   has low claim crossref but a rival has strong content match (Permar pattern).
+ * - Surfaces claim_crossref_score on LLM Evidence line for content-aware decisions.
+ * - Adds prompt rules 9-10: name-in-transcript \!= project anchor; trust crossref
+ *   over name coincidence when construction topics match a different project.
  *
  * v1.17.1 Changes (weak-review-to-none downgrade):
  * - Adds post-inference check: when decision="review" AND confidence < 0.30
@@ -155,7 +162,7 @@ import {
 } from "./world_model_facts.ts";
 
 const PROMPT_VERSION_BASE = "v1.13.0";
-const FUNCTION_VERSION = "v1.18.0";
+const FUNCTION_VERSION = "v1.19.0";
 const MODEL_ID = Deno.env.get("AI_ROUTER_MODEL") || "claude-3-haiku-20240307";
 const MAX_TOKENS = 1024;
 const WORLD_MODEL_FACTS_ENABLED = parseBoolEnv(Deno.env.get("WORLD_MODEL_FACTS_ENABLED"), false);
@@ -1183,6 +1190,23 @@ Interpretation rules:
 - alias_uniqueness "supports" + "alias_unique_single_project" = treat as exact_project_name anchor.
 - chain_continuity "supports" with receipt from span_attributions = STRONG anchor.
 
+CLAIM POINTER EXCERPTS (when available):
+Some candidates include "Claim Pointers" — actual journal claim text from prior
+calls that semantically matched the current transcript. These are the raw evidence
+behind the crossref score.
+
+Interpretation rules:
+- Claim pointers show what was actually said in prior calls about this project.
+- When crossref score is high but source_strength is low, claim pointers are the
+  deciding evidence — they prove the project's work topics match the transcript
+  even when the project name was never spoken.
+- Trust specific claim content (e.g., "Fireplace installation at Sparta") over
+  generic name matches. A candidate with concrete claim overlap is stronger than
+  one whose only signal is a name coincidence.
+- Claim pointers are SUPPLEMENTARY — they do not replace transcript-grounded
+  anchors for decision="assign", but they can elevate a candidate from "none"
+  to "review" or increase confidence within the review band.
+
 CONFIDENCE THRESHOLDS (3-band policy):
 - 0.75-1.00: Strong transcript-grounded evidence, safe to auto-assign
 - 0.25-0.74: Some evidence exists, needs human review — ALWAYS include your best candidate project_id and reasoning
@@ -1331,6 +1355,15 @@ function buildUserPrompt(
       }
     }
 
+    // Claim pointer excerpts (from context-assembly claim crossref)
+    const snippets = c.evidence.claim_crossref_snippets;
+    const crossrefScore = c.evidence.claim_crossref_score ?? 0;
+    let claimPointerSummary = "";
+    if (snippets && snippets.length > 0) {
+      const snippetList = snippets.slice(0, 3).map((s) => `"${s}"`).join("; ");
+      claimPointerSummary = `   - Claim Pointers [crossref=${crossrefScore.toFixed(2)}]: ${snippetList}`;
+    }
+
     return `${i + 1}. ${c.project_name}
    - ID: ${c.project_id}
    - Address: ${c.address || "N/A"}
@@ -1340,10 +1373,12 @@ function buildUserPrompt(
    - Status: ${c.status || "N/A"}, Phase: ${c.phase || "N/A"}
    - Evidence: assigned=${c.evidence.assigned}, affinity=${c.evidence.affinity_weight.toFixed(2)}, source_strength=${
       (c.evidence.source_strength ?? 0).toFixed(2)
-    }, sources=[${c.evidence.sources.join(",")}]
+    }, crossref=${crossrefScore.toFixed(2)}, sources=[${c.evidence.sources.join(",")}]
    - ${geoSummary}
    - ${aliasMatchSummary}
-${briefSummary ? `${briefSummary}\n` : ""}${journalSummary}${worldModelSummary ? `\n${worldModelSummary}` : ""}`;
+${claimPointerSummary ? `${claimPointerSummary}\n` : ""}${briefSummary ? `${briefSummary}\n` : ""}${journalSummary}${
+      worldModelSummary ? `\n${worldModelSummary}` : ""
+    }`;
   }).join("\n\n");
 
   const recentProjectList = ctx.contact.recent_projects.length > 0
