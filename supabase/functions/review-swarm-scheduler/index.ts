@@ -349,9 +349,7 @@ Deno.serve(async (req: Request) => {
     runnerHttpStatus = resp.status;
 
     const respBody = await resp.json().catch(() => ({}));
-    runnerResponse = typeof respBody === "object" && respBody !== null
-      ? respBody as JsonRecord
-      : {};
+    runnerResponse = typeof respBody === "object" && respBody !== null ? respBody as JsonRecord : {};
 
     if (!resp.ok) {
       runnerError = `runner_http_${resp.status}: ${asString(runnerResponse.error) || "unknown"}`;
