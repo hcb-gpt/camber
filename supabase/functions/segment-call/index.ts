@@ -1133,7 +1133,6 @@ Deno.serve(async (req: Request) => {
     };
 
     /** Process a single span through the full chain. Returns status; never throws. */
-    // deno-lint-ignore no-inner-declarations
     const processSpanChain = async (
       span: { id: string; span_index: number },
     ): Promise<SpanChainStatus> => {
