@@ -1,10 +1,15 @@
 /**
- * ai-router Edge Function v1.15.0
+ * ai-router Edge Function v1.15.2
  * LLM-based project attribution for conversation spans
  *
- * @version 1.15.1
- * @date 2026-02-17
+ * @version 1.15.2
+ * @date 2026-02-23
  * @purpose Use Claude Haiku to attribute spans to projects with anchored evidence
+ *
+ * v1.15.2 Changes (decision-time explainability persistence):
+ * - Persists top_candidates snapshot to span_attributions at write time.
+ * - Adds runner_up_confidence and candidate_count for fast operator inspection.
+ * - Uses context-assembly ranking + chosen project confidence as persisted evidence.
  *
  * v1.15.1 Changes (stopline: no unanchored assignments):
  * - Enforces fail-closed provenance gate for decision='assign':
@@ -118,7 +123,7 @@ import {
 } from "./world_model_facts.ts";
 
 const PROMPT_VERSION_BASE = "v1.13.0";
-const FUNCTION_VERSION = "v1.15.1";
+const FUNCTION_VERSION = "v1.15.2";
 const MODEL_ID = Deno.env.get("AI_ROUTER_MODEL") || "claude-3-haiku-20240307";
 const MAX_TOKENS = 1024;
 const WORLD_MODEL_FACTS_ENABLED = parseBoolEnv(Deno.env.get("WORLD_MODEL_FACTS_ENABLED"), false);
@@ -278,6 +283,14 @@ interface ContextPackage {
   evidence_brief?: any;
 }
 
+type ContextCandidate = ContextPackage["candidates"][number];
+
+interface CandidateSnapshot {
+  project_id: string;
+  confidence: number;
+  anchor_type: string;
+}
+
 interface ProvenancePointer {
   term: string;
   match_type: string;
@@ -351,6 +364,102 @@ function deriveSpanDurationSeconds(contextPackage: ContextPackage): number | nul
   if (!Number.isFinite(startMs) || !Number.isFinite(endMs)) return null;
   if (endMs <= startMs) return null;
   return Math.round((endMs - startMs) / 1000);
+}
+
+function clamp01(value: number): number {
+  if (!Number.isFinite(value)) return 0;
+  if (value <= 0) return 0;
+  if (value >= 1) return 1;
+  return value;
+}
+
+function roundConfidence(value: number): number {
+  return Math.round(clamp01(value) * 1000) / 1000;
+}
+
+function deriveCandidateAnchorType(candidate: ContextCandidate): string {
+  const aliasMatchType = candidate.evidence?.alias_matches?.[0]?.match_type;
+  if (typeof aliasMatchType === "string" && aliasMatchType.trim().length > 0) {
+    return aliasMatchType.slice(0, 64);
+  }
+
+  const primarySource = Array.isArray(candidate.evidence?.sources)
+    ? candidate.evidence.sources.find((source) => typeof source === "string" && source.trim().length > 0)
+    : null;
+  if (primarySource) return primarySource.slice(0, 64);
+
+  return "none";
+}
+
+function deriveCandidateEvidenceConfidence(candidate: ContextCandidate): number {
+  const sourceStrength = Number(candidate.evidence?.source_strength || 0);
+  const affinityWeight = Number(candidate.evidence?.affinity_weight || 0);
+  const aliasMatchCount = Array.isArray(candidate.evidence?.alias_matches)
+    ? candidate.evidence.alias_matches.length
+    : 0;
+  const aliasBoost = Math.min(aliasMatchCount, 4) * 0.08;
+  const assignedBoost = candidate.evidence?.assigned ? 0.12 : 0;
+  const rawScore = (sourceStrength * 0.6) + (affinityWeight * 0.3) + aliasBoost + assignedBoost;
+  return roundConfidence(rawScore);
+}
+
+function buildTopCandidateSnapshot(opts: {
+  candidates: ContextPackage["candidates"] | null | undefined;
+  chosen_project_id: string | null;
+  chosen_confidence: number | null;
+  chosen_anchor_type: string | null;
+}): { top_candidates: CandidateSnapshot[]; runner_up_confidence: number | null; candidate_count: number } {
+  const sourceCandidates = Array.isArray(opts.candidates) ? opts.candidates : [];
+  const ranked: Array<CandidateSnapshot & { rank: number }> = [];
+  const seenProjectIds = new Set<string>();
+
+  for (const [index, candidate] of sourceCandidates.entries()) {
+    const projectId = String(candidate?.project_id || "").trim();
+    if (!projectId || seenProjectIds.has(projectId)) continue;
+    seenProjectIds.add(projectId);
+
+    ranked.push({
+      project_id: projectId,
+      confidence: deriveCandidateEvidenceConfidence(candidate),
+      anchor_type: deriveCandidateAnchorType(candidate),
+      rank: index,
+    });
+  }
+
+  const chosenProjectId = String(opts.chosen_project_id || "").trim();
+  if (chosenProjectId.length > 0) {
+    const chosenConfidence = roundConfidence(Number(opts.chosen_confidence || 0));
+    const chosenAnchorType = String(opts.chosen_anchor_type || "model_selected").slice(0, 64);
+    const existingChosen = ranked.find((candidate) => candidate.project_id === chosenProjectId);
+    if (existingChosen) {
+      existingChosen.confidence = Math.max(existingChosen.confidence, chosenConfidence);
+      if (chosenAnchorType.length > 0) {
+        existingChosen.anchor_type = chosenAnchorType;
+      }
+    } else {
+      ranked.push({
+        project_id: chosenProjectId,
+        confidence: chosenConfidence,
+        anchor_type: chosenAnchorType,
+        rank: Number.MAX_SAFE_INTEGER,
+      });
+    }
+  }
+
+  ranked.sort((a, b) => (b.confidence - a.confidence) || (a.rank - b.rank));
+
+  const maxPersistedCandidates = ranked.length <= 5 ? ranked.length : 3;
+  const topCandidates = ranked.slice(0, maxPersistedCandidates).map(({ project_id, confidence, anchor_type }) => ({
+    project_id,
+    confidence: roundConfidence(confidence),
+    anchor_type,
+  }));
+
+  return {
+    top_candidates: topCandidates,
+    runner_up_confidence: topCandidates.length > 1 ? topCandidates[1].confidence : null,
+    candidate_count: ranked.length,
+  };
 }
 
 // ============================================================
@@ -1726,6 +1835,12 @@ Deno.serve(async (req: Request) => {
       : homeownerDeterministicAssignApplied
       ? 1
       : deriveEvidenceTier(result.anchors, result.confidence, model_error);
+    const candidateSnapshot = buildTopCandidateSnapshot({
+      candidates: context_package.candidates,
+      chosen_project_id: result.project_id,
+      chosen_confidence: result.confidence,
+      chosen_anchor_type: result.anchors?.[0]?.match_type || null,
+    });
 
     const { error: upsertErr } = await db.from("span_attributions").upsert({
       span_id,
@@ -1743,6 +1858,9 @@ Deno.serve(async (req: Request) => {
       raw_response,
       tokens_used,
       inference_ms,
+      top_candidates: candidateSnapshot.top_candidates,
+      runner_up_confidence: candidateSnapshot.runner_up_confidence,
+      candidate_count: candidateSnapshot.candidate_count,
       attribution_lock,
       applied_project_id,
       applied_at_utc: !lockCanOverwrite ? preservedAppliedAtUtc : (applied ? new Date().toISOString() : null),
