@@ -1,0 +1,807 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>OPERATOR VALIDATION — Camber</title>
+  <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2/dist/umd/supabase.min.js"></script>
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=DM+Mono:wght@400;500&family=Outfit:wght@300;500;700;800&display=swap" rel="stylesheet" />
+  <style>
+    :root {
+      --bg: #0c0f14;
+      --surface: #161b24;
+      --surface-2: #1c2230;
+      --border: #2a3140;
+      --border-focus: #3d4a5e;
+      --ink: #c8cfd8;
+      --ink-dim: #6b7a8d;
+      --ink-bright: #e8ecf1;
+      --amber: #d4a017;
+      --amber-dim: #a07b12;
+      --amber-glow: rgba(212,160,23,0.12);
+      --green: #22c55e;
+      --green-bg: rgba(34,197,94,0.08);
+      --red: #ef4444;
+      --red-bg: rgba(239,68,68,0.08);
+      --yellow: #eab308;
+      --yellow-bg: rgba(234,179,8,0.08);
+      --radius: 4px;
+    }
+
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+
+    body {
+      font-family: "Outfit", sans-serif;
+      font-weight: 300;
+      color: var(--ink);
+      background: var(--bg);
+      min-height: 100vh;
+      position: relative;
+    }
+
+    /* Noise texture overlay */
+    body::before {
+      content: "";
+      position: fixed;
+      inset: 0;
+      background-image: url("data:image/svg+xml,%3Csvg viewBox='0 0 256 256' xmlns='http://www.w3.org/2000/svg'%3E%3Cfilter id='noise'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.9' numOctaves='4' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23noise)' opacity='0.03'/%3E%3C/svg%3E");
+      background-repeat: repeat;
+      background-size: 256px 256px;
+      pointer-events: none;
+      z-index: 9999;
+    }
+
+    /* Top accent bar */
+    body::after {
+      content: "";
+      position: fixed;
+      top: 0;
+      left: 0;
+      right: 0;
+      height: 2px;
+      background: linear-gradient(90deg, transparent, var(--amber), transparent);
+      z-index: 10;
+    }
+
+    .wrap {
+      max-width: 1040px;
+      margin: 0 auto;
+      padding: 32px 20px;
+    }
+
+    /* Header */
+    .page-header {
+      display: flex;
+      align-items: baseline;
+      gap: 16px;
+      margin-bottom: 6px;
+    }
+    h1 {
+      font-family: "DM Mono", monospace;
+      font-size: 1.1rem;
+      font-weight: 500;
+      color: var(--amber);
+      letter-spacing: 0.12em;
+      text-transform: uppercase;
+    }
+    .version-tag {
+      font-family: "DM Mono", monospace;
+      font-size: 0.7rem;
+      color: var(--ink-dim);
+      border: 1px solid var(--border);
+      padding: 2px 8px;
+      border-radius: 2px;
+    }
+
+    .meta-line {
+      font-family: "DM Mono", monospace;
+      font-size: 0.75rem;
+      color: var(--ink-dim);
+      margin-bottom: 24px;
+      letter-spacing: 0.02em;
+    }
+
+    /* Toolbar */
+    .toolbar {
+      display: flex;
+      gap: 8px;
+      margin-bottom: 20px;
+      align-items: center;
+      flex-wrap: wrap;
+    }
+    .toolbar select, .toolbar button {
+      font-family: "DM Mono", monospace;
+      font-size: 0.78rem;
+      padding: 7px 14px;
+      border: 1px solid var(--border);
+      border-radius: var(--radius);
+      background: var(--surface);
+      color: var(--ink);
+      cursor: pointer;
+      transition: border-color 0.15s, background 0.15s;
+    }
+    .toolbar select:focus, .toolbar button:hover {
+      border-color: var(--amber-dim);
+      outline: none;
+    }
+    .toolbar button:hover { background: var(--amber-glow); }
+    .toolbar .signout-btn {
+      margin-left: auto;
+      color: var(--ink-dim);
+      border-color: transparent;
+      background: transparent;
+    }
+    .toolbar .signout-btn:hover { color: var(--red); }
+    .count-label {
+      font-family: "DM Mono", monospace;
+      font-size: 0.72rem;
+      color: var(--ink-dim);
+      margin-left: 12px;
+    }
+
+    /* Stats strip */
+    .stats-strip {
+      display: flex;
+      gap: 1px;
+      margin-bottom: 20px;
+      border-radius: var(--radius);
+      overflow: hidden;
+    }
+    .stat-cell {
+      flex: 1;
+      background: var(--surface);
+      padding: 10px 14px;
+      text-align: center;
+    }
+    .stat-value {
+      font-family: "Outfit", sans-serif;
+      font-weight: 700;
+      font-size: 1.3rem;
+      color: var(--ink-bright);
+      display: block;
+    }
+    .stat-label {
+      font-family: "DM Mono", monospace;
+      font-size: 0.65rem;
+      color: var(--ink-dim);
+      text-transform: uppercase;
+      letter-spacing: 0.1em;
+    }
+
+    /* Auth */
+    .auth-box {
+      max-width: 380px;
+      margin: 100px auto;
+      padding: 32px;
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: var(--radius);
+    }
+    .auth-box h2 {
+      font-family: "DM Mono", monospace;
+      font-size: 0.95rem;
+      font-weight: 500;
+      color: var(--amber);
+      letter-spacing: 0.08em;
+      text-transform: uppercase;
+      margin-bottom: 4px;
+    }
+    .auth-box .auth-subtitle {
+      font-size: 0.85rem;
+      color: var(--ink-dim);
+      margin-bottom: 20px;
+    }
+    .auth-box label {
+      display: block;
+      margin-bottom: 4px;
+      font-family: "DM Mono", monospace;
+      font-size: 0.72rem;
+      color: var(--ink-dim);
+      text-transform: uppercase;
+      letter-spacing: 0.08em;
+    }
+    .auth-box input {
+      width: 100%;
+      padding: 10px 12px;
+      margin-bottom: 14px;
+      border: 1px solid var(--border);
+      border-radius: var(--radius);
+      background: var(--bg);
+      color: var(--ink-bright);
+      font-family: "DM Mono", monospace;
+      font-size: 0.88rem;
+    }
+    .auth-box input:focus {
+      outline: none;
+      border-color: var(--amber-dim);
+    }
+    .auth-box button[type="submit"] {
+      width: 100%;
+      padding: 11px;
+      border: 1px solid var(--amber);
+      border-radius: var(--radius);
+      background: transparent;
+      color: var(--amber);
+      font-family: "DM Mono", monospace;
+      font-size: 0.82rem;
+      font-weight: 500;
+      letter-spacing: 0.1em;
+      text-transform: uppercase;
+      cursor: pointer;
+      transition: background 0.2s, color 0.2s;
+    }
+    .auth-box button[type="submit"]:hover {
+      background: var(--amber);
+      color: var(--bg);
+    }
+    .auth-error {
+      margin-top: 12px;
+      padding: 8px 12px;
+      border-radius: var(--radius);
+      background: var(--red-bg);
+      border: 1px solid rgba(239,68,68,0.2);
+      color: var(--red);
+      font-family: "DM Mono", monospace;
+      font-size: 0.78rem;
+      display: none;
+    }
+
+    /* Span cards */
+    .span-card {
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-left: 3px solid var(--border);
+      border-radius: var(--radius);
+      padding: 16px 18px;
+      margin-bottom: 8px;
+      transition: border-color 0.2s;
+    }
+    .span-card:hover { border-color: var(--border-focus); }
+    .span-card.has-feedback { border-left-color: var(--amber); }
+
+    .span-top {
+      display: flex;
+      align-items: baseline;
+      gap: 12px;
+      flex-wrap: wrap;
+      margin-bottom: 6px;
+    }
+    .project-name {
+      font-weight: 700;
+      font-size: 1rem;
+      color: var(--ink-bright);
+    }
+    .decision-tag {
+      font-family: "DM Mono", monospace;
+      font-size: 0.7rem;
+      font-weight: 500;
+      padding: 2px 10px;
+      border-radius: 2px;
+      text-transform: uppercase;
+      letter-spacing: 0.06em;
+    }
+    .decision-tag.assign { background: var(--green-bg); color: var(--green); border: 1px solid rgba(34,197,94,0.2); }
+    .decision-tag.review { background: var(--yellow-bg); color: var(--yellow); border: 1px solid rgba(234,179,8,0.2); }
+    .decision-tag.none { background: var(--surface-2); color: var(--ink-dim); border: 1px solid var(--border); }
+
+    .conf-line {
+      font-family: "DM Mono", monospace;
+      font-size: 0.72rem;
+      color: var(--ink-dim);
+    }
+    .conf-line .conf-pct {
+      color: var(--ink);
+      font-weight: 500;
+    }
+
+    .span-ids {
+      font-family: "DM Mono", monospace;
+      font-size: 0.68rem;
+      color: var(--ink-dim);
+      margin-bottom: 8px;
+      letter-spacing: 0.01em;
+    }
+
+    .reasoning-text {
+      font-size: 0.88rem;
+      line-height: 1.55;
+      color: var(--ink);
+      margin-bottom: 8px;
+    }
+
+    .anchors-section {
+      margin-bottom: 10px;
+    }
+    .anchors-label {
+      font-family: "DM Mono", monospace;
+      font-size: 0.68rem;
+      color: var(--ink-dim);
+      text-transform: uppercase;
+      letter-spacing: 0.08em;
+      margin-bottom: 4px;
+    }
+    .anchor-item {
+      margin-left: 12px;
+      font-size: 0.82rem;
+      margin-bottom: 3px;
+      color: var(--ink);
+    }
+    .anchor-type {
+      font-weight: 500;
+      color: var(--ink-dim);
+    }
+    .anchor-quote {
+      font-style: italic;
+      color: var(--amber-dim);
+    }
+
+    /* Verdict buttons — stamp style */
+    .verdict-row {
+      display: flex;
+      gap: 6px;
+      margin-top: 10px;
+      align-items: center;
+      flex-wrap: wrap;
+    }
+    .verdict-btn {
+      font-family: "DM Mono", monospace;
+      font-size: 0.72rem;
+      font-weight: 500;
+      padding: 6px 18px;
+      border: 2px solid;
+      border-radius: 2px;
+      background: transparent;
+      cursor: pointer;
+      text-transform: uppercase;
+      letter-spacing: 0.12em;
+      transition: all 0.15s;
+      position: relative;
+    }
+    .verdict-btn.correct {
+      border-color: var(--green);
+      color: var(--green);
+    }
+    .verdict-btn.correct:hover, .verdict-btn.correct.active {
+      background: var(--green);
+      color: var(--bg);
+      box-shadow: 0 0 12px rgba(34,197,94,0.3);
+    }
+    .verdict-btn.incorrect {
+      border-color: var(--red);
+      color: var(--red);
+    }
+    .verdict-btn.incorrect:hover, .verdict-btn.incorrect.active {
+      background: var(--red);
+      color: var(--bg);
+      box-shadow: 0 0 12px rgba(239,68,68,0.3);
+    }
+    .verdict-btn.unsure {
+      border-color: var(--yellow);
+      color: var(--yellow);
+    }
+    .verdict-btn.unsure:hover, .verdict-btn.unsure.active {
+      background: var(--yellow);
+      color: var(--bg);
+      box-shadow: 0 0 12px rgba(234,179,8,0.3);
+    }
+    .verdict-btn:disabled { opacity: 0.35; cursor: not-allowed; box-shadow: none; }
+
+    .verdict-saved {
+      font-family: "DM Mono", monospace;
+      font-size: 0.68rem;
+      color: var(--ink-dim);
+      margin-left: 10px;
+    }
+
+    .loading-state {
+      text-align: center;
+      padding: 60px 20px;
+      color: var(--ink-dim);
+      font-family: "DM Mono", monospace;
+      font-size: 0.82rem;
+    }
+    .spinner {
+      display: block;
+      width: 24px;
+      height: 24px;
+      margin: 16px auto 0;
+      border: 2px solid var(--border);
+      border-top-color: var(--amber);
+      border-radius: 50%;
+      animation: spin 0.8s linear infinite;
+    }
+    @keyframes spin { to { transform: rotate(360deg); } }
+
+    #auth-section, #main-section { display: none; }
+
+    .empty-state {
+      text-align: center;
+      padding: 40px;
+      color: var(--ink-dim);
+      font-family: "DM Mono", monospace;
+      font-size: 0.8rem;
+    }
+
+    @media (max-width: 640px) {
+      .wrap { padding: 16px 12px; }
+      .stats-strip { flex-direction: column; }
+      .span-top { gap: 6px; }
+      h1 { font-size: 0.95rem; }
+    }
+  </style>
+</head>
+<body>
+  <div id="loading-section" class="loading-state">
+    AUTHENTICATING
+    <span class="spinner"></span>
+  </div>
+
+  <div id="auth-section">
+    <div class="auth-box">
+      <h2>Operator Validation</h2>
+      <p class="auth-subtitle">Authenticate to review pipeline attributions.</p>
+      <form id="login-form">
+        <label for="email">Email</label>
+        <input type="email" id="email" required autocomplete="email" placeholder="operator@example.com" />
+        <label for="password">Password</label>
+        <input type="password" id="password" required autocomplete="current-password" />
+        <button type="submit">Authenticate</button>
+      </form>
+      <div id="auth-error" class="auth-error"></div>
+    </div>
+  </div>
+
+  <div id="main-section">
+    <main class="wrap">
+      <div class="page-header">
+        <h1>Operator Validation</h1>
+        <span class="version-tag" id="version-tag">v0.1.0</span>
+      </div>
+      <div class="meta-line" id="page-meta"></div>
+
+      <div class="stats-strip" id="stats-strip">
+        <div class="stat-cell"><span class="stat-value" id="stat-total">—</span><span class="stat-label">Spans</span></div>
+        <div class="stat-cell"><span class="stat-value" id="stat-reviewed">—</span><span class="stat-label">Reviewed</span></div>
+        <div class="stat-cell"><span class="stat-value" id="stat-correct">—</span><span class="stat-label">Correct</span></div>
+        <div class="stat-cell"><span class="stat-value" id="stat-incorrect">—</span><span class="stat-label">Incorrect</span></div>
+      </div>
+
+      <div class="toolbar">
+        <select id="filter-select">
+          <option value="all">ALL SPANS</option>
+          <option value="needs_review">NEEDS REVIEW</option>
+          <option value="assigned">ASSIGNED ONLY</option>
+        </select>
+        <button id="refresh-btn">REFRESH</button>
+        <button class="signout-btn" id="signout-btn">SIGN OUT</button>
+        <span class="count-label" id="span-count"></span>
+      </div>
+
+      <div id="spans-container"></div>
+    </main>
+  </div>
+
+  <script>
+    /* --- CONFIG --- */
+    var SUPABASE_URL = "https://rjhdwidddtfetbwqolof.supabase.co";
+    var SUPABASE_ANON_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InJqaGR3aWRkZHRmZXRid3FvbG9mIiwicm9sZSI6ImFub24iLCJpYXQiOjE3MzE3OTQxMjMsImV4cCI6MjA0NzM3MDEyM30.G5G1ehbOSNPdqm3gCnurNFTgOQGyyqhq02BYDXQR8eg";
+    var API_URL = SUPABASE_URL + "/functions/v1/operator-validation";
+
+    var sb = supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
+    var currentToken = null;
+    var feedbackMap = {};
+
+    var loadingEl = document.getElementById("loading-section");
+    var authEl = document.getElementById("auth-section");
+    var mainEl = document.getElementById("main-section");
+    var authErrorEl = document.getElementById("auth-error");
+
+    function showSection(name) {
+      loadingEl.style.display = name === "loading" ? "block" : "none";
+      authEl.style.display = name === "auth" ? "block" : "none";
+      mainEl.style.display = name === "main" ? "block" : "none";
+    }
+
+    function truncate(text, maxLen) {
+      if (!text) return "";
+      return text.length > maxLen ? text.slice(0, maxLen) + "\u2026" : text;
+    }
+
+    async function apiGet(filter) {
+      var url = API_URL + "?limit=100&filter=" + encodeURIComponent(filter || "all");
+      var resp = await fetch(url, {
+        headers: { "Authorization": "Bearer " + currentToken }
+      });
+      if (!resp.ok) throw new Error("API " + resp.status);
+      return resp.json();
+    }
+
+    async function apiPostVerdict(spanId, verdict, interactionId, projectId) {
+      var resp = await fetch(API_URL, {
+        method: "POST",
+        headers: {
+          "Authorization": "Bearer " + currentToken,
+          "Content-Type": "application/json"
+        },
+        body: JSON.stringify({
+          span_id: spanId,
+          verdict: verdict,
+          interaction_id: interactionId || null,
+          project_id: projectId || null
+        })
+      });
+      if (!resp.ok) {
+        var err = await resp.json().catch(function() { return {}; });
+        throw new Error(err.error || "POST failed " + resp.status);
+      }
+      return resp.json();
+    }
+
+    function updateStats(spans, fm) {
+      var total = spans.length;
+      var reviewed = 0;
+      var correct = 0;
+      var incorrect = 0;
+      for (var i = 0; i < spans.length; i++) {
+        var v = fm[spans[i].span_id];
+        if (v) {
+          reviewed++;
+          if (v === "CORRECT") correct++;
+          if (v === "INCORRECT") incorrect++;
+        }
+      }
+      document.getElementById("stat-total").textContent = total;
+      document.getElementById("stat-reviewed").textContent = reviewed;
+      document.getElementById("stat-correct").textContent = correct;
+      document.getElementById("stat-incorrect").textContent = incorrect;
+    }
+
+    function renderSpans(data) {
+      var spans = data.spans || [];
+      feedbackMap = data.feedback_map || {};
+      var container = document.getElementById("spans-container");
+      container.replaceChildren();
+
+      var metaEl = document.getElementById("page-meta");
+      metaEl.textContent = (data.user ? data.user.email : "unknown") +
+        " // " + data.count + " spans loaded // " + data.function_version;
+
+      document.getElementById("version-tag").textContent = data.function_version || "v0.1.0";
+      document.getElementById("span-count").textContent = spans.length + " shown";
+
+      updateStats(spans, feedbackMap);
+
+      if (spans.length === 0) {
+        var empty = document.createElement("div");
+        empty.className = "empty-state";
+        empty.textContent = "NO SPANS MATCH THIS FILTER";
+        container.appendChild(empty);
+        return;
+      }
+
+      for (var si = 0; si < spans.length; si++) {
+        var span = spans[si];
+        var card = document.createElement("div");
+        card.className = "span-card" + (feedbackMap[span.span_id] ? " has-feedback" : "");
+        card.dataset.spanId = span.span_id;
+
+        /* Top row: project + decision + confidence */
+        var top = document.createElement("div");
+        top.className = "span-top";
+
+        var projEl = document.createElement("span");
+        projEl.className = "project-name";
+        projEl.textContent = span.assigned_project || span.applied_project || "(no project)";
+        top.appendChild(projEl);
+
+        var tagEl = document.createElement("span");
+        tagEl.className = "decision-tag " + (span.decision || "none");
+        tagEl.textContent = span.decision || "none";
+        top.appendChild(tagEl);
+
+        var confEl = document.createElement("span");
+        confEl.className = "conf-line";
+        var pctStr = span.confidence ? (Number(span.confidence) * 100).toFixed(0) + "%" : "?";
+        var confPct = document.createElement("span");
+        confPct.className = "conf-pct";
+        confPct.textContent = pctStr;
+        confEl.appendChild(confPct);
+        confEl.appendChild(document.createTextNode(" conf \u00b7 tier " + (span.evidence_tier || "?")));
+        top.appendChild(confEl);
+
+        card.appendChild(top);
+
+        /* IDs line */
+        var idsEl = document.createElement("div");
+        idsEl.className = "span-ids";
+        idsEl.textContent = "span:" + (span.span_index != null ? span.span_index : "?") +
+          " \u2502 " + span.interaction_id + " \u2502 " + span.span_id;
+        card.appendChild(idsEl);
+
+        /* Reasoning */
+        if (span.reasoning_summary) {
+          var reasonEl = document.createElement("div");
+          reasonEl.className = "reasoning-text";
+          reasonEl.textContent = truncate(span.reasoning_summary, 300);
+          card.appendChild(reasonEl);
+        }
+
+        /* Anchors */
+        var anchorEls = [];
+        for (var ai = 1; ai <= 3; ai++) {
+          var aText = span["anchor_" + ai + "_text"];
+          var aQuote = span["anchor_" + ai + "_quote"];
+          var aType = span["anchor_" + ai + "_type"];
+          if (aText || aQuote) {
+            var aItem = document.createElement("div");
+            aItem.className = "anchor-item";
+            var aTypeSpan = document.createElement("span");
+            aTypeSpan.className = "anchor-type";
+            aTypeSpan.textContent = (aType || "anchor") + ": ";
+            aItem.appendChild(aTypeSpan);
+            if (aText) aItem.appendChild(document.createTextNode(aText + " "));
+            if (aQuote) {
+              var qSpan = document.createElement("span");
+              qSpan.className = "anchor-quote";
+              qSpan.textContent = "\u201c" + truncate(aQuote, 120) + "\u201d";
+              aItem.appendChild(qSpan);
+            }
+            anchorEls.push(aItem);
+          }
+        }
+        if (anchorEls.length > 0) {
+          var anchorsDiv = document.createElement("div");
+          anchorsDiv.className = "anchors-section";
+          var anchorsLabel = document.createElement("div");
+          anchorsLabel.className = "anchors-label";
+          anchorsLabel.textContent = "Anchors (" + (span.total_anchors || anchorEls.length) + ")";
+          anchorsDiv.appendChild(anchorsLabel);
+          for (var ae = 0; ae < anchorEls.length; ae++) anchorsDiv.appendChild(anchorEls[ae]);
+          card.appendChild(anchorsDiv);
+        }
+
+        /* Verdict buttons */
+        var vRow = document.createElement("div");
+        vRow.className = "verdict-row";
+
+        var verdicts = ["CORRECT", "INCORRECT", "UNSURE"];
+        for (var vi = 0; vi < verdicts.length; vi++) {
+          var v = verdicts[vi];
+          var btn = document.createElement("button");
+          btn.className = "verdict-btn " + v.toLowerCase();
+          btn.textContent = v;
+          btn.dataset.verdict = v;
+          btn.dataset.spanId = span.span_id;
+          btn.dataset.interactionId = span.interaction_id || "";
+          btn.dataset.projectId = "";
+          if (feedbackMap[span.span_id] === v) btn.classList.add("active");
+          btn.addEventListener("click", handleVerdictClick);
+          vRow.appendChild(btn);
+        }
+
+        if (feedbackMap[span.span_id]) {
+          var savedEl = document.createElement("span");
+          savedEl.className = "verdict-saved";
+          savedEl.textContent = "\u2713 " + feedbackMap[span.span_id];
+          vRow.appendChild(savedEl);
+        }
+
+        card.appendChild(vRow);
+        container.appendChild(card);
+      }
+    }
+
+    async function handleVerdictClick(e) {
+      var btn = e.currentTarget;
+      var spanId = btn.dataset.spanId;
+      var verdict = btn.dataset.verdict;
+      var interactionId = btn.dataset.interactionId;
+
+      var card = btn.closest(".span-card");
+      var buttons = card.querySelectorAll(".verdict-btn");
+      for (var b = 0; b < buttons.length; b++) buttons[b].disabled = true;
+
+      try {
+        await apiPostVerdict(spanId, verdict, interactionId, null);
+        feedbackMap[spanId] = verdict;
+
+        for (var b2 = 0; b2 < buttons.length; b2++) {
+          buttons[b2].classList.remove("active");
+          buttons[b2].disabled = false;
+          if (buttons[b2].dataset.verdict === verdict) buttons[b2].classList.add("active");
+        }
+        card.classList.add("has-feedback");
+
+        var savedEl = card.querySelector(".verdict-saved");
+        if (!savedEl) {
+          savedEl = document.createElement("span");
+          savedEl.className = "verdict-saved";
+          card.querySelector(".verdict-row").appendChild(savedEl);
+        }
+        savedEl.textContent = "\u2713 " + verdict;
+
+        /* Update stats */
+        var allCards = document.querySelectorAll(".span-card");
+        var reviewed = 0, correct = 0, incorrect = 0;
+        for (var c = 0; c < allCards.length; c++) {
+          var sid = allCards[c].dataset.spanId;
+          var fv = feedbackMap[sid];
+          if (fv) {
+            reviewed++;
+            if (fv === "CORRECT") correct++;
+            if (fv === "INCORRECT") incorrect++;
+          }
+        }
+        document.getElementById("stat-reviewed").textContent = reviewed;
+        document.getElementById("stat-correct").textContent = correct;
+        document.getElementById("stat-incorrect").textContent = incorrect;
+      } catch (err) {
+        for (var b3 = 0; b3 < buttons.length; b3++) buttons[b3].disabled = false;
+        alert("Failed to save: " + err.message);
+      }
+    }
+
+    async function loadSpans() {
+      showSection("loading");
+      try {
+        var filter = document.getElementById("filter-select").value;
+        var data = await apiGet(filter);
+        if (!data.ok) throw new Error(data.error || "API error");
+        renderSpans(data);
+        showSection("main");
+      } catch (err) {
+        console.error("Load failed:", err);
+        showSection("auth");
+        authErrorEl.style.display = "block";
+        authErrorEl.textContent = "Load failed: " + err.message;
+      }
+    }
+
+    async function handleSession(session) {
+      if (!session) {
+        showSection("auth");
+        return;
+      }
+      currentToken = session.access_token;
+      await loadSpans();
+    }
+
+    /* Event listeners */
+    document.getElementById("signout-btn").addEventListener("click", async function() {
+      await sb.auth.signOut();
+      currentToken = null;
+      showSection("auth");
+    });
+
+    document.getElementById("refresh-btn").addEventListener("click", function() {
+      if (currentToken) loadSpans();
+    });
+
+    document.getElementById("filter-select").addEventListener("change", function() {
+      if (currentToken) loadSpans();
+    });
+
+    document.getElementById("login-form").addEventListener("submit", async function(e) {
+      e.preventDefault();
+      authErrorEl.style.display = "none";
+      var email = document.getElementById("email").value;
+      var password = document.getElementById("password").value;
+      var result = await sb.auth.signInWithPassword({ email: email, password: password });
+      if (result.error) {
+        authErrorEl.style.display = "block";
+        authErrorEl.textContent = result.error.message;
+        return;
+      }
+      handleSession(result.data.session);
+    });
+
+    /* Init */
+    (async function() {
+      var result = await sb.auth.getSession();
+      handleSession(result.data.session);
+    })();
+  </script>
+</body>
+</html>
