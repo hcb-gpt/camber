@@ -10,7 +10,7 @@
 import "jsr:@supabase/functions-js/edge-runtime.d.ts";
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
 
-const FUNCTION_VERSION = "v0.2.0";
+const FUNCTION_VERSION = "v0.2.1";
 
 const CORS_HEADERS = {
   "Access-Control-Allow-Origin": "*",
@@ -153,9 +153,9 @@ Deno.serve(async (req: Request) => {
       }, 400);
     }
 
-    const { error: insertErr } = await db
+    const { error: upsertErr } = await db
       .from("attribution_validation_feedback")
-      .insert({
+      .upsert({
         span_id: spanId,
         verdict: rawVerdict,
         notes: notes,
@@ -163,11 +163,12 @@ Deno.serve(async (req: Request) => {
         project_id: body.project_id ? String(body.project_id) : null,
         created_by: auth.user.id,
         source: "operator-validation-ui",
-      });
+        created_at: new Date().toISOString(),
+      }, { onConflict: "span_id,source" });
 
-    if (insertErr) {
+    if (upsertErr) {
       return json(
-        { ok: false, error: "insert_failed", detail: insertErr.message },
+        { ok: false, error: "upsert_failed", detail: upsertErr.message },
         500,
       );
     }
