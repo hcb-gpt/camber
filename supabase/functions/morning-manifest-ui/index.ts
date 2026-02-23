@@ -387,9 +387,28 @@ async function fetchAttributionDetails(
   // Step 6: Assemble results in interaction_id order
   const results: CallAttributionDetail[] = [];
   for (const iid of interactionIds) {
-    const callSpans = spans.filter(
+    const rawCallSpans = spans.filter(
       (s: { interaction_id: string }) => String(s.interaction_id) === iid,
     );
+    // Deduplicate: keep newest span per span_index (re-segmentation creates dupes)
+    const byIndex = new Map<
+      number,
+      { id: string; span_index: number; created_at?: string; transcript_segment?: string | null }
+    >();
+    for (
+      const s of rawCallSpans as {
+        id: string;
+        span_index: number;
+        created_at?: string;
+        transcript_segment?: string | null;
+      }[]
+    ) {
+      const existing = byIndex.get(s.span_index);
+      if (!existing || (s.created_at ?? "") > (existing.created_at ?? "")) {
+        byIndex.set(s.span_index, s);
+      }
+    }
+    const callSpans = [...byIndex.values()].sort((a, b) => a.span_index - b.span_index);
     const info = interactionMap.get(iid) ?? { contact_name: "Unknown", call_date: "" };
 
     const spanDetails: SpanDetail[] = callSpans.map(
