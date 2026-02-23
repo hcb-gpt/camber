@@ -1,5 +1,5 @@
 import { assert, assertEquals } from "https://deno.land/std@0.218.0/assert/mod.ts";
-import { renderManifestHtml, type ManifestResponse, wantsHtmlResponse } from "./view.ts";
+import { type ManifestResponse, renderManifestHtml, wantsHtmlResponse } from "./view.ts";
 
 function samplePayload(): ManifestResponse {
   return {
