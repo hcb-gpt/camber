@@ -639,7 +639,7 @@ function buildCompetingCandidates(top: TopCandidate[]): JsonRecord[] {
 }
 
 function buildEvidencePointers(packet: NormalizedPacket, output: ReviewerOutput): JsonRecord[] {
-  const pointers: JsonRecord[] = [...packet.claim_pointers];
+  const pointers: JsonRecord[] = [...(asArray(packet.claim_pointers) as JsonRecord[])];
   for (const a of output.rationale_anchors.slice(0, 10)) {
     pointers.push({ anchor: a.anchor, source: a.source });
   }
@@ -731,15 +731,6 @@ async function persistToLedger(
     asof_mode: asString(packet.asof_mode) || "KNOWN_AS_OF",
     same_call_excluded: packet.same_call_excluded && !guardrailViolation,
     evidence_event_ids: evidenceEventIds,
-    evidence_pointers: evidencePointers,
-    competing_candidates: competingCandidates,
-    audit_sample_id: auditSampleId,
-    predicted_project_id: assignedProjectId || null,
-    expected_project_id: expectedProjectId,
-    failure_mode_bucket: failureModeBucket,
-    failure_detail: asString(output.notes).slice(0, 500) || null,
-    auditor_model_id: usedModelId,
-    auditor_prompt_version: PROMPT_VERSION,
     span_char_start: spanCharStart === null ? null : Math.round(spanCharStart),
     span_char_end: spanCharEnd === null ? null : Math.round(spanCharEnd),
     transcript_span_hash: transcriptSpanHash,
@@ -756,66 +747,78 @@ async function persistToLedger(
     missing_evidence: missingEvidence,
     leakage_violation: guardrailViolation,
     pointer_quality_violation: pointerQualityViolation,
+    // v1 append-only columns
+    evidence_pointers: evidencePointers,
+    competing_candidates: competingCandidates,
+    audit_sample_id: auditSampleId,
+    predicted_project_id: assignedProjectId || null,
+    expected_project_id: expectedProjectId,
+    failure_mode_bucket: failureModeBucket,
+    failure_detail: asString(output.notes).slice(0, 500) || null,
+    auditor_model_id: usedModelId,
+    auditor_prompt_version: PROMPT_VERSION,
   };
 
+  // ── APPEND-ONLY: check for existing row FIRST ──
+  // If a row with this dedupe_key already exists, go straight to hit_count bump.
+  // This avoids check-constraint errors when the new payload differs from the
+  // original snapshot (e.g., LLM fallback verdict ≠ original MATCH verdict).
+  const { data: existing, error: existingErr } = await db
+    .from("attribution_audit_ledger")
+    .select("id, hit_count")
+    .eq("dedupe_key", dedupeKey)
+    .maybeSingle();
+  if (existingErr) {
+    throw new Error(`ledger_lookup_failed: ${existingErr.message}`);
+  }
+
+  if (existing?.id) {
+    // Row exists → append-only update: only bump hit_count + last_seen_at_utc.
+    // Do NOT overwrite semantic snapshot fields (verdict, top_candidates, failure_tags, etc.)
+    const currentHitCount = asNumber(existing.hit_count) ?? 1;
+    const nextHitCount = Math.max(1, Math.round(currentHitCount + 1));
+    const { data: updated, error: updateErr } = await db
+      .from("attribution_audit_ledger")
+      .update({
+        hit_count: nextHitCount,
+        last_seen_at_utc: nowIso,
+      })
+      .eq("id", existing.id)
+      .select("id, dedupe_key, hit_count, first_seen_at_utc, last_seen_at_utc")
+      .maybeSingle();
+    if (updateErr) {
+      throw new Error(`ledger_upsert_update_failed: ${updateErr.message}`);
+    }
+    return {
+      persisted: true,
+      dedupe_key: updated?.dedupe_key || dedupeKey,
+      ledger_id: updated?.id || existing.id,
+      hit_count: updated?.hit_count || nextHitCount,
+      mode: "conflict_update",
+    };
+  }
+
+  // ── No existing row → insert new snapshot ──
   const insertPayload: JsonRecord = {
     ...basePayload,
     hit_count: 1,
     first_seen_at_utc: nowIso,
     last_seen_at_utc: nowIso,
   };
-
   const { data: inserted, error: insertErr } = await db
     .from("attribution_audit_ledger")
     .insert(insertPayload)
     .select("id, dedupe_key, hit_count, first_seen_at_utc, last_seen_at_utc")
     .maybeSingle();
-  if (!insertErr && inserted) {
-    return {
-      persisted: true,
-      dedupe_key: inserted.dedupe_key,
-      ledger_id: inserted.id,
-      hit_count: inserted.hit_count,
-      mode: "inserted",
-    };
+  if (insertErr) {
+    throw new Error(`ledger_insert_failed: ${insertErr.message || "unknown"}`);
   }
-
-  if (insertErr?.code !== "23505") {
-    throw new Error(`ledger_insert_failed: ${insertErr?.message || "unknown"}`);
-  }
-
-  const { data: existing, error: existingErr } = await db
-    .from("attribution_audit_ledger")
-    .select("id, hit_count")
-    .eq("dedupe_key", dedupeKey)
-    .maybeSingle();
-  if (existingErr || !existing?.id) {
-    throw new Error(`ledger_lookup_after_conflict_failed: ${existingErr?.message || "missing_row"}`);
-  }
-  const currentHitCount = asNumber(existing.hit_count) ?? 1;
-  const nextHitCount = Math.max(1, Math.round(currentHitCount + 1));
-
-  // APPEND-ONLY: on dedupe conflict, only bump hit_count + last_seen_at_utc.
-  // Do NOT overwrite semantic snapshot fields (verdict, top_candidates, failure_tags, etc.)
-  const { data: updated, error: updateErr } = await db
-    .from("attribution_audit_ledger")
-    .update({
-      hit_count: nextHitCount,
-      last_seen_at_utc: nowIso,
-    })
-    .eq("id", existing.id)
-    .select("id, dedupe_key, hit_count, first_seen_at_utc, last_seen_at_utc")
-    .maybeSingle();
-  if (updateErr) {
-    throw new Error(`ledger_upsert_update_failed: ${updateErr.message}`);
-  }
-
   return {
     persisted: true,
-    dedupe_key: updated?.dedupe_key || dedupeKey,
-    ledger_id: updated?.id || existing.id,
-    hit_count: updated?.hit_count || nextHitCount,
-    mode: "conflict_update",
+    dedupe_key: inserted?.dedupe_key || dedupeKey,
+    ledger_id: inserted?.id,
+    hit_count: inserted?.hit_count || 1,
+    mode: "inserted",
   };
 }
 
@@ -1131,7 +1134,7 @@ Deno.serve(async (req: Request) => {
     if (lineageErr) console.warn(`lineage_emit: ${lineageErr.message}`);
   } catch { /* lineage emission must never block the response */ }
 
-  // Canonical ledger tags for policy evaluation even in dry_run
+  // Canonical ledger tags for policy evaluation (available in both dry_run and persist modes)
   const ledger_failure_tags = normalizeTagList(
     uniqueStrings([...output.failure_mode_tags, ...deterministicTags]),
   );
@@ -1145,12 +1148,12 @@ Deno.serve(async (req: Request) => {
       prompt_version: PROMPT_VERSION,
       ms: Date.now() - t0,
       reviewer_output: output,
-      ledger_failure_tags,
-      ledger_failure_mode_bucket,
       deterministic_checks: {
         failure_mode_tags: deterministicTags,
         missing_evidence: deterministicMissing,
       },
+      ledger_failure_tags,
+      ledger_failure_mode_bucket,
       llm_parse_mode: llmParseMode,
       llm_raw_preview: llmRawPreview,
       persisted,
