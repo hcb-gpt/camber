@@ -187,7 +187,7 @@ Deno.serve(async (req: Request) => {
   `;
 
   // Fetch generously to account for already-reviewed spans being filtered out
-  const fetchLimit = 500;
+  const fetchLimit = 1000;
 
   const [backlogResp, calibResp] = await Promise.all([
     db
