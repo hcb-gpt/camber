@@ -122,7 +122,7 @@ Deno.serve(async (req: Request) => {
         pending_review_count: pendingReviewCount,
         review_queue_warning: reviewQueueWarning,
       },
-      manifest: (manifestRows ?? []),
+      manifest: manifestRows ?? [],
     };
 
     if (wantsHtml) {
