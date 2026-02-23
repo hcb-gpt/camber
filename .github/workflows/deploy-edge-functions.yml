@@ -24,7 +24,7 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          mapfile -t funcs < <(find supabase/functions -mindepth 1 -maxdepth 1 -type d -exec basename {} \; | sort | grep -Ev '^(_shared)$')
+          mapfile -t funcs < <(find supabase/functions -mindepth 1 -maxdepth 1 -type d -exec basename {} \; | sort | grep -Ev '^(_shared|shadow-replay|project-query|striking-detect)$')
           if [[ "${#funcs[@]}" -eq 0 ]]; then
             echo "No deployable functions found under supabase/functions" >&2
             exit 1
