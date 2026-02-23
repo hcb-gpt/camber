@@ -1,10 +1,11 @@
 /**
- * review-swarm-scheduler Edge Function v1.1.0
+ * review-swarm-scheduler Edge Function v1.1.1
  *
  * Cron-triggered scheduler (every 5 min). Checks SSOT backlog
  * (review_queue pending) and triggers review-swarm-runner when
  * thresholds are met.
  *
+ * v1.1.1: Fix runner fetch timeout (fire-and-forget pattern).
  * v1.1.0: Aligned to SSOT (review_queue), skip observability.
  *
  * Trigger signals (any one fires):
@@ -23,7 +24,7 @@ import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
 import { authErrorResponse, requireEdgeSecret } from "../_shared/auth.ts";
 
 const FUNCTION_SLUG = "review-swarm-scheduler";
-const FUNCTION_VERSION = "v1.1.0";
+const FUNCTION_VERSION = "v1.1.1";
 const JSON_HEADERS = { "Content-Type": "application/json" };
 
 const TRIGGER_OPEN_COUNT = 150;
@@ -32,6 +33,7 @@ const COOLDOWN_MINUTES = 10;
 const MAX_RUNS_PER_HOUR = 6;
 const BATCH_LIMIT = 100;
 const HIGH_VOLUME_THRESHOLD = 500;
+const RUNNER_FETCH_TIMEOUT_MS = 10_000;
 
 const ALLOWED_SOURCES = [
   "review-swarm-scheduler",
@@ -72,6 +74,8 @@ Deno.serve(async (req: Request) => {
   if (req.method !== "POST") {
     return jsonResponse({ ok: false, error: "method_not_allowed" }, 405);
   }
+
+  try {
 
   // --- Step 1: Auth ---
   const auth = requireEdgeSecret(req, ALLOWED_SOURCES);
@@ -152,7 +156,7 @@ Deno.serve(async (req: Request) => {
     await db.from("evidence_events").insert({
       source_type: "scheduler",
       source_id: `skip_${new Date().toISOString().replace(/[-:T]/g, "").slice(0, 15)}`,
-      transcript_variant: "n/a",
+      transcript_variant: null,
       metadata: {
         scheduler_version: FUNCTION_VERSION,
         action: "skip",
@@ -317,11 +321,16 @@ Deno.serve(async (req: Request) => {
     runnerBody.reviewer_model = reviewerModel;
   }
 
-  let runnerResponse: JsonRecord = {};
+  // Fire runner with a short timeout. The runner processes spans asynchronously
+  // and may take minutes. We only need to confirm the request was accepted.
   let runnerHttpStatus = 0;
   let runnerError: string | null = null;
+  let runnerAccepted = false;
 
   try {
+    const controller = new AbortController();
+    const timeoutId = setTimeout(() => controller.abort(), RUNNER_FETCH_TIMEOUT_MS);
+
     const resp = await fetch(runnerUrl, {
       method: "POST",
       headers: {
@@ -330,18 +339,28 @@ Deno.serve(async (req: Request) => {
         "X-Source": "review-swarm-scheduler",
       },
       body: JSON.stringify(runnerBody),
+      signal: controller.signal,
     });
 
+    clearTimeout(timeoutId);
     runnerHttpStatus = resp.status;
-
-    const respBody = await resp.json().catch(() => ({}));
-    runnerResponse = typeof respBody === "object" && respBody !== null ? respBody as JsonRecord : {};
+    runnerAccepted = resp.ok;
 
     if (!resp.ok) {
-      runnerError = `runner_http_${resp.status}: ${asString(runnerResponse.error) || "unknown"}`;
+      const respBody = await resp.json().catch(() => ({}));
+      const errBody = typeof respBody === "object" && respBody !== null ? respBody as JsonRecord : {};
+      runnerError = `runner_http_${resp.status}: ${asString(errBody.error) || "unknown"}`;
     }
+    // If runner responded OK, don't block reading the full body — it may be large.
   } catch (e: unknown) {
-    runnerError = e instanceof Error ? e.message : String(e || "unknown");
+    if (e instanceof DOMException && e.name === "AbortError") {
+      // Timeout is OK — runner is still processing in the background.
+      runnerAccepted = true;
+      runnerError = null;
+      runnerHttpStatus = 202; // Treat as accepted
+    } else {
+      runnerError = e instanceof Error ? e.message : String(e || "unknown");
+    }
   }
 
   // --- Step 9: Write evidence_events row ---
@@ -358,7 +377,7 @@ Deno.serve(async (req: Request) => {
       sla_breach: slaBreach,
       batch_id: batchId,
       runner_http_status: runnerHttpStatus,
-      runner_ok: runnerResponse.ok ?? null,
+      runner_accepted: runnerAccepted,
       runner_error: runnerError,
       reviewer_model: reviewerModel || null,
       triggers_fired: {
@@ -380,25 +399,16 @@ Deno.serve(async (req: Request) => {
   }
 
   // --- Step 10: Return summary ---
-  const runnerSummary: JsonRecord = {
-    ok: runnerResponse.ok ?? null,
-    sampled: asNumber(runnerResponse.sampled),
-    reviewed: asNumber(runnerResponse.reviewed),
-    written: asNumber(runnerResponse.written),
-    errors: asNumber(runnerResponse.errors),
-    verdict_counts: runnerResponse.verdict_counts ?? null,
-  };
-
   return jsonResponse({
-    ok: !runnerError,
+    ok: runnerAccepted,
     function_slug: FUNCTION_SLUG,
     version: FUNCTION_VERSION,
     action: "ran",
     batch_id: batchId,
     reviewer_model: reviewerModel || null,
     runner_http_status: runnerHttpStatus,
+    runner_accepted: runnerAccepted,
     runner_error: runnerError,
-    runner_response_summary: runnerSummary,
     triggers: metrics,
     triggers_fired: {
       open_count: triggerOpenCount,
@@ -408,4 +418,15 @@ Deno.serve(async (req: Request) => {
     evidence_logged: !evidenceError,
     ms: Date.now() - t0,
   });
+
+  } catch (fatal: unknown) {
+    return jsonResponse({
+      ok: false,
+      function_slug: FUNCTION_SLUG,
+      version: FUNCTION_VERSION,
+      error: "uncaught_exception",
+      detail: fatal instanceof Error ? fatal.message : String(fatal || "unknown"),
+      ms: Date.now() - t0,
+    }, 500);
+  }
 });
