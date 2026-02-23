@@ -372,8 +372,10 @@ async function fetchAttributionDetails(
         const attr = attrBySpan.get(String(s.id));
         const appliedPid = attr ? String(attr.applied_project_id ?? "") : "";
         return {
+          span_id: s.id,
           span_index: s.span_index,
           project_name: appliedPid ? (projectMap.get(appliedPid) ?? appliedPid) : "Unassigned",
+          applied_project_id: appliedPid || null,
           decision: attr ? String(attr.decision ?? "none") : "none",
           confidence: attr ? Number(attr.confidence ?? 0) : 0,
           reasoning: attr ? String(attr.reasoning ?? "") : "",
