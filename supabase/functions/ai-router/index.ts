@@ -611,7 +611,7 @@ function buildProjectFactProvenancePointers(
     const candidates = pack.facts.filter((f) => f.fact_kind === kind);
     if (candidates.length === 0) continue;
 
-    let fact = candidates.find((f) => ref.fact_as_of_at && f.as_of_at === ref.fact_as_of_at) ||
+    const fact = candidates.find((f) => ref.fact_as_of_at && f.as_of_at === ref.fact_as_of_at) ||
       candidates.find((f) => Boolean(f.evidence_event_id)) ||
       candidates[0];
 
