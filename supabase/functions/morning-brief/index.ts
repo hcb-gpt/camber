@@ -394,8 +394,8 @@ function buildPage(
     });
     var attention=[],quiet=[];
     manifest.forEach(function(p){
-      var flags=Number(p.new_striking_signals)||0,reviews=Number(p.pending_reviews)||0,calls=Number(p.new_calls)||0;
-      var proj={name:p.project_name||"Unknown",shortName:shortName(p.project_name||"Unknown"),flags:flags,reviews:reviews,calls:calls,urgency:(flags*10)+(reviews*2)+calls,needsAttention:flags>0||reviews>0,caller:callerByP[p.project_name]||null};
+      var reviews=Number(p.pending_reviews)||0,calls=Number(p.new_calls)||0,resolved=Number(p.newly_resolved_reviews)||0;
+      var proj={name:p.project_name||"Unknown",shortName:shortName(p.project_name||"Unknown"),reviews:reviews,calls:calls,resolved:resolved,urgency:(reviews*3)+calls,needsAttention:reviews>0,caller:callerByP[p.project_name]||null};
       if(proj.needsAttention)attention.push(proj);else quiet.push(proj);
     });
     attention.sort(function(a,b){return b.urgency-a.urgency;});
@@ -414,9 +414,9 @@ function buildPage(
       calls.push({interactionId:d.interaction_id||"",contactName:cn,callDate:callD,projects:projects,multiProject:projects.length>=2,uncertain:hasUnc,unmatched:hasUnm&&projects.length===0,spanCount:spans.length,spanDetails:sds});
     });
     calls.sort(function(a,b){if(!a.callDate&&!b.callDate)return 0;if(!a.callDate)return 1;if(!b.callDate)return-1;return b.callDate>a.callDate?1:b.callDate<a.callDate?-1:0;});
-    var totalActive=manifest.length,totalReviews=0,totalFlags=0;
-    manifest.forEach(function(p){totalReviews+=Number(p.pending_reviews)||0;totalFlags+=Number(p.new_striking_signals)||0;});
-    return{attention:attention,quiet:quiet,calls:calls,totalActive:totalActive,totalReviews:totalReviews,totalFlags:totalFlags};
+    var totalActive=manifest.length,totalReviews=0;
+    manifest.forEach(function(p){totalReviews+=Number(p.pending_reviews)||0;});
+    return{attention:attention,quiet:quiet,calls:calls,totalActive:totalActive,totalReviews:totalReviews};
   }
 
   /* --- Router --- */
@@ -540,20 +540,19 @@ function buildPage(
     function addS(n,l,c){var ch=ce("div","stat-chip");ch.appendChild(tx("span",String(n),"stat-num"+(c?" "+c:"")));ch.appendChild(tx("span",l,"stat-label"));hs.appendChild(ch);}
     addS(data.totalActive,"Active","");
     if(data.totalReviews>0)addS(data.totalReviews,"To Review","amber");
-    if(data.totalFlags>0)addS(data.totalFlags,"Flagged","red");
 
     var ac=document.getElementById("att-cards");ac.replaceChildren();
     document.getElementById("att-count").textContent=data.attention.length+" project"+(data.attention.length!==1?"s":"");
     if(data.attention.length>0){
       data.attention.forEach(function(p,i){
-        var cls="p-card card-rv"+(p.flags>0?" flagged":p.reviews>0?" review":"");
+        var cls="p-card card-rv"+(p.reviews>0?" review":"");
         var card=ce("div",cls);card.style.transitionDelay=(i*0.08)+"s";
         card.setAttribute("role","button");card.setAttribute("tabindex","0");
         var top=ce("div","card-top");top.appendChild(tx("span",p.shortName,"p-name"));
         var bg=ce("div","p-badges");
-        if(p.flags>0)bg.appendChild(tx("span",p.flags+" flagged","badge badge-red"));
         if(p.reviews>0)bg.appendChild(tx("span",p.reviews+" to review","badge badge-amber"));
         if(p.calls>0)bg.appendChild(tx("span",p.calls+" call"+(p.calls!==1?"s":""),"badge badge-muted"));
+        if(p.resolved>0)bg.appendChild(tx("span",p.resolved+" resolved","badge badge-muted"));
         top.appendChild(bg);card.appendChild(top);
         if(p.caller&&p.caller.contact_name&&p.caller.contact_name!=="Incoming call"){
           var calDiv=ce("div","p-caller");
@@ -616,9 +615,9 @@ function buildPage(
     var proj=data.attention.concat(data.quiet).find(function(p){return p.name===projectName;});
     if(proj){
       var bg=ce("div","detail-badges");
-      if(proj.flags>0)bg.appendChild(tx("span",proj.flags+" flagged","badge badge-red"));
       if(proj.reviews>0)bg.appendChild(tx("span",proj.reviews+" to review","badge badge-amber"));
       if(proj.calls>0)bg.appendChild(tx("span",proj.calls+" call"+(proj.calls!==1?"s":""),"badge badge-muted"));
+      if(proj.resolved>0)bg.appendChild(tx("span",proj.resolved+" resolved","badge badge-muted"));
       body.appendChild(bg);
     }
     var pCalls=data.calls.filter(function(c){return c.projects.indexOf(projectName)!==-1;});

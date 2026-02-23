@@ -228,21 +228,24 @@ function parseCandidates(raw: any, projectMap: Map<string, string>): CandidateEn
 async function fetchAttributionDetails(
   db: SupabaseClient,
 ): Promise<CallAttributionDetail[]> {
-  // Step 1: Get 10 most recent non-shadow, non-test interaction_ids
+  // Step 1: Get 50 most recent non-shadow, non-test interaction_ids
   const { data: recentSpans, error: spanErr } = await db
     .from("conversation_spans")
     .select("interaction_id")
     .not("interaction_id", "like", "cll_SHADOW_%")
     .not("interaction_id", "like", "%_TEST_%")
     .order("created_at", { ascending: false })
-    .limit(200);
+    .limit(500);
 
   if (spanErr || !recentSpans || recentSpans.length === 0) {
-    console.warn("[morning-manifest-ui] attribution query failed or empty:", spanErr?.message);
+    console.warn(
+      "[morning-manifest-ui] attribution query failed or empty:",
+      spanErr?.message,
+    );
     return [];
   }
 
-  // Deduplicate interaction_ids, keep order, limit to 10
+  // Deduplicate interaction_ids, keep order, limit to 50
   const seen = new Set<string>();
   const interactionIds: string[] = [];
   for (const row of recentSpans) {
@@ -250,7 +253,7 @@ async function fetchAttributionDetails(
     if (!seen.has(iid)) {
       seen.add(iid);
       interactionIds.push(iid);
-      if (interactionIds.length >= 10) break;
+      if (interactionIds.length >= 50) break;
     }
   }
 
@@ -276,39 +279,58 @@ async function fetchAttributionDetails(
 
   const spanIds = spans.map((s: { id: string }) => s.id);
 
-  const { data: attributions, error: attrErr } = await db
-    .from("span_attributions")
-    .select(`
-      span_id,
-      decision,
-      confidence,
-      reasoning,
-      anchors,
-      candidates_snapshot,
-      applied_project_id
-    `)
-    .in("span_id", spanIds);
-
-  if (attrErr) {
-    console.warn("[morning-manifest-ui] attributions fetch failed:", attrErr.message);
+  // Batch .in() queries to avoid PostgREST URL length limits (~8KB)
+  const BATCH_SIZE = 80;
+  // deno-lint-ignore no-explicit-any
+  const attributions: any[] = [];
+  let attrErr: { message: string } | null = null;
+  for (let i = 0; i < spanIds.length; i += BATCH_SIZE) {
+    const batch = spanIds.slice(i, i + BATCH_SIZE);
+    const { data: batchData, error: batchErr } = await db
+      .from("span_attributions")
+      .select(`
+        span_id,
+        decision,
+        confidence,
+        reasoning,
+        anchors,
+        candidates_snapshot,
+        applied_project_id,
+        project_id
+      `)
+      .in("span_id", batch);
+    if (batchErr) {
+      attrErr = batchErr;
+      console.warn("[morning-manifest-ui] attributions batch failed:", batchErr.message);
+    } else if (batchData) {
+      attributions.push(...batchData);
+    }
   }
 
-  // Step 3: Fetch interactions for contact_name / call_date
+  if (attrErr) {
+    console.warn("[morning-manifest-ui] attributions fetch had errors:", attrErr.message);
+  }
+
+  // Step 3: Fetch interactions for contact_name / event date
+  // Note: interactions.id is UUID, but interactionIds are text (cll_...) so join on interaction_id
   const { data: interactions, error: intErr } = await db
     .from("interactions")
-    .select("id, contact_name, call_date")
-    .in("id", interactionIds);
+    .select("interaction_id, contact_name, event_at_utc")
+    .in("interaction_id", interactionIds);
 
   if (intErr) {
     console.warn("[morning-manifest-ui] interactions fetch failed:", intErr.message);
   }
 
-  const interactionMap = new Map<string, { contact_name: string; call_date: string }>();
+  const interactionMap = new Map<
+    string,
+    { contact_name: string; call_date: string }
+  >();
   if (interactions) {
     for (const i of interactions) {
-      interactionMap.set(String(i.id), {
+      interactionMap.set(String(i.interaction_id), {
         contact_name: String(i.contact_name ?? "Unknown"),
-        call_date: String(i.call_date ?? ""),
+        call_date: String(i.event_at_utc ?? ""),
       });
     }
   }
@@ -318,6 +340,7 @@ async function fetchAttributionDetails(
   if (attributions) {
     for (const a of attributions) {
       if (a.applied_project_id) projectIds.add(String(a.applied_project_id));
+      if (a.project_id) projectIds.add(String(a.project_id));
       if (Array.isArray(a.candidates_snapshot)) {
         for (const c of a.candidates_snapshot) {
           if (c && typeof c === "object" && (c as Record<string, unknown>).project_id) {
@@ -352,6 +375,7 @@ async function fetchAttributionDetails(
     // deno-lint-ignore no-explicit-any
     candidates_snapshot: any;
     applied_project_id: string | null;
+    project_id: string | null;
   };
   const attrBySpan = new Map<string, AttrRow>();
   if (attributions) {
@@ -376,12 +400,14 @@ async function fetchAttributionDetails(
       }) => {
         const attr = attrBySpan.get(String(s.id));
         const appliedPid = attr ? String(attr.applied_project_id ?? "") : "";
+        const proposedPid = attr ? String(attr.project_id ?? "") : "";
+        const bestPid = appliedPid || proposedPid;
         const rawSeg = typeof s.transcript_segment === "string" ? s.transcript_segment.trim() : "";
         const excerpt = rawSeg.length > 300 ? rawSeg.slice(0, 300) + "..." : rawSeg || null;
         return {
           span_id: s.id,
           span_index: s.span_index,
-          project_name: appliedPid ? (projectMap.get(appliedPid) ?? appliedPid) : "Unassigned",
+          project_name: bestPid ? (projectMap.get(bestPid) ?? bestPid) : "Unassigned",
           applied_project_id: appliedPid || null,
           decision: attr ? String(attr.decision ?? "none") : "none",
           confidence: attr ? Number(attr.confidence ?? 0) : 0,
