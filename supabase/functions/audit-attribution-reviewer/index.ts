@@ -13,7 +13,7 @@ import { authErrorResponse, requireEdgeSecret } from "../_shared/auth.ts";
 import { parseLlmJson } from "../_shared/llm_json.ts";
 
 const FUNCTION_SLUG = "audit-attribution-reviewer";
-const FUNCTION_VERSION = "v0.1.1";
+const FUNCTION_VERSION = "v0.1.2";
 const SAFE_FALLBACK_MODEL_ID = "claude-3-haiku-20240307";
 const REQUESTED_MODEL_ID = Deno.env.get("AUDIT_ATTRIBUTION_REVIEWER_MODEL") ||
   Deno.env.get("AUDIT_ATTRIBUTION_MODEL") ||
@@ -28,6 +28,7 @@ const ALLOWED_SOURCES = [
   "prod-attrib-audit-runner",
   "audit-attribution-reviewer",
   "audit-attribution-test",
+  "review-swarm-runner",
   "segment-call",
   "manual",
   "m2-gt-eval",
@@ -564,11 +565,14 @@ Deno.serve(async (req: Request) => {
     deterministicMissing.push("as_of_project_context_observed_at<=call_at_utc");
   }
 
+  const requestedOverride = asString(body.reviewer_model);
+  const effectiveRequestedModel = requestedOverride || REQUESTED_MODEL_ID;
+
   const anthropic = new Anthropic({ apiKey: Deno.env.get("ANTHROPIC_API_KEY") || "" });
   let output: ReviewerOutput;
   let llmParseMode = "none";
   let llmRawPreview = "";
-  let usedModelId = REQUESTED_MODEL_ID;
+  let usedModelId = effectiveRequestedModel;
 
   try {
     const callReviewer = async (modelId: string) => {
@@ -576,6 +580,7 @@ Deno.serve(async (req: Request) => {
         anthropic.messages.create({
           model: modelId,
           max_tokens: MAX_TOKENS,
+          temperature: 0,
           system: SYSTEM_PROMPT,
           messages: [{ role: "user", content: buildUserPrompt(packet) }],
         }),
@@ -583,7 +588,7 @@ Deno.serve(async (req: Request) => {
       ]);
     };
 
-    const candidateModels = listCandidateModels(REQUESTED_MODEL_ID, FALLBACK_MODEL_ID);
+    const candidateModels = listCandidateModels(effectiveRequestedModel, FALLBACK_MODEL_ID);
     let llmResp: unknown = null;
     let lastModelError: unknown = null;
     for (let i = 0; i < candidateModels.length; i++) {
@@ -720,6 +725,7 @@ Deno.serve(async (req: Request) => {
       function_slug: FUNCTION_SLUG,
       version: FUNCTION_VERSION,
       model_id: usedModelId,
+      reviewer_model_override: requestedOverride || null,
       prompt_version: PROMPT_VERSION,
       source: auth.source || null,
       ms: Date.now() - t0,

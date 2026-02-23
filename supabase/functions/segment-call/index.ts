@@ -43,6 +43,11 @@
  * - Fixes rerun 500: replaces hard-delete of active spans with soft-delete (is_superseded=true).
  *   Hard-delete failed when FK-constrained children (striking_signals) referenced span rows.
  *
+ * v2.8.0:
+ * - Proper generation tracking: new spans get segment_generation = prior_max + 1 (not hardcoded 1).
+ * - Supersede metadata: sets superseded_at + superseded_by_action_id on old spans for audit trail.
+ * - Ensures rerun of same interaction_id produces incrementing generations with no FK errors.
+ *
  * Auth (internal gate; verify_jwt=false):
  * - X-Edge-Secret == EDGE_SHARED_SECRET, OR
  * - JWT + ALLOWED_EMAILS verified via auth.getUser() (debug path)
@@ -50,7 +55,7 @@
 import "jsr:@supabase/functions-js/edge-runtime.d.ts";
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
 
-const SEGMENT_CALL_VERSION = "v2.7.1";
+const SEGMENT_CALL_VERSION = "v2.8.0";
 const MAX_SEGMENT_CHARS_HARD_LIMIT = 3000;
 const MAX_HOOK_NON2XX_DIAGNOSTICS = 3;
 
@@ -981,13 +986,33 @@ Deno.serve(async (req: Request) => {
 
     // ============================================================
     // 4) REBUILD SPANS (SAFE: NO ATTRIBUTIONS ON ACTIVE SPANS)
+    //    v2.8.0: proper generation tracking + supersede metadata
     // ============================================================
+    const now = new Date().toISOString();
+    const supersedeActionId = crypto.randomUUID();
+    let nextGeneration = 1;
+
     if (existingSpans && existingSpans.length > 0) {
-      // Soft-delete: mark active spans as superseded instead of hard-deleting.
-      // Hard-delete fails when FK-constrained children (striking_signals, etc.) exist.
+      // Query max generation for this interaction
+      const { data: genRow } = await db
+        .from("conversation_spans")
+        .select("segment_generation")
+        .eq("interaction_id", interaction_id)
+        .order("segment_generation", { ascending: false })
+        .limit(1)
+        .maybeSingle();
+
+      const priorMax = genRow?.segment_generation ?? 0;
+      nextGeneration = priorMax + 1;
+
+      // Soft-supersede: mark active spans with timestamp + action_id for audit trail.
       const { error: supersedeErr } = await db
         .from("conversation_spans")
-        .update({ is_superseded: true })
+        .update({
+          is_superseded: true,
+          superseded_at: now,
+          superseded_by_action_id: supersedeActionId,
+        })
         .eq("interaction_id", interaction_id)
         .eq("is_superseded", false);
 
@@ -1005,7 +1030,6 @@ Deno.serve(async (req: Request) => {
       }
     }
 
-    const now = new Date().toISOString();
     const isDeterministicFallback = segmenterWarnings.includes("deterministic_fallback_applied");
     const spanRowsWithMetadata = segments.map((seg) => {
       const segmentText = spanTranscript!.slice(seg.char_start, seg.char_end);
@@ -1030,7 +1054,7 @@ Deno.serve(async (req: Request) => {
         segment_reason: seg.boundary_reason,
         segment_metadata: metadata,
         is_superseded: false,
-        segment_generation: 1,
+        segment_generation: nextGeneration,
         created_at: now,
       };
     });

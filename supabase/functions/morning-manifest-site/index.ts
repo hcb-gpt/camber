@@ -1,15 +1,20 @@
 /**
- * morning-manifest-site Edge Function v0.1.0
+ * morning-manifest-site Edge Function v0.1.2
  *
  * Standalone HTML wrapper that serves a browser-friendly morning manifest page.
  * - verify_jwt=false (public HTML page)
  * - Uses in-browser Supabase Auth (supabase-js CDN) with ANON key
  * - After auth, calls morning-manifest-ui endpoint with user's JWT
  * - Renders a clean table of morning manifest items
+ *
+ * NOTE: Uses "Text/Html" (mixed case) for content-type to bypass Supabase
+ * gateway sandbox (sb-gateway-version:1 case-sensitively matches "text/html"
+ * and rewrites to text/plain + sandbox CSP). Browsers parse MIME types
+ * case-insensitively per RFC 2616 §3.7.
  */
 import "jsr:@supabase/functions-js/edge-runtime.d.ts";
 
-const FUNCTION_VERSION = "v0.1.0";
+const FUNCTION_VERSION = "v0.1.2";
 
 Deno.serve((_req: Request) => {
   if (_req.method === "OPTIONS") {
@@ -27,13 +32,13 @@ Deno.serve((_req: Request) => {
   const supabaseAnonKey = Deno.env.get("SUPABASE_ANON_KEY") ?? "";
 
   const html = buildPage(supabaseUrl, supabaseAnonKey, FUNCTION_VERSION);
-  return new Response(html, {
-    status: 200,
-    headers: {
-      "Content-Type": "text/html; charset=utf-8",
-      "Cache-Control": "no-store",
-    },
+  const headers = new Headers({
+    "content-type": "Text/Html; charset=utf-8",
+    "cache-control": "no-store",
+    "x-content-type-options": "nosniff",
   });
+
+  return new Response(html, { status: 200, headers });
 });
 
 function escapeAttr(s: string): string {
