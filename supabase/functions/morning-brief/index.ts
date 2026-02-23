@@ -552,6 +552,7 @@ function buildPage(
     top.appendChild(tx("span",sp.project||"Unassigned","span-proj"));
     var pc=sp.decision==="assign"?"pill pill-assign":sp.decision==="review"?"pill pill-review":"pill pill-none";
     top.appendChild(tx("span",sp.decision||"none",pc));
+    if(sp.needs_review&&sp.decision!=="review")top.appendChild(tx("span","needs review","pill pill-review"));
     block.appendChild(top);
     var cp=Math.round(sp.confidence*100);
     var cr=ce("div","conf-row");cr.appendChild(tx("span","Confidence","conf-label"));
@@ -824,15 +825,16 @@ function buildPage(
     title.textContent=shortName(projectName);body.replaceChildren();
     body.appendChild(tx("h2",shortName(projectName),"detail-heading"));
     var data=state.manifestData;if(!data)return;
-    var proj=data.attention.concat(data.quiet).find(function(p){return p.name===projectName;});
-    if(proj){
-      var bg=ce("div","detail-badges");
-      if(proj.flags>0)bg.appendChild(tx("span",proj.flags+" flagged","badge badge-red"));
-      if(proj.reviews>0)bg.appendChild(tx("span",proj.reviews+" to review","badge badge-amber"));
-      if(proj.calls>0)bg.appendChild(tx("span",proj.calls+" call"+(proj.calls!==1?"s":""),"badge badge-muted"));
-      body.appendChild(bg);
-    }
     var pCalls=data.calls.filter(function(c){return c.projects.indexOf(projectName)!==-1;});
+    /* Count from actual span data so badges match what's on the page */
+    var projSpans=[];
+    pCalls.forEach(function(c){c.spanDetails.filter(function(sp){return sp.project===projectName;}).forEach(function(sp){projSpans.push(sp);});});
+    var needsReviewCount=projSpans.filter(function(sp){return sp.decision==="review"||sp.needs_review;}).length;
+    var bg=ce("div","detail-badges");
+    if(needsReviewCount>0)bg.appendChild(tx("span",needsReviewCount+" to review","badge badge-amber"));
+    bg.appendChild(tx("span",projSpans.length+" span"+(projSpans.length!==1?"s":""),"badge badge-muted"));
+    bg.appendChild(tx("span",pCalls.length+" call"+(pCalls.length!==1?"s":""),"badge badge-muted"));
+    body.appendChild(bg);
     if(pCalls.length===0){body.appendChild(tx("div","No recent calls for this project.","empty-state"));return;}
     pCalls.forEach(function(c){
       var blk=ce("div","detail-call-block");
