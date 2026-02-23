@@ -1,0 +1,3 @@
+# operator-validation-ui: Public HTML wrapper for operator attribution validation
+# Auth: verify_jwt=false (public HTML). Uses in-browser Supabase Auth for POST.
+verify_jwt = false
