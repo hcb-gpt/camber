@@ -24,6 +24,7 @@ const BACKLOG_RATIO = 0.5;
 
 const ALLOWED_SOURCES = [
   "review-swarm-runner",
+  "review-swarm-scheduler",
   "manual",
   "cron",
   "strat",

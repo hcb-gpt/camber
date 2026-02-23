@@ -1,0 +1,4 @@
+# review-swarm-scheduler: Cron-triggered scheduler for automated review-swarm-runner invocation
+# Auth: verify_jwt=false (internal). Uses X-Edge-Secret + X-Source allowlist.
+# Trigger: cron every 5min, fires runner when backlog thresholds exceeded.
+verify_jwt = false
