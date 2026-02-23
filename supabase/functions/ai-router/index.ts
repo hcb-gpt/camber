@@ -1,9 +1,9 @@
 /**
- * ai-router Edge Function v1.16.0
+ * ai-router Edge Function v1.16.1
  * LLM-based project attribution for conversation spans
  *
- * @version 1.16.0
- * @date 2026-02-22
+ * @version 1.16.1
+ * @date 2026-02-23
  * @purpose Use Claude Haiku to attribute spans to projects with anchored evidence
  *
  * v1.16.0 Changes (name-vs-content weighting fix):
@@ -13,6 +13,11 @@
  * - Adds prompt rules 9-10: name-in-transcript != project anchor; trust crossref
  *   over name coincidence when construction topics match a different project.
  * - Adds ContextPackage.evidence.claim_crossref_score type field.
+ *
+ * v1.16.1 Changes (candidates_snapshot persistence fix):
+ * - Ensures span_attributions.candidates_snapshot is populated when top_candidates exist,
+ *   even if raw context candidates are absent/empty.
+ * - Avoids persisting empty [] snapshots; writes null when no candidate evidence exists.
  *
  * v1.15.2 Changes (decision-time explainability persistence):
  * - Persists top_candidates snapshot to span_attributions at write time.
@@ -132,7 +137,7 @@ import {
 } from "./world_model_facts.ts";
 
 const PROMPT_VERSION_BASE = "v1.13.0";
-const FUNCTION_VERSION = "v1.16.0";
+const FUNCTION_VERSION = "v1.16.1";
 const MODEL_ID = Deno.env.get("AI_ROUTER_MODEL") || "claude-3-haiku-20240307";
 const MAX_TOKENS = 1024;
 const WORLD_MODEL_FACTS_ENABLED = parseBoolEnv(Deno.env.get("WORLD_MODEL_FACTS_ENABLED"), false);
@@ -469,6 +474,47 @@ function buildTopCandidateSnapshot(opts: {
     runner_up_confidence: topCandidates.length > 1 ? topCandidates[1].confidence : null,
     candidate_count: ranked.length,
   };
+}
+
+function buildCandidatesSnapshotPayload(opts: {
+  candidates: ContextPackage["candidates"] | null | undefined;
+  top_candidates: CandidateSnapshot[];
+}): Array<Record<string, unknown>> | null {
+  const sourceCandidates = Array.isArray(opts.candidates) ? opts.candidates : [];
+  const seenProjectIds = new Set<string>();
+  const payload: Array<Record<string, unknown>> = [];
+
+  for (const [index, candidate] of sourceCandidates.entries()) {
+    const candidateAny = candidate as any;
+    const projectId = String(candidate?.project_id || "").trim();
+    if (!projectId || seenProjectIds.has(projectId)) continue;
+    seenProjectIds.add(projectId);
+    payload.push({
+      project_id: projectId,
+      project_name: candidate.project_name || null,
+      rank: index + 1,
+      rrf_score: candidateAny?.evidence?.rrf_score ?? candidateAny?.rrf_score ?? null,
+      affinity_weight: candidate.evidence?.affinity_weight ?? null,
+      source_strength: candidate.evidence?.source_strength ?? null,
+      evidence_sources: Array.isArray(candidate.evidence?.sources) ? candidate.evidence.sources : [],
+      anchor_type: deriveCandidateAnchorType(candidate),
+      confidence: deriveCandidateEvidenceConfidence(candidate),
+      source: "context_candidates",
+    });
+  }
+
+  if (payload.length > 0) return payload;
+  if (!Array.isArray(opts.top_candidates) || opts.top_candidates.length === 0) return null;
+
+  return opts.top_candidates.map((candidate, index) => ({
+    project_id: candidate.project_id,
+    project_name: null,
+    rank: index + 1,
+    confidence: candidate.confidence,
+    anchor_type: candidate.anchor_type,
+    evidence_sources: [],
+    source: "top_candidates_fallback",
+  }));
 }
 
 // ============================================================
@@ -1872,6 +1918,10 @@ Deno.serve(async (req: Request) => {
       chosen_confidence: result.confidence,
       chosen_anchor_type: result.anchors?.[0]?.match_type || null,
     });
+    const candidatesSnapshotPayload = buildCandidatesSnapshotPayload({
+      candidates: context_package.candidates,
+      top_candidates: candidateSnapshot.top_candidates,
+    });
 
     const { error: upsertErr } = await db.from("span_attributions").upsert({
       span_id,
@@ -1898,14 +1948,7 @@ Deno.serve(async (req: Request) => {
       needs_review,
       attribution_source,
       evidence_tier,
-      candidates_snapshot: context_package.candidates?.map((c: any) => ({
-        project_id: c.project_id,
-        project_name: c.project_name,
-        rrf_score: c.evidence?.rrf_score ?? c.rrf_score ?? null,
-        affinity_weight: c.evidence?.affinity_weight ?? null,
-        source_strength: c.evidence?.source_strength ?? null,
-        evidence_sources: c.evidence?.sources || [],
-      })) || null,
+      candidates_snapshot: candidatesSnapshotPayload,
       attributed_by: `ai-router-${FUNCTION_VERSION}`,
       attributed_at: new Date().toISOString(),
     }, {
