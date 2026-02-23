@@ -1081,9 +1081,45 @@ Deno.serve(async (req: Request) => {
       // ========================================
 
       // ========================================
+      // EVIDENCE EVENT: Register this call as auditable evidence.
+      // Fail-open: errors are captured in warnings but never block the pipeline.
+      // UNIQUE(source_type, source_id, transcript_variant) provides idempotency.
+      // ========================================
+      try {
+        const { error: evidenceErr } = await db.from("evidence_events").upsert(
+          {
+            source_type: "call",
+            source_id: iid,
+            source_run_id: run_id,
+            transcript_variant: "baseline",
+            metadata: {
+              pipeline_version: PROCESS_CALL_VERSION,
+              run_id,
+              provenance_source,
+              gate_decision: g.decision,
+              transcript_chars: n.transcript?.length || 0,
+              contact_id: contact_id || null,
+              candidate_project_id: project_id || null,
+              candidate_count: rankedCandidates.length,
+              is_shadow,
+              created_by: "process-call",
+            },
+          },
+          { onConflict: "source_type,source_id,transcript_variant" },
+        );
+        if (evidenceErr) {
+          warnings.push(`evidence_event_call: ${evidenceErr.message}`);
+        }
+      } catch (evidenceEx: any) {
+        warnings.push(
+          `evidence_event_call_exception: ${evidenceEx.message || "unknown"}`,
+        );
+      }
+
+      // ========================================
       // v4.3.x: NON-BLOCKING DOWNSTREAM CHAINS
       // 1) segment-call: full attribution pipeline
-      //    segment-call → segment-llm → context-assembly → ai-router → span_attributions
+      //    segment-call -> segment-llm -> context-assembly -> ai-router -> span_attributions
       //    Only when we have a real transcript (>= 10 chars) and gate PASS.
       // 2) chain-detect: call_chains freshness path
       //    process-call -> chain-detect -> call_chains
