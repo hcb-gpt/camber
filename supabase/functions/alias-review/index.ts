@@ -281,6 +281,30 @@ async function handlePost(
     `[alias-review] POST action=${body.action} total=${body.suggestion_ids.length} ok=${successCount} err=${errorCount} ms=${elapsed}`,
   );
 
+  // RUNTIME LINEAGE (fire-and-forget)
+  try {
+    const lineageEdges: { from: string; to: string; type: string }[] = [
+      { from: "edge:alias-review", to: "table:public.suggested_aliases", type: "reads" },
+      { from: "edge:alias-review", to: "table:public.projects", type: "reads" },
+      { from: "edge:alias-review", to: "view:public.v_project_alias_lookup", type: "reads" },
+      { from: "edge:alias-review", to: "table:public.project_aliases", type: "reads" },
+      { from: "edge:alias-review", to: "table:public.project_aliases", type: "writes" },
+      { from: "edge:alias-review", to: "table:public.suggested_aliases", type: "writes" },
+    ];
+    const { error: lineageErr } = await db.from("evidence_events").upsert({
+      source_type: "lineage",
+      source_id: `alias-review:${body.action}:${Date.now()}`,
+      source_run_id: "alias-review:" + VERSION,
+      transcript_variant: "baseline",
+      metadata: {
+        edges: lineageEdges,
+        pipeline_version: VERSION,
+        action: body.action,
+      },
+    }, { onConflict: "source_type,source_id,transcript_variant" });
+    if (lineageErr) console.warn(`lineage_emit: ${lineageErr.message}`);
+  } catch { /* lineage must never block */ }
+
   return jsonResponse({
     ok: errorCount === 0,
     version: VERSION,

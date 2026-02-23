@@ -319,6 +319,22 @@ Deno.serve(async (req: Request) => {
       wall_clock_ms: Date.now() - t0,
     };
 
+    // RUNTIME LINEAGE EVIDENCE (fire-and-forget)
+    try {
+      const lineageEdges: { from: string; to: string; type: string }[] = [
+        { from: "edge:decision-auditor", to: "table:public.projects", type: "reads" },
+        { from: "edge:decision-auditor", to: "table:public.project_aliases", type: "reads" },
+      ];
+      const { error: lineageErr } = await db.from("evidence_events").upsert({
+        source_type: "lineage",
+        source_id: span_id,
+        source_run_id: "decision-auditor:" + FUNCTION_VERSION,
+        transcript_variant: "baseline",
+        metadata: { edges: lineageEdges, pipeline_version: FUNCTION_VERSION },
+      }, { onConflict: "source_type,source_id,transcript_variant" });
+      if (lineageErr) console.warn(`lineage_emit: ${lineageErr.message}`);
+    } catch { /* lineage emission must never block the response */ }
+
     return new Response(
       JSON.stringify({
         ok: true,

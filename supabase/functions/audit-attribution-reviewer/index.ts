@@ -7,6 +7,7 @@
  * - Does NOT query DB or fetch external context beyond provided packet
  */
 import "jsr:@supabase/functions-js/edge-runtime.d.ts";
+import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
 import Anthropic from "npm:@anthropic-ai/sdk@0.39.0";
 import { authErrorResponse, requireEdgeSecret } from "../_shared/auth.ts";
 import { parseLlmJson } from "../_shared/llm_json.ts";
@@ -693,6 +694,25 @@ Deno.serve(async (req: Request) => {
   if (output.verdict === "MATCH" && !packet.assigned_project_id) {
     output.verdict = "INSUFFICIENT";
   }
+
+  // RUNTIME LINEAGE EVIDENCE (fire-and-forget)
+  try {
+    const db = createClient(
+      Deno.env.get("SUPABASE_URL") || "",
+      Deno.env.get("SUPABASE_SERVICE_ROLE_KEY") || "",
+    );
+    const lineageEdges: { from: string; to: string; type: string }[] = [
+      { from: "edge:audit-attribution-reviewer", to: "edge:audit-attribution", type: "called_by" },
+    ];
+    const { error: lineageErr } = await db.from("evidence_events").upsert({
+      source_type: "lineage",
+      source_id: packet.span_id || packet.interaction_id,
+      source_run_id: "audit-attribution-reviewer:" + FUNCTION_VERSION,
+      transcript_variant: "baseline",
+      metadata: { edges: lineageEdges, pipeline_version: FUNCTION_VERSION },
+    }, { onConflict: "source_type,source_id,transcript_variant" });
+    if (lineageErr) console.warn(`lineage_emit: ${lineageErr.message}`);
+  } catch { /* lineage emission must never block the response */ }
 
   return new Response(
     JSON.stringify({

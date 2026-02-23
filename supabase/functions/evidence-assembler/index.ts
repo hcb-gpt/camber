@@ -582,6 +582,30 @@ Deno.serve(async (req: Request) => {
       const parsed = parseLlmJson<any>(responseText).value;
 
       if (parsed.status === "done") {
+        // RUNTIME LINEAGE (fire-and-forget)
+        try {
+          const lineageEdges: { from: string; to: string; type: string }[] = [
+            { from: "edge:evidence-assembler", to: "view:public.v_project_alias_lookup", type: "reads" },
+            { from: "edge:evidence-assembler", to: "table:public.project_contacts", type: "reads" },
+            { from: "edge:evidence-assembler", to: "table:public.correspondent_project_affinity", type: "reads" },
+            { from: "edge:evidence-assembler", to: "table:public.journal_claims", type: "reads" },
+            { from: "edge:evidence-assembler", to: "table:public.journal_open_loops", type: "reads" },
+            { from: "edge:evidence-assembler", to: "table:public.call_chains", type: "reads" },
+            { from: "edge:evidence-assembler", to: "table:public.span_attributions", type: "reads" },
+            { from: "edge:evidence-assembler", to: "table:public.project_facts", type: "reads" },
+            { from: "edge:evidence-assembler", to: "table:public.contact_fanout", type: "reads" },
+            { from: "edge:evidence-assembler", to: "edge:gmail-context-lookup", type: "calls" },
+          ];
+          const { error: lineageErr } = await db.from("evidence_events").upsert({
+            source_type: "lineage",
+            source_id: span_id,
+            source_run_id: "evidence-assembler:" + FUNCTION_VERSION,
+            transcript_variant: "baseline",
+            metadata: { edges: lineageEdges, pipeline_version: FUNCTION_VERSION },
+          }, { onConflict: "source_type,source_id,transcript_variant" });
+          if (lineageErr) console.warn(`lineage_emit: ${lineageErr.message}`);
+        } catch { /* lineage must never block */ }
+
         // Build the evidence brief from Sonnet's final output
         const brief: EvidenceBrief = {
           span_id,

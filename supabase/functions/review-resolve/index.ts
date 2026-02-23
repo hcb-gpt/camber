@@ -181,6 +181,25 @@ Deno.serve(async (req: Request) => {
       }`,
   );
 
+  // RUNTIME LINEAGE EVIDENCE (fire-and-forget)
+  try {
+    const lineageEdges: { from: string; to: string; type: string }[] = [
+      { from: "edge:review-resolve", to: "table:public.review_queue", type: "reads" },
+      { from: "edge:review-resolve", to: "table:public.span_attributions", type: "writes" },
+      { from: "edge:review-resolve", to: "table:public.review_queue", type: "writes" },
+      { from: "edge:review-resolve", to: "table:public.override_log", type: "writes" },
+      { from: "edge:review-resolve", to: "table:public.journal_claims", type: "writes" },
+    ];
+    const { error: lineageErr } = await db.from("evidence_events").upsert({
+      source_type: "lineage",
+      source_id: review_queue_id,
+      source_run_id: "review-resolve:v3.1.0",
+      transcript_variant: "baseline",
+      metadata: { edges: lineageEdges, pipeline_version: "v3.1.0" },
+    }, { onConflict: "source_type,source_id,transcript_variant" });
+    if (lineageErr) console.warn(`lineage_emit: ${lineageErr.message}`);
+  } catch { /* lineage emission must never block the response */ }
+
   return jsonResponse({
     ...result,
     ms: Date.now() - t0,

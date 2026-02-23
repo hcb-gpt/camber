@@ -1087,6 +1087,43 @@ Deno.serve(async (req: Request) => {
     receipt.attrib_count_after = 0;
   }
 
+  // RUNTIME LINEAGE (fire-and-forget)
+  try {
+    const lineageEdges: { from: string; to: string; type: string }[] = [
+      { from: "edge:admin-reseed", to: "table:public.override_log", type: "reads" },
+      { from: "edge:admin-reseed", to: "table:public.interactions", type: "reads" },
+      { from: "edge:admin-reseed", to: "table:public.conversation_spans", type: "reads" },
+      { from: "edge:admin-reseed", to: "table:public.span_attributions", type: "reads" },
+      { from: "edge:admin-reseed", to: "table:public.transcripts_comparison", type: "reads" },
+      { from: "edge:admin-reseed", to: "table:public.calls_raw", type: "reads" },
+      { from: "edge:admin-reseed", to: "table:public.conversation_spans", type: "writes" },
+      { from: "edge:admin-reseed", to: "table:public.span_attributions", type: "writes" },
+      { from: "edge:admin-reseed", to: "table:public.override_log", type: "writes" },
+      { from: "edge:admin-reseed", to: "table:public.review_queue", type: "writes" },
+      { from: "edge:admin-reseed", to: "edge:segment-llm", type: "calls" },
+    ];
+    if (rerouteMode) {
+      lineageEdges.push(
+        { from: "edge:admin-reseed", to: "edge:context-assembly", type: "calls" },
+        { from: "edge:admin-reseed", to: "edge:ai-router", type: "calls" },
+        { from: "edge:admin-reseed", to: "edge:striking-detect", type: "calls" },
+        { from: "edge:admin-reseed", to: "edge:journal-extract", type: "calls" },
+      );
+    }
+    const { error: lineageErr } = await db.from("evidence_events").upsert({
+      source_type: "lineage",
+      source_id: interaction_id,
+      source_run_id: "admin-reseed:" + VERSION,
+      transcript_variant: "baseline",
+      metadata: {
+        edges: lineageEdges,
+        pipeline_version: VERSION,
+        mode,
+      },
+    }, { onConflict: "source_type,source_id,transcript_variant" });
+    if (lineageErr) console.warn(`lineage_emit: ${lineageErr.message}`);
+  } catch { /* lineage must never block */ }
+
   // ========================================
   // 13. RESPONSE
   // ========================================
@@ -1112,6 +1149,36 @@ Deno.serve(async (req: Request) => {
     `[admin-reseed] Rechunk completed: interaction=${interaction_id}, spans_before=${spanCountBefore}, spans_after=${newSpanIds.length}, ` +
       `mode=${mode}, reroute=${receipt.reroute_triggered}`,
   );
+
+  // RUNTIME LINEAGE EVIDENCE (fire-and-forget)
+  try {
+    const lineageEdges: { from: string; to: string; type: string }[] = [
+      { from: "edge:admin-reseed", to: "table:public.conversation_spans", type: "reads" },
+      { from: "edge:admin-reseed", to: "table:public.span_attributions", type: "reads" },
+      { from: "edge:admin-reseed", to: "table:public.override_log", type: "reads" },
+      { from: "edge:admin-reseed", to: "table:public.interactions", type: "reads" },
+      { from: "edge:admin-reseed", to: "table:public.conversation_spans", type: "writes" },
+      { from: "edge:admin-reseed", to: "table:public.span_attributions", type: "writes" },
+      { from: "edge:admin-reseed", to: "table:public.override_log", type: "writes" },
+      { from: "edge:admin-reseed", to: "table:public.striking_signals", type: "writes" },
+      { from: "edge:admin-reseed", to: "table:public.journal_claims", type: "writes" },
+      { from: "edge:admin-reseed", to: "table:public.review_queue", type: "writes" },
+    ];
+    if (receipt.reroute_triggered) {
+      lineageEdges.push({ from: "edge:admin-reseed", to: "edge:context-assembly", type: "calls" });
+      lineageEdges.push({ from: "edge:admin-reseed", to: "edge:ai-router", type: "calls" });
+      lineageEdges.push({ from: "edge:admin-reseed", to: "edge:striking-detect", type: "calls" });
+      lineageEdges.push({ from: "edge:admin-reseed", to: "edge:journal-extract", type: "calls" });
+    }
+    const { error: lineageErr } = await db.from("evidence_events").upsert({
+      source_type: "lineage",
+      source_id: interaction_id,
+      source_run_id: "admin-reseed:" + VERSION,
+      transcript_variant: "baseline",
+      metadata: { edges: lineageEdges, pipeline_version: VERSION },
+    }, { onConflict: "source_type,source_id,transcript_variant" });
+    if (lineageErr) console.warn(`lineage_emit: ${lineageErr.message}`);
+  } catch { /* lineage emission must never block the response */ }
 
   return jsonResponse({
     ok: true,
