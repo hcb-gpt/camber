@@ -1,5 +1,5 @@
 /**
- * segment-call Edge Function v2.6.2
+ * segment-call Edge Function v2.6.3
  * Multi-span producer: calls segment-llm, writes N conversation_spans, then chains each span to
  * context-assembly → ai-router.
  *
@@ -27,6 +27,9 @@
  * - On per-span chain failure (context-assembly/ai-router), enqueue coverage_gap review_queue row immediately.
  * - Coverage-gap enqueue is best-effort: duplicate inserts are ignored; insert failures are logged.
  *
+ * v2.6.3:
+ * - Adds per-request run_id correlation to stopline/failure diagnostics.
+ *
  * Auth (internal gate; verify_jwt=false):
  * - X-Edge-Secret == EDGE_SHARED_SECRET, OR
  * - JWT + ALLOWED_EMAILS verified via auth.getUser() (debug path)
@@ -34,7 +37,7 @@
 import "jsr:@supabase/functions-js/edge-runtime.d.ts";
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
 
-const SEGMENT_CALL_VERSION = "v2.6.2";
+const SEGMENT_CALL_VERSION = "v2.6.3";
 const MAX_SEGMENT_CHARS_HARD_LIMIT = 3000;
 const MAX_HOOK_NON2XX_DIAGNOSTICS = 3;
 
@@ -497,9 +500,10 @@ function shouldRunAuditor(decision: string, confidence: number): boolean {
 
 Deno.serve(async (req: Request) => {
   const t0 = Date.now();
+  const run_id = `seg_${t0}_${Math.random().toString(36).slice(2, 8)}`;
 
   if (req.method !== "POST") {
-    return new Response(JSON.stringify({ error: "POST only" }), {
+    return new Response(JSON.stringify({ error: "POST only", run_id }), {
       status: 405,
       headers: jsonHeaders,
     });
@@ -523,6 +527,7 @@ Deno.serve(async (req: Request) => {
           ok: false,
           error: "invalid_json",
           error_code: "bad_request",
+          run_id,
           version: SEGMENT_CALL_VERSION,
         }),
         { status: 400, headers: jsonHeaders },
@@ -561,6 +566,7 @@ Deno.serve(async (req: Request) => {
           ok: false,
           error: "unauthorized",
           error_code: "auth_failed",
+          run_id,
           hint: "Requires X-Edge-Secret matching EDGE_SHARED_SECRET OR JWT with allowed email",
           version: SEGMENT_CALL_VERSION,
         }),
@@ -583,6 +589,7 @@ Deno.serve(async (req: Request) => {
           ok: false,
           error: "missing_interaction_id",
           error_code: "bad_request",
+          run_id,
           version: SEGMENT_CALL_VERSION,
         }),
         { status: 400, headers: jsonHeaders },
@@ -599,6 +606,7 @@ Deno.serve(async (req: Request) => {
           ok: false,
           error: "config_error",
           error_code: "config_missing",
+          run_id,
           hint: "EDGE_SHARED_SECRET not set",
           version: SEGMENT_CALL_VERSION,
         }),
@@ -938,12 +946,21 @@ Deno.serve(async (req: Request) => {
       const msg = (ins1.error.message || "").toLowerCase();
       const missingMetaCol = msg.includes("segment_metadata") && msg.includes("does not exist");
       if (!missingMetaCol) {
+        await logDiagnostic("STOPLINE_SPAN_WRITE_BLOCKED", {
+          reason: "conversation_spans_insert_failed",
+          interaction_id,
+          run_id,
+          detail: ins1.error.message,
+          code: ins1.error.code,
+          stopline: "call_evidence_coverage",
+        }, "warning");
         return new Response(
           JSON.stringify({
             ok: false,
             error: "span_creation_failed",
             error_code: "db_error",
             detail: ins1.error.message,
+            run_id,
             version: SEGMENT_CALL_VERSION,
             spans_written,
             spans_write_ok,
@@ -965,12 +982,21 @@ Deno.serve(async (req: Request) => {
         .select("id, span_index");
 
       if (ins2.error) {
+        await logDiagnostic("STOPLINE_SPAN_WRITE_BLOCKED", {
+          reason: "conversation_spans_insert_failed",
+          interaction_id,
+          run_id,
+          detail: ins2.error.message,
+          code: ins2.error.code,
+          stopline: "call_evidence_coverage",
+        }, "warning");
         return new Response(
           JSON.stringify({
             ok: false,
             error: "span_creation_failed",
             error_code: "db_error",
             detail: ins2.error.message,
+            run_id,
             version: SEGMENT_CALL_VERSION,
             spans_written,
             spans_write_ok,
@@ -1366,6 +1392,7 @@ Deno.serve(async (req: Request) => {
     if (coverageInvariant.backfilled_count > 0) {
       await logDiagnostic("STOPLINE_COVERAGE_BACKFILL", {
         interaction_id,
+        run_id,
         stopline: "r1_stopline_zero_dropped_spans",
         before_count: coverageInvariant.before_count,
         after_count: coverageInvariant.after_count,
@@ -1378,6 +1405,7 @@ Deno.serve(async (req: Request) => {
       await logDiagnostic("STOPLINE_COVERAGE_GAP", {
         reason: coverageInvariant.error || "uncovered_spans_remain_after_backfill",
         interaction_id,
+        run_id,
         stopline: "r1_stopline_zero_dropped_spans",
         before_count: coverageInvariant.before_count,
         after_count: coverageInvariant.after_count,
@@ -1389,6 +1417,7 @@ Deno.serve(async (req: Request) => {
           ok: false,
           error: "coverage_invariant_failed",
           error_code: "coverage_invariant_failed",
+          run_id,
           version: SEGMENT_CALL_VERSION,
           interaction_id,
           transcript_source: transcriptSource,
@@ -1420,6 +1449,7 @@ Deno.serve(async (req: Request) => {
       await logDiagnostic("DOWNSTREAM_CALL_FAILED", {
         reason: "chain_failed",
         interaction_id,
+        run_id,
         failed_count: chainStatuses.filter((s) => Boolean(s.error_code)).length,
         sample_failures: chainStatuses
           .filter((s) => Boolean(s.error_code))
@@ -1437,6 +1467,7 @@ Deno.serve(async (req: Request) => {
           ok: false,
           error: "chain_failed",
           error_code: "chain_failed",
+          run_id,
           version: SEGMENT_CALL_VERSION,
           interaction_id,
           transcript_source: transcriptSource,
@@ -1503,6 +1534,7 @@ Deno.serve(async (req: Request) => {
     return new Response(
       JSON.stringify({
         ok: true,
+        run_id,
         version: SEGMENT_CALL_VERSION,
         interaction_id,
         transcript_source: transcriptSource,
@@ -1537,6 +1569,7 @@ Deno.serve(async (req: Request) => {
     return new Response(
       JSON.stringify({
         ok: false,
+        run_id,
         error_code: "unhandled_error",
         error: e.message,
         segment_call_version: SEGMENT_CALL_VERSION,
