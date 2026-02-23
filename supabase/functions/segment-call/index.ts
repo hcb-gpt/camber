@@ -34,7 +34,7 @@
  * - Fails closed with error_code='call_evidence_write_failed' if evidence upsert cannot be completed.
  *
  * v2.7.0:
- * - Per-span chain processing with bounded parallelism (SPAN_PARALLEL_CONCURRENCY env var, default 1).
+ * - Per-span chain processing with bounded parallelism (SPAN_PARALLEL_CONCURRENCY env var, default 5).
  * - Eliminates timeout truncation for calls with 30+ spans.
  * - Extracted loop body into processSpanChain() with Promise.allSettled dispatch.
  * - New response field: chain.wall_clock_ms, chain.parallel_concurrency.
@@ -514,10 +514,18 @@ function shouldRunAuditor(decision: string, confidence: number): boolean {
 }
 
 // v2.7.0: Parallel span chain processing
-// Default 1 = sequential (safe rollback). Set to 5 in prod for parallelism.
-const SPAN_PARALLEL_CONCURRENCY = Math.max(
-  1,
-  parseInt(Deno.env.get("SPAN_PARALLEL_CONCURRENCY") || "1", 10) || 1,
+// Default to parallel processing even when env wiring is missing.
+const DEFAULT_SPAN_PARALLEL_CONCURRENCY = 5;
+const MAX_SPAN_PARALLEL_CONCURRENCY = 12;
+const parsedSpanParallelConcurrency = parseInt(Deno.env.get("SPAN_PARALLEL_CONCURRENCY") || "", 10);
+const SPAN_PARALLEL_CONCURRENCY = Math.min(
+  MAX_SPAN_PARALLEL_CONCURRENCY,
+  Math.max(
+    1,
+    Number.isFinite(parsedSpanParallelConcurrency)
+      ? parsedSpanParallelConcurrency
+      : DEFAULT_SPAN_PARALLEL_CONCURRENCY,
+  ),
 );
 
 /** Sliding-window concurrency limiter (p-limit pattern, zero deps). */
