@@ -1,21 +1,15 @@
 /**
- * morning-manifest-ui Edge Function v0.3.0
+ * morning-manifest-ui Edge Function v0.1.0
  *
  * Browser-callable endpoint for Morning Manifest UI.
  * - verify_jwt=true (gateway)
  * - validates bearer token and returns manifest rows + queue summary
- * - supports `format=html` or `Accept: text/html` for direct dashboard rendering
  */
 import "jsr:@supabase/functions-js/edge-runtime.d.ts";
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
-import {
-  type JsonObj,
-  type ManifestResponse,
-  renderManifestHtml,
-  wantsHtmlResponse,
-} from "./view.ts";
+import { type ManifestResponse, renderManifestHtml, wantsHtmlResponse } from "./view.ts";
 
-const FUNCTION_VERSION = "v0.3.0";
+const FUNCTION_VERSION = "v0.1.0";
 
 const BASE_HEADERS = {
   "Content-Type": "application/json",
@@ -59,8 +53,8 @@ Deno.serve(async (req: Request) => {
     const tokenRole = typeof claims.role === "string" ? claims.role : null;
     const hasSubject = typeof claims.sub === "string" && claims.sub.trim().length > 0;
 
-    let viewer: { id: string | null; email: string | null; role: string | null } = {
-      id: null,
+    let viewer: { id: string; email: string | null; role: string | null } = {
+      id: hasSubject ? "" : "service-role",
       email: null,
       role: tokenRole,
     };
@@ -74,7 +68,6 @@ Deno.serve(async (req: Request) => {
           detail: userError?.message ?? "Unable to validate token",
         });
       }
-
       viewer = {
         id: userData.user.id,
         email: userData.user.email ?? null,
@@ -129,7 +122,7 @@ Deno.serve(async (req: Request) => {
         pending_review_count: pendingReviewCount,
         review_queue_warning: reviewQueueWarning,
       },
-      manifest: (manifestRows ?? []) as JsonObj[],
+      manifest: manifestRows ?? [],
     };
 
     if (wantsHtml) {

@@ -7,7 +7,7 @@ export type ManifestResponse = {
   generated_at: string;
   ms: number;
   user: {
-    id: string | null;
+    id: string;
     email: string | null;
     role: string | null;
   };
@@ -263,7 +263,9 @@ export function renderManifestHtml(payload: ManifestResponse, limit: number): st
     <main class="wrap">
       <section class="hero">
         <h1>Morning Manifest Dashboard</h1>
-        <p class="meta">Generated at ${escapeHtml(payload.generated_at)} | Showing up to ${formatInt(limit)} rows | Function ${escapeHtml(payload.function_version)}</p>
+        <p class="meta">Generated at ${escapeHtml(payload.generated_at)} | Showing up to ${
+    formatInt(limit)
+  } rows | Function ${escapeHtml(payload.function_version)}</p>
       </section>
 
       <section class="cards">
