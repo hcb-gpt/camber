@@ -28,6 +28,7 @@ const ALLOWED_SOURCES = [
   "prod-attrib-audit-runner",
   "audit-attribution-reviewer",
   "audit-attribution-test",
+  "review-swarm-runner",
   "segment-call",
   "manual",
   "m2-gt-eval",
