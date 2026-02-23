@@ -9,7 +9,7 @@
  */
 import "jsr:@supabase/functions-js/edge-runtime.d.ts";
 
-const FUNCTION_VERSION = "v0.1.0";
+const FUNCTION_VERSION = "v0.1.2";
 
 Deno.serve((_req: Request) => {
   if (_req.method === "OPTIONS") {
@@ -27,12 +27,23 @@ Deno.serve((_req: Request) => {
   const supabaseAnonKey = Deno.env.get("SUPABASE_ANON_KEY") ?? "";
 
   const html = buildPage(supabaseUrl, supabaseAnonKey, FUNCTION_VERSION);
-  return new Response(html, {
+  const headers = new Headers({
+    "content-type": "text/html; charset=utf-8",
+    "cache-control": "no-store",
+    "x-content-type-options": "nosniff",
+    "content-security-policy": [
+      "default-src 'none'",
+      "script-src 'unsafe-inline' https://cdn.jsdelivr.net",
+      "style-src 'unsafe-inline' https://fonts.googleapis.com",
+      "font-src https://fonts.gstatic.com",
+      "connect-src https://*.supabase.co",
+    ].join("; "),
+  });
+  const htmlBlob = new Blob([html], { type: "text/html; charset=utf-8" });
+
+  return new Response(htmlBlob, {
     status: 200,
-    headers: {
-      "Content-Type": "text/html; charset=utf-8",
-      "Cache-Control": "no-store",
-    },
+    headers,
   });
 });
 
