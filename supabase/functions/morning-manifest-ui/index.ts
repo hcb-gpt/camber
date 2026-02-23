@@ -7,6 +7,7 @@
  */
 import "jsr:@supabase/functions-js/edge-runtime.d.ts";
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
+import { type ManifestResponse, renderManifestHtml, wantsHtmlResponse } from "./view.ts";
 
 const FUNCTION_VERSION = "v0.1.0";
 
@@ -17,9 +18,6 @@ const BASE_HEADERS = {
   "Access-Control-Allow-Headers": "authorization, x-client-info, apikey, content-type",
   "Access-Control-Allow-Methods": "GET, OPTIONS",
 };
-
-type JsonValue = string | number | boolean | null | JsonValue[] | { [k: string]: JsonValue };
-type JsonObj = { [k: string]: JsonValue };
 
 Deno.serve(async (req: Request) => {
   const startedAt = Date.now();
@@ -55,8 +53,8 @@ Deno.serve(async (req: Request) => {
     const tokenRole = typeof claims.role === "string" ? claims.role : null;
     const hasSubject = typeof claims.sub === "string" && claims.sub.trim().length > 0;
 
-    let viewer: { id: string | null; email: string | null; role: string | null } = {
-      id: null,
+    let viewer: { id: string; email: string | null; role: string | null } = {
+      id: hasSubject ? "" : "service-role",
       email: null,
       role: tokenRole,
     };
@@ -70,7 +68,6 @@ Deno.serve(async (req: Request) => {
           detail: userError?.message ?? "Unable to validate token",
         });
       }
-
       viewer = {
         id: userData.user.id,
         email: userData.user.email ?? null,
@@ -86,6 +83,7 @@ Deno.serve(async (req: Request) => {
 
     const url = new URL(req.url);
     const limit = parseBoundedInt(url.searchParams.get("limit"), 50, 1, 250);
+    const wantsHtml = wantsHtmlResponse(req, url);
 
     const { data: manifestRows, error: manifestError } = await db
       .from("v_morning_manifest")
@@ -113,7 +111,7 @@ Deno.serve(async (req: Request) => {
       pendingReviewCount = count ?? 0;
     }
 
-    return json(200, {
+    const payload: ManifestResponse = {
       ok: true,
       function_version: FUNCTION_VERSION,
       generated_at: new Date().toISOString(),
@@ -124,8 +122,14 @@ Deno.serve(async (req: Request) => {
         pending_review_count: pendingReviewCount,
         review_queue_warning: reviewQueueWarning,
       },
-      manifest: (manifestRows ?? []) as JsonObj[],
-    });
+      manifest: (manifestRows ?? []),
+    };
+
+    if (wantsHtml) {
+      return html(200, renderManifestHtml(payload, limit));
+    }
+
+    return json(200, payload);
   } catch (err) {
     console.error("[morning-manifest-ui] fatal:", err);
     return json(500, {
@@ -177,5 +181,15 @@ function json(status: number, body: Record<string, unknown>): Response {
   return new Response(JSON.stringify(body, null, 2), {
     status,
     headers: BASE_HEADERS,
+  });
+}
+
+function html(status: number, body: string): Response {
+  return new Response(body, {
+    status,
+    headers: {
+      ...BASE_HEADERS,
+      "Content-Type": "text/html; charset=utf-8",
+    },
   });
 }
