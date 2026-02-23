@@ -1,0 +1,3 @@
+# operator-validation: Operator validation API (read spans + write feedback)
+# Auth: Supabase gateway verifies JWT; function validates user via auth.getUser()
+verify_jwt = true
