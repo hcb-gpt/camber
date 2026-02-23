@@ -1,10 +1,12 @@
 /**
- * morning-manifest-ui Edge Function v0.3.0
+ * morning-manifest-ui Edge Function v0.4.0
  *
  * Browser-callable endpoint for Morning Manifest UI.
  * - verify_jwt=true (gateway)
  * - validates bearer token and returns manifest rows + queue summary
  * - includes per-call, per-span attribution details (10 most recent)
+ * - v0.4.0: review_queue rollup from v_review_queue_summary,
+ *   v_review_queue_reason_daily, v_review_queue_top_interactions
  */
 import "jsr:@supabase/functions-js/edge-runtime.d.ts";
 import { createClient, type SupabaseClient } from "https://esm.sh/@supabase/supabase-js@2";
@@ -14,11 +16,14 @@ import {
   type CandidateEntry,
   type ManifestResponse,
   renderManifestHtml,
+  type ReviewQueueReasonDaily,
+  type ReviewQueueSummary,
+  type ReviewQueueTopInteraction,
   type SpanDetail,
   wantsHtmlResponse,
 } from "./view.ts";
 
-const FUNCTION_VERSION = "v0.3.0";
+const FUNCTION_VERSION = "v0.4.0";
 
 const BASE_HEADERS = {
   "Content-Type": "application/json",
@@ -120,6 +125,38 @@ Deno.serve(async (req: Request) => {
       pendingReviewCount = count ?? 0;
     }
 
+    // Review queue rollup views (v0.4.0)
+    let reviewQueueRollup: ReviewQueueSummary | null = null;
+    let reviewReasonDaily: ReviewQueueReasonDaily[] = [];
+    let reviewTopInteractions: ReviewQueueTopInteraction[] = [];
+
+    const { data: rollupRow } = await db
+      .from("v_review_queue_summary")
+      .select("*")
+      .limit(1)
+      .maybeSingle();
+    if (rollupRow) {
+      reviewQueueRollup = rollupRow as unknown as ReviewQueueSummary;
+    }
+
+    const { data: reasonRows } = await db
+      .from("v_review_queue_reason_daily")
+      .select("*")
+      .order("day", { ascending: false })
+      .limit(30);
+    if (reasonRows) {
+      reviewReasonDaily = reasonRows as unknown as ReviewQueueReasonDaily[];
+    }
+
+    const { data: topRows } = await db
+      .from("v_review_queue_top_interactions")
+      .select("*")
+      .order("pending_count", { ascending: false })
+      .limit(20);
+    if (topRows) {
+      reviewTopInteractions = topRows as unknown as ReviewQueueTopInteraction[];
+    }
+
     // Fetch per-call attribution details (10 most recent)
     let attributionDetails: CallAttributionDetail[] = [];
     try {
@@ -141,9 +178,12 @@ Deno.serve(async (req: Request) => {
         project_row_count: manifestRows?.length ?? 0,
         pending_review_count: pendingReviewCount,
         review_queue_warning: reviewQueueWarning,
+        review_queue_rollup: reviewQueueRollup,
       },
       manifest: manifestRows ?? [],
       attribution_details: attributionDetails,
+      review_queue_reason_daily: reviewReasonDaily,
+      review_queue_top_interactions: reviewTopInteractions,
     };
 
     if (wantsHtml) {

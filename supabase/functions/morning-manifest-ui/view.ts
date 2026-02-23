@@ -38,6 +38,32 @@ export type CallAttributionDetail = {
   spans: SpanDetail[];
 };
 
+export type ReviewQueueSummary = {
+  pending_total: number;
+  pending_attribution: number;
+  pending_coverage_gap: number;
+  pending_weak_anchor: number;
+  latest_pending_created_at: string | null;
+};
+
+export type ReviewQueueReasonDaily = {
+  day: string;
+  module: string;
+  reason_code: string;
+  pending_count: number;
+  first_seen_at: string;
+  last_seen_at: string;
+};
+
+export type ReviewQueueTopInteraction = {
+  interaction_id: string;
+  module: string;
+  pending_count: number;
+  reason_codes: string[];
+  first_seen_at: string;
+  last_seen_at: string;
+};
+
 export type ManifestResponse = {
   ok: boolean;
   function_version: string;
@@ -52,9 +78,12 @@ export type ManifestResponse = {
     project_row_count: number;
     pending_review_count: number | null;
     review_queue_warning: string | null;
+    review_queue_rollup?: ReviewQueueSummary | null;
   };
   manifest: JsonObj[];
   attribution_details?: CallAttributionDetail[];
+  review_queue_reason_daily?: ReviewQueueReasonDaily[];
+  review_queue_top_interactions?: ReviewQueueTopInteraction[];
 };
 
 export function wantsHtmlResponse(req: Request, url: URL): boolean {
