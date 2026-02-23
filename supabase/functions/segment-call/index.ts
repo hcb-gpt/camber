@@ -1133,9 +1133,9 @@ Deno.serve(async (req: Request) => {
     };
 
     /** Process a single span through the full chain. Returns status; never throws. */
-    async function processSpanChain(
+    const processSpanChain = async (
       span: { id: string; span_index: number },
-    ): Promise<SpanChainStatus> {
+    ): Promise<SpanChainStatus> => {
       const status: SpanChainStatus = {
         span_id: span.id,
         span_index: span.span_index,
@@ -1475,7 +1475,7 @@ Deno.serve(async (req: Request) => {
       }
 
       return status;
-    }
+    };
 
     // Dispatch all span chains with bounded concurrency
     const chainT0 = Date.now();
