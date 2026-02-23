@@ -11,7 +11,7 @@ import "jsr:@supabase/functions-js/edge-runtime.d.ts";
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
 import { authErrorResponse, requireEdgeSecret } from "../_shared/auth.ts";
 
-const FUNCTION_VERSION = "v0.1.0";
+const FUNCTION_VERSION = "v0.2.0";
 const JSON_HEADERS = { "Content-Type": "application/json" };
 const DEFAULT_MANIFEST_NAME = "attrib_regress_v1";
 const DEFAULT_LIMIT = 10;
@@ -33,6 +33,7 @@ interface ManifestItem {
   interaction_id: string;
   span_id: string;
   baseline_verdict: string;
+  baseline_reviewer_model: string | null;
   failure_mode_bucket: string | null;
   assigned_project_id: string | null;
   packet_json: JsonRecord;
@@ -45,6 +46,8 @@ interface RegressResult {
   interaction_id: string;
   span_id: string;
   baseline_verdict: string;
+  baseline_reviewer_model: string | null;
+  pinned_reviewer_model: string | null;
   current_verdict: string;
   pass: boolean;
   failure_mode_bucket: string | null;
@@ -89,7 +92,8 @@ async function loadManifestItems(
         verdict,
         failure_mode_bucket,
         assigned_project_id,
-        packet_json
+        packet_json,
+        reviewer_model
       )
     `)
     .eq("manifest_id", manifest.id)
@@ -121,6 +125,7 @@ async function loadManifestItems(
       interaction_id: asString(ledger.interaction_id),
       span_id: asString(ledger.span_id),
       baseline_verdict: asString(ledger.verdict),
+      baseline_reviewer_model: asString(ledger.reviewer_model) || null,
       failure_mode_bucket: asString(ledger.failure_mode_bucket) || null,
       assigned_project_id: asString(ledger.assigned_project_id) || null,
       packet_json: asRecord(ledger.packet_json),
@@ -133,12 +138,18 @@ async function callReviewer(
   supabaseUrl: string,
   edgeSecret: string,
   packetJson: JsonRecord,
+  reviewerModel: string | null,
 ): Promise<{ verdict: string; ms: number; error: string | null }> {
   const t0 = Date.now();
   const reviewerUrl = `${supabaseUrl}/functions/v1/audit-attribution-reviewer`;
 
   const controller = new AbortController();
   const timeout = setTimeout(() => controller.abort(), REVIEWER_TIMEOUT_MS);
+
+  const payload: JsonRecord = { packet_json: packetJson };
+  if (reviewerModel) {
+    payload.reviewer_model = reviewerModel;
+  }
 
   try {
     const resp = await fetch(reviewerUrl, {
@@ -148,7 +159,7 @@ async function callReviewer(
         "X-Edge-Secret": edgeSecret,
         "X-Source": "prod-attrib-audit-runner",
       },
-      body: JSON.stringify({ packet_json: packetJson }),
+      body: JSON.stringify(payload),
       signal: controller.signal,
     });
 
@@ -208,6 +219,7 @@ Deno.serve(async (req: Request) => {
   const rawLimit = typeof body.limit === "number" ? body.limit : DEFAULT_LIMIT;
   const limit = Math.min(Math.max(1, Math.round(rawLimit as number)), MAX_LIMIT);
   const dryRun = body.dry_run === true;
+  const forceReviewerModel = asString(body.reviewer_model) || null;
 
   const supabaseUrl = Deno.env.get("SUPABASE_URL") || "";
   const serviceRoleKey = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY") || "";
@@ -256,12 +268,15 @@ Deno.serve(async (req: Request) => {
         dry_run: true,
         manifest_name: manifestName,
         items_loaded: items.length,
+        force_reviewer_model: forceReviewerModel,
         items_preview: items.map((i) => ({
           manifest_item_id: i.manifest_item_id,
           ledger_id: i.ledger_id,
           interaction_id: i.interaction_id,
           span_id: i.span_id,
           baseline_verdict: i.baseline_verdict,
+          baseline_reviewer_model: i.baseline_reviewer_model,
+          pinned_reviewer_model: forceReviewerModel || i.baseline_reviewer_model,
           failure_mode_bucket: i.failure_mode_bucket,
           has_packet: Object.keys(i.packet_json).length > 0,
         })),
@@ -277,6 +292,8 @@ Deno.serve(async (req: Request) => {
   let errorCount = 0;
 
   for (const item of items) {
+    const pinnedModel = forceReviewerModel || item.baseline_reviewer_model;
+
     if (Object.keys(item.packet_json).length === 0) {
       results.push({
         manifest_item_id: item.manifest_item_id,
@@ -284,6 +301,8 @@ Deno.serve(async (req: Request) => {
         interaction_id: item.interaction_id,
         span_id: item.span_id,
         baseline_verdict: item.baseline_verdict,
+        baseline_reviewer_model: item.baseline_reviewer_model,
+        pinned_reviewer_model: pinnedModel,
         current_verdict: "ERROR",
         pass: false,
         failure_mode_bucket: item.failure_mode_bucket,
@@ -295,7 +314,7 @@ Deno.serve(async (req: Request) => {
       continue;
     }
 
-    const review = await callReviewer(supabaseUrl, edgeSecret, item.packet_json);
+    const review = await callReviewer(supabaseUrl, edgeSecret, item.packet_json, pinnedModel);
     const pass = verdictMatches(item.baseline_verdict, review.verdict);
 
     if (review.error) {
@@ -312,6 +331,8 @@ Deno.serve(async (req: Request) => {
       interaction_id: item.interaction_id,
       span_id: item.span_id,
       baseline_verdict: item.baseline_verdict,
+      baseline_reviewer_model: item.baseline_reviewer_model,
+      pinned_reviewer_model: pinnedModel,
       current_verdict: review.verdict,
       pass,
       failure_mode_bucket: item.failure_mode_bucket,
@@ -326,6 +347,7 @@ Deno.serve(async (req: Request) => {
       ok: true,
       version: FUNCTION_VERSION,
       manifest_name: manifestName,
+      force_reviewer_model: forceReviewerModel,
       items_loaded: items.length,
       summary: {
         total: results.length,
