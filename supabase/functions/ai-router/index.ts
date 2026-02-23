@@ -1,10 +1,17 @@
 /**
- * ai-router Edge Function v1.16.0
+ * ai-router Edge Function v1.17.0
  * LLM-based project attribution for conversation spans
  *
- * @version 1.16.0
+ * @version 1.17.0
  * @date 2026-02-22
  * @purpose Use Claude Haiku to attribute spans to projects with anchored evidence
+ *
+ * v1.17.0 Changes (high-confidence gap-based auto-assign):
+ * - Adds high-confidence promotion path: review->assign when confidence >= 0.70,
+ *   runner-up gap >= 0.20, and a strong anchor is present.
+ * - Unlocks ~234 spans stuck in "review" despite high LLM confidence.
+ * - Preserves all existing guardrails (bizdev gate, stopline, blocklist, etc.)
+ *   which run AFTER this promotion and can still downgrade if warranted.
  *
  * v1.16.0 Changes (name-vs-content weighting fix):
  * - Adds name-content guardrail: downgrades assign->review when chosen project
@@ -132,7 +139,7 @@ import {
 } from "./world_model_facts.ts";
 
 const PROMPT_VERSION_BASE = "v1.13.0";
-const FUNCTION_VERSION = "v1.16.0";
+const FUNCTION_VERSION = "v1.17.0";
 const MODEL_ID = Deno.env.get("AI_ROUTER_MODEL") || "claude-3-haiku-20240307";
 const MAX_TOKENS = 1024;
 const WORLD_MODEL_FACTS_ENABLED = parseBoolEnv(Deno.env.get("WORLD_MODEL_FACTS_ENABLED"), false);
@@ -142,10 +149,12 @@ const WORLD_MODEL_FACTS_MAX_PER_PROJECT = Math.max(
 );
 const PROMPT_VERSION = WORLD_MODEL_FACTS_ENABLED ? "v1.12.0_world_model_facts" : PROMPT_VERSION_BASE;
 
-// Confidence thresholds (3-band policy v1.15.0)
+// Confidence thresholds (3-band policy v1.15.0, extended v1.17.0)
 const THRESHOLD_AUTO_ASSIGN = 0.75;
 const THRESHOLD_REVIEW = 0.25;
 const THRESHOLD_SAFE_LOW_ASSIGN = 0.40;
+const THRESHOLD_HIGH_CONFIDENCE_GAP_ASSIGN = 0.70;
+const MIN_RUNNER_UP_GAP = 0.20;
 
 // Defense-in-depth: closed-project hard filter (mirrors context-assembly VALID_PROJECT_STATUSES)
 const ATTRIBUTION_ELIGIBLE_STATUSES = new Set(["active", "warranty", "estimating"]);
@@ -827,6 +836,66 @@ function evaluateSafeLowConfidenceAssign(opts: {
   }
 
   return { promoted: false, reason: null };
+}
+
+/**
+ * High-confidence gap-based assign (v1.17.0).
+ * Promotes review->assign when ALL conditions are met:
+ * 1. confidence >= THRESHOLD_HIGH_CONFIDENCE_GAP_ASSIGN (0.70)
+ * 2. Runner-up candidate confidence is at least MIN_RUNNER_UP_GAP (0.20) below chosen
+ * 3. Chosen project has at least one strong anchor in the validated anchor set
+ *
+ * This safely promotes near-threshold spans where the LLM was highly confident
+ * and there's clear separation from alternatives.
+ */
+function evaluateHighConfidenceGapAssign(opts: {
+  decision: "assign" | "review" | "none";
+  project_id: string | null;
+  confidence: number;
+  anchors: Anchor[];
+  candidates: ContextPackage["candidates"];
+}): { promoted: boolean; reason: string | null; runner_up_confidence: number | null } {
+  if (opts.decision !== "review" || !opts.project_id) {
+    return { promoted: false, reason: null, runner_up_confidence: null };
+  }
+  if (opts.confidence < THRESHOLD_HIGH_CONFIDENCE_GAP_ASSIGN) {
+    return { promoted: false, reason: null, runner_up_confidence: null };
+  }
+  if (!hasStrongAnchor(opts.anchors)) {
+    return { promoted: false, reason: null, runner_up_confidence: null };
+  }
+
+  // Compute runner-up confidence from context candidates
+  const candidateConfidences: Array<{ project_id: string; confidence: number }> = [];
+  for (const candidate of opts.candidates) {
+    const pid = String(candidate?.project_id || "").trim();
+    if (!pid) continue;
+    candidateConfidences.push({
+      project_id: pid,
+      confidence: deriveCandidateEvidenceConfidence(candidate),
+    });
+  }
+
+  // Find the highest confidence among non-chosen candidates
+  let runnerUpConfidence = 0;
+  for (const c of candidateConfidences) {
+    if (c.project_id !== opts.project_id && c.confidence > runnerUpConfidence) {
+      runnerUpConfidence = c.confidence;
+    }
+  }
+
+  const gap = opts.confidence - runnerUpConfidence;
+  if (gap < MIN_RUNNER_UP_GAP) {
+    return { promoted: false, reason: null, runner_up_confidence: runnerUpConfidence };
+  }
+
+  return {
+    promoted: true,
+    reason: `high_confidence_gap_assign: conf=${opts.confidence.toFixed(2)} runner_up=${
+      runnerUpConfidence.toFixed(2)
+    } gap=${gap.toFixed(2)}`,
+    runner_up_confidence: runnerUpConfidence,
+  };
 }
 
 function canOverwriteLock(currentLock: string | null, newLock: string | null): boolean {
@@ -1547,6 +1616,26 @@ Deno.serve(async (req: Request) => {
         reasoning = `${reasoning} safe_low_confidence_assign: ${safeLowAssign.reason}.`;
         console.log(
           `[ai-router] Safe low-confidence assign promoted review→assign: project=${project_id} reason=${safeLowAssign.reason}`,
+        );
+      }
+    }
+
+    // v1.17.0: High-confidence gap-based assign — promote review→assign when
+    // confidence >= 0.70, runner-up gap >= 0.20, and strong anchor present
+    if (decision === "review" && project_id) {
+      const highConfGap = evaluateHighConfidenceGapAssign({
+        decision,
+        project_id,
+        confidence,
+        anchors: validatedAnchors,
+        candidates: context_package.candidates || [],
+      });
+      if (highConfGap.promoted) {
+        decision = "assign";
+        confidence = Math.max(confidence, THRESHOLD_AUTO_ASSIGN);
+        reasoning = `${reasoning} ${highConfGap.reason}.`;
+        console.log(
+          `[ai-router] High-confidence gap assign promoted review→assign: project=${project_id} ${highConfGap.reason}`,
         );
       }
     }
