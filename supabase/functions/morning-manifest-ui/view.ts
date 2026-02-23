@@ -30,6 +30,7 @@ export type SpanDetail = {
   reasoning: string;
   anchors: AnchorEntry[];
   candidates: CandidateEntry[];
+  transcript_excerpt: string | null;
 };
 
 export type CallAttributionDetail = {

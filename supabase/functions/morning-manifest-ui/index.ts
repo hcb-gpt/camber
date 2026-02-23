@@ -263,7 +263,8 @@ async function fetchAttributionDetails(
       id,
       interaction_id,
       span_index,
-      created_at
+      created_at,
+      transcript_segment
     `)
     .in("interaction_id", interactionIds)
     .order("span_index", { ascending: true });
@@ -368,9 +369,15 @@ async function fetchAttributionDetails(
     const info = interactionMap.get(iid) ?? { contact_name: "Unknown", call_date: "" };
 
     const spanDetails: SpanDetail[] = callSpans.map(
-      (s: { id: string; span_index: number }) => {
+      (s: {
+        id: string;
+        span_index: number;
+        transcript_segment?: string | null;
+      }) => {
         const attr = attrBySpan.get(String(s.id));
         const appliedPid = attr ? String(attr.applied_project_id ?? "") : "";
+        const rawSeg = typeof s.transcript_segment === "string" ? s.transcript_segment.trim() : "";
+        const excerpt = rawSeg.length > 300 ? rawSeg.slice(0, 300) + "..." : rawSeg || null;
         return {
           span_id: s.id,
           span_index: s.span_index,
@@ -381,6 +388,7 @@ async function fetchAttributionDetails(
           reasoning: attr ? String(attr.reasoning ?? "") : "",
           anchors: attr ? parseAnchors(attr.anchors) : [],
           candidates: attr ? parseCandidates(attr.candidates_snapshot, projectMap) : [],
+          transcript_excerpt: excerpt,
         };
       },
     );

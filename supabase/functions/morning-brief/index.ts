@@ -210,8 +210,16 @@ function buildPage(
     .v-btn:disabled { opacity: 0.4; cursor: default; }
     .v-status { font-size: 0.75rem; font-family: "JetBrains Mono", monospace; margin-left: 4px; }
     .v-status.ok { color: var(--green); } .v-status.err { color: var(--red); } .v-status.prior { color: var(--muted); }
-    .notes-input { width: 100%; padding: 6px 10px; border: 1px solid var(--border-l); border-radius: 6px; background: #f8f7f4; color: var(--charcoal); font-family: "JetBrains Mono", monospace; font-size: 0.78rem; margin-top: 6px; }
-    .notes-input::placeholder { color: var(--muted); }
+    .notes-area { width: 100%; padding: 8px 10px; border: 1px solid var(--border-l); border-radius: 6px; background: #f8f7f4; color: var(--charcoal); font-family: "JetBrains Mono", monospace; font-size: 0.78rem; margin-top: 6px; resize: vertical; min-height: 48px; line-height: 1.5; }
+    .notes-area::placeholder { color: var(--muted); }
+    .notes-help { font-size: 0.7rem; color: var(--muted); margin-top: 3px; line-height: 1.4; }
+    .notes-submit { margin-top: 6px; padding: 6px 16px; border: 1.5px solid var(--charcoal); border-radius: 6px; background: var(--charcoal); color: var(--cream); font-family: "JetBrains Mono", monospace; font-size: 0.75rem; font-weight: 600; cursor: pointer; min-height: 34px; }
+    .notes-submit:hover { opacity: 0.85; }
+    .notes-submit:disabled { opacity: 0.4; cursor: default; }
+    .span-meta { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; margin-bottom: 6px; font-size: 0.78rem; color: var(--muted); }
+    .span-meta-name { font-weight: 600; color: var(--charcoal); }
+    .span-meta-date { font-family: "JetBrains Mono", monospace; font-size: 0.72rem; }
+    .transcript-excerpt { font-size: 0.82rem; line-height: 1.55; color: var(--charcoal); background: #f0eeea; border-radius: 6px; padding: 10px 12px; margin: 8px 0; border-left: 3px solid var(--border-l); max-height: 120px; overflow-y: auto; white-space: pre-wrap; word-break: break-word; }
 
     /* Detail call blocks */
     .detail-call-block { margin-bottom: 20px; padding-bottom: 20px; border-bottom: 1px solid var(--border-l); }
@@ -401,7 +409,7 @@ function buildPage(
         if(pn&&pn!=="Unassigned"&&projects.indexOf(pn)===-1)projects.push(pn);
         if(pn==="Unassigned"||!pn)hasUnm=true;
         if((sp.decision||"")==="review")hasUnc=true;
-        sds.push({span_id:sp.span_id||"",span_index:sp.span_index,project:pn,applied_project_id:sp.applied_project_id||null,decision:sp.decision||"",confidence:Number(sp.confidence),reasoning:sp.reasoning||"",anchors:sp.anchors||[],candidates:sp.candidates||[]});
+        sds.push({span_id:sp.span_id||"",span_index:sp.span_index,project:pn,applied_project_id:sp.applied_project_id||null,decision:sp.decision||"",confidence:Number(sp.confidence),reasoning:sp.reasoning||"",anchors:sp.anchors||[],candidates:sp.candidates||[],transcript_excerpt:sp.transcript_excerpt||null});
       });
       calls.push({interactionId:d.interaction_id||"",contactName:cn,callDate:callD,projects:projects,multiProject:projects.length>=2,uncertain:hasUnc,unmatched:hasUnm&&projects.length===0,spanCount:spans.length,spanDetails:sds});
     });
@@ -459,17 +467,26 @@ function buildPage(
   function updateVUI(spanId,verdict,status){
     var bar=document.querySelector("[data-span-id='"+spanId+"']");if(!bar)return;
     bar.querySelectorAll(".v-btn").forEach(function(b){b.classList.remove("active");b.disabled=!!verdict;if(verdict&&b.dataset.verdict===verdict)b.classList.add("active");});
-    var ni=bar.parentNode.querySelector(".notes-input");if(ni&&verdict)ni.style.display="none";
+    if(verdict){var ni=bar.parentNode.querySelector(".notes-area");if(ni)ni.style.display="none";var nh=bar.parentNode.querySelector(".notes-help");if(nh)nh.style.display="none";var ns=bar.parentNode.querySelector(".notes-submit");if(ns)ns.style.display="none";}
     var st=bar.querySelector(".v-status");
     if(st){if(status==="saving"){st.className="v-status";st.textContent="Saving...";}else if(status==="ok"){st.className="v-status ok";st.textContent="Saved";}else if(verdict){st.className="v-status prior";st.textContent="Prior: "+verdict;}else{st.className="v-status";st.textContent="";}}
   }
 
   /* --- Render span block --- */
-  function renderSpanBlock(sp,interactionId){
+  function renderSpanBlock(sp,interactionId,contactName,callDate){
     var block=ce("div","span-block");
     var existing=state.feedbackMap[sp.span_id]||null;
+
+    /* Call context: date + correspondent */
+    if(contactName||callDate){
+      var meta=ce("div","span-meta");
+      if(contactName&&contactName!=="Incoming call")meta.appendChild(tx("span",contactName,"span-meta-name"));
+      if(callDate){var ds=fmtDateShort(callDate);var ts=fmtTime(callDate);if(ds)meta.appendChild(tx("span",ds+(ts?" "+ts:""),"span-meta-date"));}
+      if(meta.childNodes.length>0)block.appendChild(meta);
+    }
+
     var top=ce("div","span-top");
-    top.appendChild(tx("span","Span "+sp.span_index,"span-idx"));
+    top.appendChild(tx("span","Span "+(sp.span_index+1),"span-idx"));
     top.appendChild(tx("span",sp.project||"Unassigned","span-proj"));
     var pc=sp.decision==="assign"?"pill pill-assign":sp.decision==="review"?"pill pill-review":"pill pill-none";
     top.appendChild(tx("span",sp.decision||"none",pc));
@@ -479,6 +496,10 @@ function buildPage(
     var trk=ce("div","conf-track");var fill=ce("div","conf-fill "+(cp>=80?"high":cp>=60?"med":"low"));fill.style.width=cp+"%";trk.appendChild(fill);cr.appendChild(trk);
     cr.appendChild(tx("span",cp+"%","conf-pct"));block.appendChild(cr);
     var clean=sanitizeReasoning(sp.reasoning);if(clean)block.appendChild(tx("div",clean,"reasoning"));
+
+    /* Transcript excerpt */
+    if(sp.transcript_excerpt){block.appendChild(tx("div",sp.transcript_excerpt,"transcript-excerpt"));}
+
     if(sp.anchors&&sp.anchors.length>0){
       var al=ce("ul","anchor-list");
       sp.anchors.forEach(function(a){var q=a.quote||a.text||"";if(!q)return;var li=ce("li","anchor-item");li.textContent="\\u201C"+q+"\\u201D";if(a.type){li.appendChild(tx("span",a.type,"anchor-type"));}al.appendChild(li);});
@@ -495,11 +516,19 @@ function buildPage(
       [{l:"\\u2713 Correct",v:"CORRECT",c:"v-correct"},{l:"\\u2717 Wrong",v:"INCORRECT",c:"v-incorrect"},{l:"? Unsure",v:"UNSURE",c:"v-unsure"}].forEach(function(vd){
         var btn=ce("button","v-btn "+vd.c+(existing===vd.v?" active":""));btn.textContent=vd.l;btn.dataset.verdict=vd.v;
         if(existing)btn.disabled=true;
-        else btn.addEventListener("click",function(){submitVerdict(sp.span_id,vd.v,interactionId,sp.applied_project_id,block.querySelector(".notes-input"));});
+        else btn.addEventListener("click",function(){submitVerdict(sp.span_id,vd.v,interactionId,sp.applied_project_id,block.querySelector(".notes-area"));});
         vb.appendChild(btn);
       });
       var se=ce("span","v-status"+(existing?" prior":""));if(existing)se.textContent="Prior: "+existing;vb.appendChild(se);block.appendChild(vb);
-      if(!existing){var ni=ce("input","notes-input");ni.type="text";ni.placeholder="Optional notes...";block.appendChild(ni);}
+      if(!existing){
+        var na=ce("textarea","notes-area");na.placeholder="Add review notes...";na.rows=2;block.appendChild(na);
+        block.appendChild(tx("div","e.g. correct project, wrong project name, caller context, or corrected attribution like \\u201Cshould be Permar Residence\\u201D","notes-help"));
+        var sb2=ce("button","notes-submit");sb2.textContent="Submit Notes";sb2.addEventListener("click",function(){
+          var txt=na.value.trim();if(!txt){showToast("Enter notes first","error");return;}
+          submitVerdict(sp.span_id,"UNSURE",interactionId,sp.applied_project_id,na);
+        });
+        block.appendChild(sb2);
+      }
     }
     return block;
   }
@@ -599,7 +628,7 @@ function buildPage(
       var hdr=ce("div","detail-call-header");hdr.appendChild(tx("span",c.contactName,"detail-call-name"));
       if(c.callDate)hdr.appendChild(tx("span",fmtDateShort(c.callDate)+" "+fmtTime(c.callDate),"detail-call-date"));
       blk.appendChild(hdr);
-      c.spanDetails.filter(function(sp){return sp.project===projectName;}).forEach(function(sp){blk.appendChild(renderSpanBlock(sp,c.interactionId));});
+      c.spanDetails.filter(function(sp){return sp.project===projectName;}).forEach(function(sp){blk.appendChild(renderSpanBlock(sp,c.interactionId,c.contactName,c.callDate));});
       body.appendChild(blk);
     });
   }
@@ -618,7 +647,7 @@ function buildPage(
     call.projects.forEach(function(p){meta.appendChild(tx("span",shortName(p),"badge badge-amber"));});
     body.appendChild(meta);
     if(call.spanDetails.length===0){body.appendChild(tx("div","No spans to review.","empty-state"));return;}
-    call.spanDetails.forEach(function(sp){body.appendChild(renderSpanBlock(sp,call.interactionId));});
+    call.spanDetails.forEach(function(sp){body.appendChild(renderSpanBlock(sp,call.interactionId,call.contactName,call.callDate));});
   }
 
   /* --- Scroll reveal --- */
