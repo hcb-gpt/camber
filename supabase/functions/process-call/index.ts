@@ -64,6 +64,7 @@ import "jsr:@supabase/functions-js/edge-runtime.d.ts";
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
 import { evaluateJunkCallPrefilter, normalizeDurationSeconds } from "../_shared/junk_call_prefilter.ts";
 import { invokeEdgeWithRetry } from "./edge_invoke.ts";
+import { fireAndForget } from "../_shared/lineage.ts";
 import { normalizePhoneForLookup } from "./phone_lookup.ts";
 import { resolveCallPartyPhones } from "./phone_direction.ts";
 
@@ -431,8 +432,6 @@ Deno.serve(async (req: Request) => {
   let segment_call_status: number | null = null;
   let segment_call_attempts = 0;
   let chain_detect_fired = false;
-  let chain_detect_status: number | null = null;
-  let chain_detect_attempts = 0;
 
   // V3 ported: candidate tracking
   const candidatesById = new Map<string, {
@@ -1160,29 +1159,26 @@ Deno.serve(async (req: Request) => {
           }
 
           if (CHAIN_DETECT_ENABLED) {
-            try {
-              const chainInvoke = await invokeEdgeWithRetry(
-                chainDetectUrl,
-                edgeSecretVal,
-                {
-                  label: "chain_detect",
-                  timeoutMs: CHAIN_DETECT_TIMEOUT_MS,
-                  maxAttempts: CHAIN_DETECT_MAX_ATTEMPTS,
-                  payload: {
-                    interaction_id: iid,
-                    dry_run: false,
-                    source: "process-call",
+            // True fire-and-forget: chain-detect never blocks process-call response
+            chain_detect_fired = true;
+            fireAndForget(
+              () =>
+                invokeEdgeWithRetry(
+                  chainDetectUrl,
+                  edgeSecretVal,
+                  {
+                    label: "chain_detect",
+                    timeoutMs: CHAIN_DETECT_TIMEOUT_MS,
+                    maxAttempts: CHAIN_DETECT_MAX_ATTEMPTS,
+                    payload: {
+                      interaction_id: iid,
+                      dry_run: false,
+                      source: "process-call",
+                    },
                   },
-                },
-              );
-              chain_detect_fired = true;
-              chain_detect_status = chainInvoke.status;
-              chain_detect_attempts = chainInvoke.attempts;
-              warnings.push(...chainInvoke.warnings);
-            } catch (e: any) {
-              chain_detect_fired = true;
-              warnings.push(`chain_detect_exception: ${e.message}`);
-            }
+                ),
+              "chain_detect",
+            );
           } else {
             warnings.push("chain_detect_disabled_by_flag");
           }
@@ -1276,8 +1272,7 @@ Deno.serve(async (req: Request) => {
         },
         chain_detect: {
           fired: chain_detect_fired,
-          status: chain_detect_status,
-          attempts: chain_detect_attempts,
+          mode: "fire_and_forget",
         },
         junk_prefilter: {
           applied: junkCallFiltered,

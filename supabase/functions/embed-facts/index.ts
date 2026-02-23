@@ -11,6 +11,7 @@
  */
 import "jsr:@supabase/functions-js/edge-runtime.d.ts";
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
+import { emitLineage } from "../_shared/lineage.ts";
 
 const FUNCTION_VERSION = "v1.0.0";
 const DEFAULT_MODEL = "text-embedding-3-small";
@@ -249,21 +250,15 @@ Deno.serve(async (req: Request) => {
     }
   }
 
-  // RUNTIME LINEAGE (fire-and-forget)
-  try {
-    const lineageEdges: { from: string; to: string; type: string }[] = [
+  // RUNTIME LINEAGE (fire-and-forget via shared helper)
+  emitLineage(db, {
+    slug: "embed-facts",
+    version: FUNCTION_VERSION,
+    edges: [
       { from: "edge:embed-facts", to: "table:public.project_facts", type: "reads" },
       { from: "edge:embed-facts", to: "table:public.project_facts", type: "writes" },
-    ];
-    const { error: lineageErr } = await db.from("evidence_events").upsert({
-      source_type: "lineage",
-      source_id: `embed-facts:${Date.now()}`,
-      source_run_id: "embed-facts:" + FUNCTION_VERSION,
-      transcript_variant: "baseline",
-      metadata: { edges: lineageEdges, pipeline_version: FUNCTION_VERSION },
-    }, { onConflict: "source_type,source_id,transcript_variant" });
-    if (lineageErr) console.warn(`lineage_emit: ${lineageErr.message}`);
-  } catch { /* lineage must never block */ }
+    ],
+  });
 
   return jsonResponse({
     ok: true,

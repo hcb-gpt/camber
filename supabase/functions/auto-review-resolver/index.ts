@@ -14,6 +14,7 @@
 import "jsr:@supabase/functions-js/edge-runtime.d.ts";
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
 import { authErrorResponse, requireEdgeSecret } from "../_shared/auth.ts";
+import { emitLineage } from "../_shared/lineage.ts";
 
 const VERSION = "auto-review-resolver_v1.1.1";
 const DEFAULT_HIGH_CONF = 0.85;
@@ -225,23 +226,17 @@ Deno.serve(async (req: Request) => {
     }, 500);
   }
 
-  // RUNTIME LINEAGE EVIDENCE (fire-and-forget)
-  try {
-    const lineageEdges: { from: string; to: string; type: string }[] = [
+  // RUNTIME LINEAGE (fire-and-forget via shared helper)
+  emitLineage(db, {
+    slug: "auto-review-resolver",
+    version: VERSION,
+    edges: [
       { from: "edge:auto-review-resolver", to: "table:public.review_queue", type: "reads" },
       { from: "edge:auto-review-resolver", to: "table:public.review_queue", type: "writes" },
       { from: "edge:auto-review-resolver", to: "table:public.span_attributions", type: "writes" },
       { from: "edge:auto-review-resolver", to: "table:public.journal_claims", type: "writes" },
-    ];
-    const { error: lineageErr } = await db.from("evidence_events").upsert({
-      source_type: "lineage",
-      source_id: "auto-review-resolver:" + new Date().toISOString(),
-      source_run_id: VERSION,
-      transcript_variant: "baseline",
-      metadata: { edges: lineageEdges, pipeline_version: VERSION },
-    }, { onConflict: "source_type,source_id,transcript_variant" });
-    if (lineageErr) console.warn(`lineage_emit: ${lineageErr.message}`);
-  } catch { /* lineage emission must never block the response */ }
+    ],
+  });
 
   return jsonResponse({
     ok: true,

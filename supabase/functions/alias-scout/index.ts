@@ -21,6 +21,7 @@
 import "jsr:@supabase/functions-js/edge-runtime.d.ts";
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
 import { authErrorResponse, requireEdgeSecret } from "../_shared/auth.ts";
+import { emitLineage } from "../_shared/lineage.ts";
 
 // ============================================================
 // TYPES
@@ -195,18 +196,12 @@ Deno.serve(async (req: Request) => {
         type: "writes",
       });
     }
-    const { error: lineageErr } = await db.from("evidence_events").upsert({
-      source_type: "lineage",
-      source_id: `alias-scout:${Date.now()}`,
-      source_run_id: "alias-scout:" + VERSION,
-      transcript_variant: "baseline",
-      metadata: {
-        edges: lineageEdges,
-        pipeline_version: VERSION,
-        dry_run: dryRun,
-      },
-    }, { onConflict: "source_type,source_id,transcript_variant" });
-    if (lineageErr) console.warn(`lineage_emit: ${lineageErr.message}`);
+    emitLineage(db, {
+      slug: "alias-scout",
+      version: VERSION,
+      edges: lineageEdges,
+      metadata: { dry_run: dryRun },
+    });
   } catch { /* lineage must never block */ }
 
   return jsonResponse({
