@@ -1,5 +1,5 @@
 /**
- * process-call Edge Function v4.3.8
+ * process-call Edge Function v4.3.9
  * Full v3.6 pipeline in Supabase - Ported from v4.0.22 context_assembly
  *
  * @version 4.3.8
@@ -17,6 +17,11 @@
  *
  * v4.3.2 CHANGES (lineage persistence):
  * - Persist zapier_zap_id and zapier_run_id from _zapier_ingest_meta into calls_raw.
+ *
+ * v4.3.9 CHANGES (chain-detect rewire + bounded retry):
+ * - Adds non-blocking process-call -> chain-detect invocation path.
+ * - Adds bounded timeout + transient retry for chain-detect chaining.
+ * - Emits runtime lineage edge process-call -> chain-detect when fired.
  *
  * v4.3.8 CHANGES (segment-call runtime reliability hardening):
  * - Adds bounded timeout + transient retry for segment-call chaining.
@@ -58,10 +63,11 @@
 import "jsr:@supabase/functions-js/edge-runtime.d.ts";
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
 import { evaluateJunkCallPrefilter, normalizeDurationSeconds } from "../_shared/junk_call_prefilter.ts";
+import { invokeEdgeWithRetry } from "./edge_invoke.ts";
 import { normalizePhoneForLookup } from "./phone_lookup.ts";
 import { resolveCallPartyPhones } from "./phone_direction.ts";
 
-const PROCESS_CALL_VERSION = "v4.3.8"; // adds bounded timeout + transient retry for segment-call chaining
+const PROCESS_CALL_VERSION = "v4.3.9"; // adds bounded timeout + retry for segment-call and chain-detect chaining
 const GATE = { PASS: "PASS", SKIP: "SKIP", NEEDS_REVIEW: "NEEDS_REVIEW" };
 const ID_PATTERN = /^cll_[a-zA-Z0-9_]+$/;
 const SEGMENT_CALL_TIMEOUT_MS = Number(Deno.env.get("PROCESS_CALL_SEGMENT_TIMEOUT_MS") || "6000");
@@ -69,7 +75,13 @@ const SEGMENT_CALL_MAX_ATTEMPTS = Math.min(
   3,
   Math.max(1, Number(Deno.env.get("PROCESS_CALL_SEGMENT_MAX_ATTEMPTS") || "2")),
 );
-const RETRYABLE_HTTP_STATUS = new Set([408, 429, 500, 502, 503, 504]);
+const CHAIN_DETECT_TIMEOUT_MS = Number(Deno.env.get("PROCESS_CALL_CHAIN_DETECT_TIMEOUT_MS") || "6000");
+const CHAIN_DETECT_MAX_ATTEMPTS = Math.min(
+  3,
+  Math.max(1, Number(Deno.env.get("PROCESS_CALL_CHAIN_DETECT_MAX_ATTEMPTS") || "2")),
+);
+const CHAIN_DETECT_ENABLED = (Deno.env.get("PROCESS_CALL_CHAIN_DETECT_ENABLED") || "true")
+  .toLowerCase() !== "false";
 const ALLOWED_PROVENANCE_SOURCES = [
   "openphone",
   "zapier",
@@ -84,71 +96,6 @@ function normalizeProvenanceSource(source: unknown): string {
   const raw = String(source || "edge").trim().toLowerCase();
   if (!raw) return "edge";
   return ALLOWED_PROVENANCE_SOURCES.includes(raw) ? raw : "edge";
-}
-
-type SegmentCallInvokeResult = {
-  attempts: number;
-  status: number | null;
-  warnings: string[];
-};
-
-async function invokeSegmentCallWithRetry(
-  url: string,
-  edgeSecret: string,
-  payload: Record<string, unknown>,
-): Promise<SegmentCallInvokeResult> {
-  const warnings: string[] = [];
-  let status: number | null = null;
-  let attempts = 0;
-
-  for (let attempt = 1; attempt <= SEGMENT_CALL_MAX_ATTEMPTS; attempt++) {
-    attempts = attempt;
-    const controller = new AbortController();
-    const timeout = setTimeout(() => controller.abort("segment-call-timeout"), SEGMENT_CALL_TIMEOUT_MS);
-
-    try {
-      const segResp = await fetch(url, {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-          "X-Edge-Secret": edgeSecret,
-        },
-        body: JSON.stringify(payload),
-        signal: controller.signal,
-      });
-      status = segResp.status;
-
-      if (segResp.ok) {
-        clearTimeout(timeout);
-        return { attempts, status, warnings };
-      }
-
-      const errBody = await segResp.text().catch(() => "unknown");
-      warnings.push(`segment_call_http_${segResp.status}_attempt_${attempt}: ${errBody.slice(0, 200)}`);
-
-      if (!RETRYABLE_HTTP_STATUS.has(segResp.status) || attempt === SEGMENT_CALL_MAX_ATTEMPTS) {
-        clearTimeout(timeout);
-        return { attempts, status, warnings };
-      }
-    } catch (e: any) {
-      const msg = String(e?.message || e);
-      if (msg.toLowerCase().includes("aborted")) {
-        warnings.push(`segment_call_timeout_attempt_${attempt}: ${SEGMENT_CALL_TIMEOUT_MS}ms`);
-      } else {
-        warnings.push(`segment_call_exception_attempt_${attempt}: ${msg}`);
-      }
-      if (attempt === SEGMENT_CALL_MAX_ATTEMPTS) {
-        clearTimeout(timeout);
-        return { attempts, status, warnings };
-      }
-    } finally {
-      clearTimeout(timeout);
-    }
-
-    await new Promise((resolve) => setTimeout(resolve, 150 * attempt));
-  }
-
-  return { attempts, status, warnings };
 }
 
 // ============================================================
@@ -479,10 +426,13 @@ Deno.serve(async (req: Request) => {
   let project_source: string | null = null;
   let project_confidence: number | null = null;
 
-  // v4.3.0: segment-call chain tracking
+  // v4.3.0+: downstream chain tracking
   let segment_call_fired = false;
   let segment_call_status: number | null = null;
   let segment_call_attempts = 0;
+  let chain_detect_fired = false;
+  let chain_detect_status: number | null = null;
+  let chain_detect_attempts = 0;
 
   // V3 ported: candidate tracking
   const candidatesById = new Map<string, {
@@ -1131,37 +1081,80 @@ Deno.serve(async (req: Request) => {
       // ========================================
 
       // ========================================
-      // v4.3.0: CHAIN TO SEGMENT-CALL
-      // Fire segment-call for full attribution pipeline:
-      //   segment-call → segment-llm → context-assembly → ai-router → span_attributions
-      // Only when we have a real transcript (>= 10 chars) and gate PASS.
-      // Fire-and-forget: segment-call failures do NOT block process-call response.
+      // v4.3.x: NON-BLOCKING DOWNSTREAM CHAINS
+      // 1) segment-call: full attribution pipeline
+      //    segment-call → segment-llm → context-assembly → ai-router → span_attributions
+      //    Only when we have a real transcript (>= 10 chars) and gate PASS.
+      // 2) chain-detect: call_chains freshness path
+      //    process-call -> chain-detect -> call_chains
+      //    Fired on PASS (non-terminal transcript), independent of transcript length.
+      // Both chains are fire-and-forget; failures do NOT block process-call response.
       // ========================================
       const transcriptLen = n.transcript?.length || 0;
-      if (!terminalEmptyTranscript && g.decision === "PASS" && transcriptLen >= 10) {
+      if (!terminalEmptyTranscript && g.decision === "PASS") {
         const edgeSecretVal = Deno.env.get("EDGE_SHARED_SECRET");
         const segmentCallUrl = `${Deno.env.get("SUPABASE_URL")}/functions/v1/segment-call`;
+        const chainDetectUrl = `${Deno.env.get("SUPABASE_URL")}/functions/v1/chain-detect`;
+
         if (edgeSecretVal) {
-          try {
-            const segInvoke = await invokeSegmentCallWithRetry(
-              segmentCallUrl,
-              edgeSecretVal,
-              {
-                interaction_id: iid,
-                transcript: n.transcript,
-                source: "process-call",
-              },
-            );
-            segment_call_fired = true;
-            segment_call_status = segInvoke.status;
-            segment_call_attempts = segInvoke.attempts;
-            warnings.push(...segInvoke.warnings);
-          } catch (e: any) {
-            segment_call_fired = true;
-            warnings.push(`segment_call_exception: ${e.message}`);
+          if (transcriptLen >= 10) {
+            try {
+              const segInvoke = await invokeEdgeWithRetry(
+                segmentCallUrl,
+                edgeSecretVal,
+                {
+                  label: "segment_call",
+                  timeoutMs: SEGMENT_CALL_TIMEOUT_MS,
+                  maxAttempts: SEGMENT_CALL_MAX_ATTEMPTS,
+                  payload: {
+                    interaction_id: iid,
+                    transcript: n.transcript,
+                    source: "process-call",
+                  },
+                },
+              );
+              segment_call_fired = true;
+              segment_call_status = segInvoke.status;
+              segment_call_attempts = segInvoke.attempts;
+              warnings.push(...segInvoke.warnings);
+            } catch (e: any) {
+              segment_call_fired = true;
+              warnings.push(`segment_call_exception: ${e.message}`);
+            }
+          }
+
+          if (CHAIN_DETECT_ENABLED) {
+            try {
+              const chainInvoke = await invokeEdgeWithRetry(
+                chainDetectUrl,
+                edgeSecretVal,
+                {
+                  label: "chain_detect",
+                  timeoutMs: CHAIN_DETECT_TIMEOUT_MS,
+                  maxAttempts: CHAIN_DETECT_MAX_ATTEMPTS,
+                  payload: {
+                    interaction_id: iid,
+                    dry_run: false,
+                    source: "process-call",
+                  },
+                },
+              );
+              chain_detect_fired = true;
+              chain_detect_status = chainInvoke.status;
+              chain_detect_attempts = chainInvoke.attempts;
+              warnings.push(...chainInvoke.warnings);
+            } catch (e: any) {
+              chain_detect_fired = true;
+              warnings.push(`chain_detect_exception: ${e.message}`);
+            }
+          } else {
+            warnings.push("chain_detect_disabled_by_flag");
           }
         } else {
-          warnings.push("segment_call_skipped: EDGE_SHARED_SECRET not set");
+          if (transcriptLen >= 10) {
+            warnings.push("segment_call_skipped: EDGE_SHARED_SECRET not set");
+          }
+          warnings.push("chain_detect_skipped: EDGE_SHARED_SECRET not set");
         }
       }
     }
@@ -1204,13 +1197,16 @@ Deno.serve(async (req: Request) => {
       if (segment_call_fired) {
         lineageEdges.push({ from: "edge:process-call", to: "edge:segment-call", type: "calls" });
       }
-      const { error: lineageErr } = await db.from("evidence_events").insert({
+      if (chain_detect_fired) {
+        lineageEdges.push({ from: "edge:process-call", to: "edge:chain-detect", type: "calls" });
+      }
+      const { error: lineageErr } = await db.from("evidence_events").upsert({
         source_type: "lineage",
         source_id: iid,
         source_run_id: run_id,
-        transcript_variant: `process-call_${run_id}`,
+        transcript_variant: "baseline",
         metadata: { edges: lineageEdges, pipeline_version: PROCESS_CALL_VERSION },
-      });
+      }, { onConflict: "source_type,source_id,transcript_variant" });
       if (lineageErr) warnings.push(`lineage_emit: ${lineageErr.message}`);
     } catch { /* lineage emission must never block the response */ }
 
@@ -1241,6 +1237,11 @@ Deno.serve(async (req: Request) => {
           fired: segment_call_fired,
           status: segment_call_status,
           attempts: segment_call_attempts,
+        },
+        chain_detect: {
+          fired: chain_detect_fired,
+          status: chain_detect_status,
+          attempts: chain_detect_attempts,
         },
         junk_prefilter: {
           applied: junkCallFiltered,
