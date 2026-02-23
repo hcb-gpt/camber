@@ -3,7 +3,7 @@
  * LLM-based project attribution for conversation spans
  *
  * @version 1.17.0
- * @date 2026-02-22
+ * @date 2026-02-23
  * @purpose Use Claude Haiku to attribute spans to projects with anchored evidence
  *
  * v1.17.0 Changes (high-confidence gap-based auto-assign):
@@ -12,6 +12,13 @@
  * - Unlocks ~234 spans stuck in "review" despite high LLM confidence.
  * - Preserves all existing guardrails (bizdev gate, stopline, blocklist, etc.)
  *   which run AFTER this promotion and can still downgrade if warranted.
+ *
+ * v1.16.1 Changes (candidates_snapshot persistence fix):
+ * - Ensures span_attributions.candidates_snapshot is populated when top_candidates exist,
+ *   even if raw context candidates are absent/empty.
+ * - Adds buildCandidatesSnapshotPayload() with fallback from context candidates to
+ *   top_candidates snapshot, preventing null writes on junk/fallback/error paths.
+ * - Avoids persisting empty [] snapshots; writes null when no candidate evidence exists.
  *
  * v1.16.0 Changes (name-vs-content weighting fix):
  * - Adds name-content guardrail: downgrades assign->review when chosen project
@@ -139,7 +146,7 @@ import {
 } from "./world_model_facts.ts";
 
 const PROMPT_VERSION_BASE = "v1.13.0";
-const FUNCTION_VERSION = "v1.17.0";
+const FUNCTION_VERSION = "v1.18.0";
 const MODEL_ID = Deno.env.get("AI_ROUTER_MODEL") || "claude-3-haiku-20240307";
 const MAX_TOKENS = 1024;
 const WORLD_MODEL_FACTS_ENABLED = parseBoolEnv(Deno.env.get("WORLD_MODEL_FACTS_ENABLED"), false);
@@ -478,6 +485,55 @@ function buildTopCandidateSnapshot(opts: {
     runner_up_confidence: topCandidates.length > 1 ? topCandidates[1].confidence : null,
     candidate_count: ranked.length,
   };
+}
+
+/**
+ * Build the candidates_snapshot payload for persistence.
+ * Primary source: context_package.candidates (rich evidence from context-assembly).
+ * Fallback: top_candidates from buildTopCandidateSnapshot (always available).
+ * Returns null only when no candidate data exists at all.
+ */
+function buildCandidatesSnapshotPayload(opts: {
+  candidates: ContextPackage["candidates"] | null | undefined;
+  top_candidates: CandidateSnapshot[];
+}): Array<Record<string, unknown>> | null {
+  const sourceCandidates = Array.isArray(opts.candidates) ? opts.candidates : [];
+  const seenProjectIds = new Set<string>();
+  const payload: Array<Record<string, unknown>> = [];
+
+  for (const [index, candidate] of sourceCandidates.entries()) {
+    const candidateAny = candidate as any;
+    const projectId = String(candidate?.project_id || "").trim();
+    if (!projectId || seenProjectIds.has(projectId)) continue;
+    seenProjectIds.add(projectId);
+    payload.push({
+      project_id: projectId,
+      project_name: candidate.project_name || null,
+      rank: index + 1,
+      rrf_score: candidateAny?.evidence?.rrf_score ?? candidateAny?.rrf_score ?? null,
+      affinity_weight: candidate.evidence?.affinity_weight ?? null,
+      source_strength: candidate.evidence?.source_strength ?? null,
+      evidence_sources: Array.isArray(candidate.evidence?.sources) ? candidate.evidence.sources : [],
+      anchor_type: deriveCandidateAnchorType(candidate),
+      confidence: deriveCandidateEvidenceConfidence(candidate),
+      source: "context_candidates",
+    });
+  }
+
+  if (payload.length > 0) return payload;
+
+  // Fallback: use top_candidates snapshot (always computed from buildTopCandidateSnapshot)
+  if (!Array.isArray(opts.top_candidates) || opts.top_candidates.length === 0) return null;
+
+  return opts.top_candidates.map((candidate, index) => ({
+    project_id: candidate.project_id,
+    project_name: null,
+    rank: index + 1,
+    confidence: candidate.confidence,
+    anchor_type: candidate.anchor_type,
+    evidence_sources: [],
+    source: "top_candidates_fallback",
+  }));
 }
 
 // ============================================================
@@ -1640,29 +1696,46 @@ Deno.serve(async (req: Request) => {
       }
     }
 
+    // v1.18.0: BizDev gate — bypass for anchored/semi-anchored contacts on active projects.
+    // These are known clients, not prospects. Gate only applies to unknown/floater contacts.
+    const contactFanout = context_package.contact?.fanout_class ||
+      (context_package.contact?.floater_flag ? "floater" : "unknown");
+    const bizdevGateExempt = contactFanout === "anchored" || contactFanout === "semi_anchored";
+
     const bizdevGate = applyBizDevCommitmentGate({
       transcript: spanTranscript,
       decision,
       project_id,
     });
-    decision = bizdevGate.decision;
-    project_id = bizdevGate.project_id;
+    // Always capture classification for telemetry
     bizdev_call_type = bizdevGate.classification.call_type;
     bizdev_confidence = bizdevGate.classification.confidence;
     bizdev_evidence_tags = bizdevGate.classification.evidence_tags;
     bizdev_commitment_to_start = bizdevGate.classification.commitment_to_start;
     bizdev_commitment_tags = bizdevGate.classification.commitment_tags;
-    bizdev_without_commitment = bizdevGate.reason === "bizdev_without_commitment";
 
-    if (bizdev_without_commitment) {
-      const signalSummary = bizdev_evidence_tags.slice(0, 4).join(", ");
-      const commitmentSummary = bizdev_commitment_tags.slice(0, 4).join(", ");
-      reasoning = `${reasoning} BizDev prospect gate held project assignment (${
-        signalSummary || "prospect signals detected"
-      }; commitment_terms=${commitmentSummary || "none"}).`;
+    if (bizdevGateExempt && bizdevGate.reason === "bizdev_without_commitment") {
+      // Known contact — log but do NOT apply the gate
+      bizdev_without_commitment = false;
+      reasoning = `${reasoning} BizDev gate bypassed: ${contactFanout} contact exempt (known client, not prospect).`;
       console.log(
-        `[ai-router] BizDev commitment gate active: project assignment withheld (signals=${signalSummary || "none"})`,
+        `[ai-router] BizDev gate bypassed for ${contactFanout} contact — known client, not prospect`,
       );
+    } else {
+      decision = bizdevGate.decision;
+      project_id = bizdevGate.project_id;
+      bizdev_without_commitment = bizdevGate.reason === "bizdev_without_commitment";
+
+      if (bizdev_without_commitment) {
+        const signalSummary = bizdev_evidence_tags.slice(0, 4).join(", ");
+        const commitmentSummary = bizdev_commitment_tags.slice(0, 4).join(", ");
+        reasoning = `${reasoning} BizDev prospect gate held project assignment (${
+          signalSummary || "prospect signals detected"
+        }; commitment_terms=${commitmentSummary || "none"}).`;
+        console.log(
+          `[ai-router] BizDev commitment gate active: project assignment withheld (signals=${signalSummary || "none"})`,
+        );
+      }
     }
 
     if (WORLD_MODEL_FACTS_ENABLED && world_model_references.length > 0) {
@@ -1961,6 +2034,10 @@ Deno.serve(async (req: Request) => {
       chosen_confidence: result.confidence,
       chosen_anchor_type: result.anchors?.[0]?.match_type || null,
     });
+    const candidatesSnapshotPayload = buildCandidatesSnapshotPayload({
+      candidates: context_package.candidates,
+      top_candidates: candidateSnapshot.top_candidates,
+    });
 
     const { error: upsertErr } = await db.from("span_attributions").upsert({
       span_id,
@@ -1987,14 +2064,7 @@ Deno.serve(async (req: Request) => {
       needs_review,
       attribution_source,
       evidence_tier,
-      candidates_snapshot: context_package.candidates?.map((c: any) => ({
-        project_id: c.project_id,
-        project_name: c.project_name,
-        rrf_score: c.evidence?.rrf_score ?? c.rrf_score ?? null,
-        affinity_weight: c.evidence?.affinity_weight ?? null,
-        source_strength: c.evidence?.source_strength ?? null,
-        evidence_sources: c.evidence?.sources || [],
-      })) || null,
+      candidates_snapshot: candidatesSnapshotPayload,
       attributed_by: `ai-router-${FUNCTION_VERSION}`,
       attributed_at: new Date().toISOString(),
     }, {
