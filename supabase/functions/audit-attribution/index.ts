@@ -15,9 +15,14 @@ import Anthropic from "npm:@anthropic-ai/sdk@0.39.0";
 import { authErrorResponse, requireEdgeSecret } from "../_shared/auth.ts";
 import { parseLlmJson } from "../_shared/llm_json.ts";
 
-const FUNCTION_VERSION = "v0.1.0";
-const REQUESTED_MODEL_ID = Deno.env.get("AUDIT_ATTRIBUTION_MODEL") || "claude-sonnet-4-5-20250514";
-const FALLBACK_MODEL_ID = Deno.env.get("AUDIT_ATTRIBUTION_MODEL_FALLBACK") || "claude-3-haiku-20240307";
+const FUNCTION_VERSION = "v0.1.1";
+const SAFE_FALLBACK_MODEL_ID = "claude-3-haiku-20240307";
+const REQUESTED_MODEL_ID = Deno.env.get("AUDIT_ATTRIBUTION_MODEL") ||
+  Deno.env.get("AUDIT_ATTRIBUTION_REVIEWER_MODEL") ||
+  SAFE_FALLBACK_MODEL_ID;
+const FALLBACK_MODEL_ID = Deno.env.get("AUDIT_ATTRIBUTION_MODEL_FALLBACK") ||
+  Deno.env.get("AUDIT_ATTRIBUTION_REVIEWER_MODEL_FALLBACK") ||
+  SAFE_FALLBACK_MODEL_ID;
 const PROMPT_VERSION = Deno.env.get("AUDIT_ATTRIBUTION_PROMPT_VERSION") || "prod_attrib_audit_v1";
 const REVIEWER_PROVIDER = "anthropic";
 const MAX_TOKENS = Number(Deno.env.get("AUDIT_ATTRIBUTION_MAX_TOKENS") || "1400");
@@ -210,7 +215,7 @@ function normalizeMissingEvidenceList(values: string[]): string[] {
 }
 
 function parsePacket(body: JsonRecord): NormalizedRequest {
-  const packetLike = asRecord(body.audit_packet || body.audit_packet_json || body.packet);
+  const packetLike = asRecord(body.packet_json || body.audit_packet || body.audit_packet_json || body.packet);
   const merged = Object.keys(packetLike).length > 0 ? packetLike : body;
   const packetJson = Object.keys(packetLike).length > 0 ? packetLike : { ...merged };
   delete packetJson.eval_sample_id;
@@ -227,13 +232,98 @@ function parsePacket(body: JsonRecord): NormalizedRequest {
   const spanTextObj = asRecord(merged.span_text);
   const asOfWorldModel = asRecord(merged.as_of_world_model);
   const spanBounds = asRecord(merged.span_bounds || merged.span);
+  const transcriptSegment = asString(merged.transcript_segment || spanBounds.transcript_segment || spanTextObj.text);
+  const interactionId = asString(merged.interaction_id || spanObj.interaction_id);
+  const spanId = asString(merged.span_id || spanObj.span_id);
+  const callAtUtc = asString(merged.call_at_utc || asOfWorldModel.call_time_utc);
+  const assignedProjectId = asString(
+    merged.assigned_project_id ||
+      merged.project_id ||
+      assignedAttribution.project_id ||
+      attributionObj.attributed_project_id ||
+      attributionObj.project_id,
+  );
+
   const evidenceEventsFromPtrs = asArray(merged.evidence_ptrs)
-    .map((ptr) => asString(ptr))
-    .filter(Boolean)
+    .map((ptr) => asUuid(ptr))
+    .filter((id): id is string => Boolean(id))
     .map((evidenceEventId) => ({
       evidence_event_id: evidenceEventId,
       source: "packet_evidence_ptr",
     }));
+  const evidenceEventsFromIds = asArray(merged.evidence_event_ids || evidencePacket.evidence_event_ids)
+    .map((ptr) => asUuid(ptr))
+    .filter((id): id is string => Boolean(id))
+    .map((evidenceEventId) => ({
+      evidence_event_id: evidenceEventId,
+      source: "packet_evidence_event_ids",
+    }));
+  const evidenceEventsRaw = asArray(
+    merged.evidence_events || evidencePacket.evidence_events ||
+      evidenceEventsFromPtrs,
+  ).map(asRecord);
+  const evidenceEvents = evidenceEventsRaw.length > 0 ? evidenceEventsRaw : evidenceEventsFromIds;
+
+  const claimPointersRaw = asArray(
+    merged.claim_pointers || evidencePacket.claim_pointers,
+  ).map(asRecord);
+  const transcriptFallbackPointer = claimPointersRaw.length === 0
+    ? [{
+      pointer_kind: "transcript_span_fallback",
+      source_type: "conversation_spans",
+      source_id: interactionId || null,
+      span_id: spanId || null,
+      char_start: asNumber(spanBounds.char_start),
+      char_end: asNumber(spanBounds.char_end),
+      span_text: transcriptSegment.slice(0, 1600) || null,
+    }]
+    : [];
+  const claimPointers = claimPointersRaw.length > 0 ? claimPointersRaw : transcriptFallbackPointer;
+
+  const projectContextRaw = asArray(
+    merged.project_context_as_of || merged.as_of_project_context || asOfWorldModel.assigned_project_facts,
+  ).map(asRecord);
+  const candidateProjectMap = new Map<string, string>();
+  const competingCandidates = asArray(merged.competing_candidates).map(asRecord);
+  for (const candidate of competingCandidates) {
+    const projectId = asUuid(candidate.project_id || candidate.id);
+    if (!projectId) continue;
+    if (!candidateProjectMap.has(projectId)) {
+      candidateProjectMap.set(projectId, asString(candidate.project_name || candidate.name));
+    }
+  }
+  for (
+    const candidateProjectId of asArray(merged.candidate_project_ids)
+      .map((id) => asUuid(id))
+      .filter((id): id is string => Boolean(id))
+  ) {
+    if (!candidateProjectMap.has(candidateProjectId)) {
+      candidateProjectMap.set(candidateProjectId, "");
+    }
+  }
+  const assignedProjectUuid = asUuid(assignedProjectId);
+  if (assignedProjectUuid && !candidateProjectMap.has(assignedProjectUuid)) {
+    candidateProjectMap.set(assignedProjectUuid, "");
+  }
+  const fallbackProjectContext = Array.from(candidateProjectMap.entries()).slice(0, 12).map((
+    [projectId, projectName],
+  ) => ({
+    project_id: projectId,
+    fact_kind: "project_metadata_fallback",
+    as_of_at: callAtUtc || null,
+    observed_at: callAtUtc || null,
+    evidence_event_id: null,
+    source_span_id: spanId || null,
+    source_char_start: asNumber(spanBounds.char_start),
+    source_char_end: asNumber(spanBounds.char_end),
+    interaction_id: null,
+    fact_payload: {
+      project_name: projectName || null,
+      source: "packet_candidate_fallback",
+      note: "project_context_fallback_from_candidate_ids",
+    },
+  }));
+  const projectContext = projectContextRaw.length > 0 ? projectContextRaw : fallbackProjectContext;
 
   const req: NormalizedRequest = {
     eval_sample_id: asString(body.eval_sample_id || merged.eval_sample_id),
@@ -242,36 +332,23 @@ function parsePacket(body: JsonRecord): NormalizedRequest {
     reviewer_run_id: asString(body.reviewer_run_id || merged.reviewer_run_id || merged.eval_run_id),
     packet_json: packetJson,
     packet: {
-      interaction_id: asString(merged.interaction_id || spanObj.interaction_id),
-      span_id: asString(merged.span_id || spanObj.span_id),
+      interaction_id: interactionId,
+      span_id: spanId,
       span_attribution_id: asString(
         merged.span_attribution_id || assignedAttribution.span_attribution_id || attributionObj.span_attribution_id,
       ),
-      assigned_project_id: asString(
-        merged.assigned_project_id ||
-          merged.project_id ||
-          assignedAttribution.project_id ||
-          attributionObj.attributed_project_id ||
-          attributionObj.project_id,
-      ),
+      assigned_project_id: assignedProjectId,
       attribution_source: asString(
         merged.attribution_source || assignedAttribution.attribution_source || attributionObj.attribution_source ||
           merged.source,
       ),
       span_bounds: spanBounds,
-      transcript_segment: asString(merged.transcript_segment || spanBounds.transcript_segment || spanTextObj.text),
-      project_context_as_of: asArray(
-        merged.project_context_as_of || merged.as_of_project_context || asOfWorldModel.assigned_project_facts,
-      ).map(asRecord),
-      evidence_events: asArray(
-        merged.evidence_events || evidencePacket.evidence_events ||
-          evidenceEventsFromPtrs,
-      ).map(asRecord),
-      claim_pointers: asArray(
-        merged.claim_pointers || evidencePacket.claim_pointers,
-      ).map(asRecord),
+      transcript_segment: transcriptSegment,
+      project_context_as_of: projectContext,
+      evidence_events: evidenceEvents,
+      claim_pointers: claimPointers,
       evidence_event_id: asString(merged.evidence_event_id || attributionObj.evidence_event_id),
-      call_at_utc: asString(merged.call_at_utc || asOfWorldModel.call_time_utc),
+      call_at_utc: callAtUtc,
       asof_mode: asString(merged.asof_mode || merged.known_as_of_mode || asOfWorldModel.mode || "KNOWN_AS_OF") ||
         "KNOWN_AS_OF",
       same_call_excluded:
@@ -289,6 +366,24 @@ function parsePacket(body: JsonRecord): NormalizedRequest {
   };
 
   return req;
+}
+
+function parseAnthropicTextContent(llmResp: unknown): string {
+  const contentBlocks = asArray(asRecord(llmResp).content).map(asRecord);
+  const textChunks = contentBlocks
+    .filter((b) => asString(b.type) === "text")
+    .map((b) => asString(b.text))
+    .filter(Boolean)
+    .slice(0, 4);
+  return textChunks.join("\n");
+}
+
+function listCandidateModels(requested: string, configuredFallback: string): string[] {
+  return uniqueStrings([
+    requested,
+    configuredFallback,
+    SAFE_FALLBACK_MODEL_ID,
+  ].filter((modelId) => modelId && modelId.trim().length > 0));
 }
 
 function packetLeakageDetected(packet: NormalizedPacket): boolean {
@@ -755,7 +850,7 @@ Deno.serve(async (req: Request) => {
     deterministicMissing.push("evidence_events_or_claim_pointers");
     deterministicTags.push("pointer_or_provenance_gap");
   }
-  if (packet.evidence_events.length === 0) {
+  if (packet.evidence_events.length === 0 && packet.claim_pointers.length === 0) {
     deterministicTags.push("missing_evidence_events");
     deterministicMissing.push("evidence_events");
     deterministicTags.push("provenance_context_missing");
@@ -790,24 +885,30 @@ Deno.serve(async (req: Request) => {
       ]);
     };
 
-    let llmResp: any;
-    try {
-      llmResp = await callReviewer(usedModelId);
-    } catch (e: any) {
-      if (
-        FALLBACK_MODEL_ID &&
-        FALLBACK_MODEL_ID !== usedModelId &&
-        shouldRetryModelFallback(asString(e?.message))
-      ) {
-        usedModelId = FALLBACK_MODEL_ID;
-        llmResp = await callReviewer(usedModelId);
-      } else {
-        throw e;
+    const candidateModels = listCandidateModels(REQUESTED_MODEL_ID, FALLBACK_MODEL_ID);
+    let llmResp: unknown = null;
+    let lastModelError: unknown = null;
+    for (let i = 0; i < candidateModels.length; i++) {
+      const candidateModel = candidateModels[i];
+      usedModelId = candidateModel;
+      try {
+        llmResp = await callReviewer(candidateModel);
+        lastModelError = null;
+        break;
+      } catch (e: unknown) {
+        lastModelError = e;
+        const errMsg = e instanceof Error ? e.message : String(e || "");
+        const canRetry = i < candidateModels.length - 1 && shouldRetryModelFallback(errMsg);
+        if (!canRetry) {
+          throw e;
+        }
       }
     }
+    if (!llmResp && lastModelError) {
+      throw lastModelError;
+    }
 
-    const textBlock = (llmResp as any).content?.find((b: any) => b.type === "text");
-    const rawText = asString(textBlock?.text);
+    const rawText = parseAnthropicTextContent(llmResp);
     llmRawPreview = rawText.slice(0, 500);
     const parsed = parseLlmJson<JsonRecord>(rawText);
     llmParseMode = parsed.parseMode;

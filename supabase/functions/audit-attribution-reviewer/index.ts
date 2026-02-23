@@ -313,10 +313,7 @@ function parsePacket(body: JsonRecord): NormalizedRequest {
     ? evidenceEventsRaw
     : [...evidenceEventsFromIds, ...legacyEvidencePtrs];
   const claimPointersRaw = asArray(merged.claim_pointers || evidencePacket.claim_pointers).map(asRecord);
-  const transcriptFallbackPointer = (
-      claimPointersRaw.length === 0 &&
-      transcriptSegment.length > 0
-    )
+  const transcriptFallbackPointer = claimPointersRaw.length === 0
     ? [{
       pointer_kind: "transcript_span_fallback",
       source_type: "conversation_spans",
@@ -324,7 +321,7 @@ function parsePacket(body: JsonRecord): NormalizedRequest {
       span_id: spanId || null,
       char_start: asNumber(legacySpanBounds.char_start),
       char_end: asNumber(legacySpanBounds.char_end),
-      span_text: transcriptSegment.slice(0, 1600),
+      span_text: transcriptSegment.slice(0, 1600) || null,
     }]
     : [];
   const claimPointers = claimPointersRaw.length > 0 ? claimPointersRaw : transcriptFallbackPointer;
@@ -360,8 +357,10 @@ function parsePacket(body: JsonRecord): NormalizedRequest {
       call_at_utc: callAtUtc,
       asof_mode: asString(merged.asof_mode || merged.known_as_of_mode || legacyAsOf.mode || "KNOWN_AS_OF") ||
         "KNOWN_AS_OF",
-      same_call_excluded: merged.same_call_excluded !== false &&
-        legacyAsOf.same_call_excluded !== false,
+      same_call_excluded: (
+        merged.same_call_excluded !== false &&
+        legacyAsOf.same_call_excluded !== false
+      ),
     },
   };
 }
