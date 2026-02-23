@@ -1,16 +1,16 @@
 /**
- * operator-validation Edge Function v0.1.0
+ * operator-validation Edge Function v0.2.0
  *
  * Purpose:
- * - GET: Read spans from v_operator_span_why with existing feedback map
- * - POST: Write verdict (CORRECT/INCORRECT/UNSURE) to attribution_validation_feedback
+ * - GET: Read spans from v_operator_span_why with existing feedback map (public)
+ * - POST: Write verdict (CORRECT/INCORRECT/UNSURE) to attribution_validation_feedback (auth required)
  *
- * Auth: verify_jwt=true (gateway). Validates user via auth.getUser().
+ * Auth: verify_jwt=false (gateway open). GET is public; POST requires Bearer JWT.
  */
 import "jsr:@supabase/functions-js/edge-runtime.d.ts";
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
 
-const FUNCTION_VERSION = "v0.1.0";
+const FUNCTION_VERSION = "v0.2.0";
 
 const CORS_HEADERS = {
   "Access-Control-Allow-Origin": "*",
@@ -25,45 +25,42 @@ function json(payload: unknown, status = 200): Response {
   });
 }
 
+interface AuthResult {
+  user: { id: string; email?: string } | null;
+}
+
+async function tryAuth(req: Request, supabaseUrl: string): Promise<AuthResult> {
+  const authHeader = req.headers.get("Authorization") ?? "";
+  const token = authHeader.replace(/^Bearer\s+/i, "");
+  if (!token) return { user: null };
+
+  const userClient = createClient(
+    supabaseUrl,
+    Deno.env.get("SUPABASE_ANON_KEY") ?? "",
+    { global: { headers: { Authorization: `Bearer ${token}` } } },
+  );
+  const { data, error } = await userClient.auth.getUser();
+  if (error || !data?.user) return { user: null };
+  return { user: { id: data.user.id, email: data.user.email ?? undefined } };
+}
+
 Deno.serve(async (req: Request) => {
   if (req.method === "OPTIONS") {
     return new Response(null, { status: 204, headers: CORS_HEADERS });
   }
 
-  // --- Auth: validate JWT via auth.getUser() ---
   const supabaseUrl = Deno.env.get("SUPABASE_URL");
   const serviceRole = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY");
   if (!supabaseUrl || !serviceRole) {
     return json({ ok: false, error: "missing_supabase_env" }, 500);
   }
 
-  const authHeader = req.headers.get("Authorization") ?? "";
-  const token = authHeader.replace(/^Bearer\s+/i, "");
-  if (!token) {
-    return json({ ok: false, error: "missing_token" }, 401);
-  }
-
-  const userClient = createClient(
-    supabaseUrl,
-    Deno.env.get("SUPABASE_ANON_KEY") ?? "",
-    {
-      global: { headers: { Authorization: `Bearer ${token}` } },
-    },
-  );
-  const { data: userData, error: userError } = await userClient.auth.getUser();
-  if (userError || !userData?.user) {
-    return json(
-      { ok: false, error: "unauthorized", detail: userError?.message },
-      401,
-    );
-  }
-  const user = userData.user;
-
-  // Service-role client for DB reads/writes (RLS = service_role_only)
   const db = createClient(supabaseUrl, serviceRole);
 
-  // --- GET: fetch spans + feedback ---
+  // --- GET: fetch spans + feedback (public, no auth required) ---
   if (req.method === "GET") {
+    const auth = await tryAuth(req, supabaseUrl);
+
     const url = new URL(req.url);
     const filter = url.searchParams.get("filter") || "all";
     const limit = Math.min(
@@ -91,7 +88,6 @@ Deno.serve(async (req: Request) => {
       );
     }
 
-    // Fetch existing feedback for these spans
     const spanIds = (spans ?? [])
       .map((s: Record<string, unknown>) => s.span_id)
       .filter(Boolean);
@@ -118,15 +114,20 @@ Deno.serve(async (req: Request) => {
     return json({
       ok: true,
       function_version: FUNCTION_VERSION,
-      user: { email: user.email, id: user.id },
+      user: auth.user ? { email: auth.user.email, id: auth.user.id } : null,
       count: (spans ?? []).length,
       spans: spans ?? [],
       feedback_map: feedbackMap,
     });
   }
 
-  // --- POST: submit verdict ---
+  // --- POST: submit verdict (auth required) ---
   if (req.method === "POST") {
+    const auth = await tryAuth(req, supabaseUrl);
+    if (!auth.user) {
+      return json({ ok: false, error: "unauthorized" }, 401);
+    }
+
     let body: Record<string, unknown>;
     try {
       body = await req.json();
@@ -142,7 +143,8 @@ Deno.serve(async (req: Request) => {
       return json({ ok: false, error: "missing_span_id" }, 400);
     }
     if (
-      !rawVerdict || !["CORRECT", "INCORRECT", "UNSURE"].includes(rawVerdict)
+      !rawVerdict ||
+      !["CORRECT", "INCORRECT", "UNSURE"].includes(rawVerdict)
     ) {
       return json({
         ok: false,
@@ -159,7 +161,7 @@ Deno.serve(async (req: Request) => {
         notes: notes,
         interaction_id: body.interaction_id ? String(body.interaction_id) : null,
         project_id: body.project_id ? String(body.project_id) : null,
-        created_by: user.id,
+        created_by: auth.user.id,
         source: "operator-validation-ui",
       });
 
