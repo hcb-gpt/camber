@@ -1,5 +1,42 @@
-export type JsonValue = string | number | boolean | null | JsonValue[] | { [k: string]: JsonValue };
+export type JsonValue =
+  | string
+  | number
+  | boolean
+  | null
+  | JsonValue[]
+  | { [k: string]: JsonValue };
 export type JsonObj = { [k: string]: JsonValue };
+
+export type AnchorEntry = {
+  quote: string;
+  type?: string;
+  source?: string;
+};
+
+export type CandidateEntry = {
+  project_id: string;
+  project_name: string;
+  score: number;
+  reason?: string;
+};
+
+export type SpanDetail = {
+  span_index: number;
+  project_name: string;
+  decision: string;
+  confidence: number;
+  reasoning: string;
+  anchors: AnchorEntry[];
+  candidates: CandidateEntry[];
+};
+
+export type CallAttributionDetail = {
+  interaction_id: string;
+  contact_name: string;
+  call_date: string;
+  span_count: number;
+  spans: SpanDetail[];
+};
 
 export type ManifestResponse = {
   ok: boolean;
@@ -17,6 +54,7 @@ export type ManifestResponse = {
     review_queue_warning: string | null;
   };
   manifest: JsonObj[];
+  attribution_details?: CallAttributionDetail[];
 };
 
 export function wantsHtmlResponse(req: Request, url: URL): boolean {
@@ -47,6 +85,104 @@ function escapeHtml(input: unknown): string {
     .replaceAll(">", "&gt;")
     .replaceAll('"', "&quot;")
     .replaceAll("'", "&#39;");
+}
+
+function renderAnchorHtml(anchors: AnchorEntry[]): string {
+  if (anchors.length === 0) return "";
+  const items = anchors.map((a) => {
+    const typeLabel = a.type ? ` <span class="anchor-type">${escapeHtml(a.type)}</span>` : "";
+    return `<li class="anchor-item">&ldquo;${escapeHtml(a.quote)}&rdquo;${typeLabel}</li>`;
+  }).join("");
+  return `<ul class="anchor-list">${items}</ul>`;
+}
+
+function renderCandidatesHtml(candidates: CandidateEntry[]): string {
+  if (candidates.length === 0) return "";
+  const rows = candidates.map((c) => {
+    const pct = Math.round(c.score * 100);
+    const reason = c.reason ? ` &mdash; ${escapeHtml(c.reason)}` : "";
+    return `<li class="candidate-item"><strong>${escapeHtml(c.project_name)}</strong> (${pct}%)${reason}</li>`;
+  }).join("");
+  return `<div class="candidates-section"><span class="detail-label">Candidates:</span><ul class="candidate-list">${rows}</ul></div>`;
+}
+
+function decisionPillClass(decision: string): string {
+  switch (decision) {
+    case "assign":
+      return "pill low";
+    case "review":
+      return "pill med";
+    default:
+      return "pill none-pill";
+  }
+}
+
+function renderSpanHtml(span: SpanDetail): string {
+  const confPct = Math.round(span.confidence * 100);
+  return `
+    <div class="span-card">
+      <div class="span-header">
+        <span class="span-index">Span ${span.span_index}</span>
+        <span class="span-project">${escapeHtml(span.project_name)}</span>
+        <span class="${decisionPillClass(span.decision)}">${escapeHtml(span.decision)}</span>
+      </div>
+      <div class="confidence-row">
+        <span class="detail-label">Confidence:</span>
+        <div class="confidence-bar-track">
+          <div class="confidence-bar-fill" style="width:${confPct}%"></div>
+        </div>
+        <span class="confidence-pct">${confPct}%</span>
+      </div>
+      ${
+    span.reasoning
+      ? `<div class="reasoning-row"><span class="detail-label">Reasoning:</span> <span class="reasoning-text">${
+        escapeHtml(span.reasoning)
+      }</span></div>`
+      : ""
+  }
+      ${renderAnchorHtml(span.anchors)}
+      ${renderCandidatesHtml(span.candidates)}
+    </div>`;
+}
+
+export function renderAttributionDetailHtml(
+  details: CallAttributionDetail[] | undefined,
+): string {
+  if (!details || details.length === 0) {
+    return `
+      <section class="attribution-section">
+        <h2 class="section-title">Recent Attribution Details</h2>
+        <p class="empty-state">No recent attribution details available.</p>
+      </section>`;
+  }
+
+  const cards = details.map((call) => {
+    const spansHtml = call.spans.map(renderSpanHtml).join("");
+    const callId = escapeHtml(call.interaction_id);
+    const shortId = callId.length > 20 ? callId.slice(0, 20) + "&hellip;" : callId;
+    return `
+      <details class="call-card">
+        <summary class="call-summary">
+          <div class="call-summary-left">
+            <span class="call-contact">${escapeHtml(call.contact_name)}</span>
+            <span class="call-date">${escapeHtml(call.call_date)}</span>
+          </div>
+          <div class="call-summary-right">
+            <span class="call-spans-badge">${call.span_count} span${call.span_count !== 1 ? "s" : ""}</span>
+            <span class="call-id-mono">${shortId}</span>
+          </div>
+        </summary>
+        <div class="call-detail-body">
+          ${spansHtml || `<p class="empty-state">No span attributions found for this call.</p>`}
+        </div>
+      </details>`;
+  }).join("");
+
+  return `
+    <section class="attribution-section">
+      <h2 class="section-title">Recent Attribution Details</h2>
+      ${cards}
+    </section>`;
 }
 
 export function renderManifestHtml(payload: ManifestResponse, limit: number): string {
@@ -247,6 +383,225 @@ export function renderManifestHtml(payload: ManifestResponse, limit: number): st
         font-size: 0.9rem;
       }
 
+      /* Attribution Detail Section */
+      .attribution-section {
+        margin-top: 28px;
+      }
+
+      .section-title {
+        font-size: 1.3rem;
+        font-weight: 700;
+        margin: 0 0 16px 0;
+        letter-spacing: -0.01em;
+      }
+
+      .empty-state {
+        color: var(--muted);
+        font-size: 0.92rem;
+        padding: 12px 0;
+      }
+
+      .call-card {
+        background: var(--card);
+        border: 1px solid var(--line);
+        border-radius: 14px;
+        margin-bottom: 10px;
+        overflow: hidden;
+        box-shadow: 0 4px 12px rgba(27, 51, 45, 0.04);
+      }
+
+      .call-card[open] {
+        box-shadow: 0 8px 20px rgba(27, 51, 45, 0.08);
+      }
+
+      .call-summary {
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+        padding: 14px 18px;
+        cursor: pointer;
+        user-select: none;
+        list-style: none;
+      }
+
+      .call-summary::-webkit-details-marker {
+        display: none;
+      }
+
+      .call-summary::before {
+        content: "\u25B6";
+        font-size: 0.7rem;
+        margin-right: 10px;
+        color: var(--muted);
+        transition: transform 0.15s ease;
+      }
+
+      .call-card[open] > .call-summary::before {
+        transform: rotate(90deg);
+      }
+
+      .call-summary-left {
+        display: flex;
+        align-items: center;
+        gap: 12px;
+      }
+
+      .call-contact {
+        font-weight: 600;
+        font-size: 0.95rem;
+      }
+
+      .call-date {
+        color: var(--muted);
+        font-size: 0.85rem;
+      }
+
+      .call-summary-right {
+        display: flex;
+        align-items: center;
+        gap: 12px;
+      }
+
+      .call-spans-badge {
+        display: inline-block;
+        background: var(--accent-soft);
+        color: var(--accent);
+        font-size: 0.78rem;
+        font-weight: 600;
+        padding: 2px 10px;
+        border-radius: 999px;
+      }
+
+      .call-id-mono {
+        font-family: "IBM Plex Mono", ui-monospace, monospace;
+        font-size: 0.72rem;
+        color: var(--muted);
+      }
+
+      .call-detail-body {
+        padding: 4px 18px 18px;
+      }
+
+      .span-card {
+        background: #f8fbf9;
+        border: 1px solid #e2ece7;
+        border-radius: 10px;
+        padding: 12px 14px;
+        margin-bottom: 8px;
+      }
+
+      .span-header {
+        display: flex;
+        align-items: center;
+        gap: 10px;
+        margin-bottom: 8px;
+      }
+
+      .span-index {
+        font-family: "IBM Plex Mono", ui-monospace, monospace;
+        font-size: 0.78rem;
+        font-weight: 600;
+        color: var(--muted);
+      }
+
+      .span-project {
+        font-weight: 600;
+        font-size: 0.9rem;
+      }
+
+      .pill.none-pill {
+        color: #5a6b66;
+        background: #e8eeeb;
+      }
+
+      .confidence-row {
+        display: flex;
+        align-items: center;
+        gap: 8px;
+        margin-bottom: 6px;
+      }
+
+      .detail-label {
+        font-size: 0.78rem;
+        text-transform: uppercase;
+        letter-spacing: 0.06em;
+        color: var(--muted);
+        white-space: nowrap;
+      }
+
+      .confidence-bar-track {
+        flex: 1;
+        height: 6px;
+        background: #e2ece7;
+        border-radius: 3px;
+        max-width: 180px;
+      }
+
+      .confidence-bar-fill {
+        height: 100%;
+        background: var(--accent);
+        border-radius: 3px;
+        transition: width 0.3s ease;
+      }
+
+      .confidence-pct {
+        font-family: "IBM Plex Mono", ui-monospace, monospace;
+        font-size: 0.78rem;
+        font-weight: 600;
+        min-width: 36px;
+      }
+
+      .reasoning-row {
+        font-size: 0.88rem;
+        line-height: 1.5;
+        margin-bottom: 6px;
+      }
+
+      .reasoning-text {
+        color: var(--ink);
+      }
+
+      .anchor-list {
+        list-style: none;
+        padding: 0;
+        margin: 6px 0 4px;
+      }
+
+      .anchor-item {
+        font-size: 0.84rem;
+        color: var(--muted);
+        padding: 3px 0;
+        border-left: 3px solid var(--accent-soft);
+        padding-left: 10px;
+        margin-bottom: 4px;
+        font-style: italic;
+      }
+
+      .anchor-type {
+        font-style: normal;
+        font-size: 0.72rem;
+        background: var(--accent-soft);
+        color: var(--accent);
+        padding: 1px 6px;
+        border-radius: 4px;
+        margin-left: 4px;
+      }
+
+      .candidates-section {
+        margin-top: 6px;
+      }
+
+      .candidate-list {
+        list-style: none;
+        padding: 0;
+        margin: 4px 0 0;
+      }
+
+      .candidate-item {
+        font-size: 0.84rem;
+        padding: 2px 0;
+      }
+
       @media (max-width: 760px) {
         .wrap {
           padding: 14px;
@@ -255,6 +610,14 @@ export function renderManifestHtml(payload: ManifestResponse, limit: number): st
         td {
           padding: 10px 8px;
           font-size: 0.88rem;
+        }
+        .call-summary {
+          flex-direction: column;
+          align-items: flex-start;
+          gap: 6px;
+        }
+        .call-summary-right {
+          margin-left: 20px;
         }
       }
     </style>
@@ -302,6 +665,7 @@ export function renderManifestHtml(payload: ManifestResponse, limit: number): st
         </table>
       </section>
       ${warning}
+      ${renderAttributionDetailHtml(payload.attribution_details)}
     </main>
   </body>
 </html>`;
