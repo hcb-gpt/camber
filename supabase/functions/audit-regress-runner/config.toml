@@ -1,0 +1,3 @@
+# audit-regress-runner: Replay manifest items through reviewer, assert expected verdicts
+# Auth: verify_jwt=false (internal). Uses X-Edge-Secret + X-Source allowlist.
+verify_jwt = false
