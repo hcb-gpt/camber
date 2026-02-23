@@ -197,6 +197,10 @@ function asUuid(v: unknown): string | null {
   return s.toLowerCase();
 }
 
+function isUuid(v: unknown): boolean {
+  return typeof v === "string" && UUID_RE.test(v);
+}
+
 function normalizeToken(v: string, maxLen: number): string {
   return v
     .toLowerCase()
@@ -624,6 +628,34 @@ async function lookupLatestAttribution(db: any, spanId: string): Promise<LatestA
   };
 }
 
+function buildCompetingCandidates(top: TopCandidate[]): JsonRecord[] {
+  return top.slice(0, 5).map((c) => ({
+    project_id: c.project_id,
+    score: clampConfidence(c.confidence),
+    reason_codes: [],
+    salient_terms: [],
+    anchor_rationale: asString(c.anchor_rationale).slice(0, 360),
+  })).filter((c) => c.project_id);
+}
+
+function buildEvidencePointers(packet: NormalizedPacket, output: ReviewerOutput): JsonRecord[] {
+  const pointers: JsonRecord[] = [...packet.claim_pointers];
+  for (const a of output.rationale_anchors.slice(0, 10)) {
+    pointers.push({ anchor: a.anchor, source: a.source });
+  }
+  return pointers.slice(0, 64);
+}
+
+function deriveFailureModeBucket(verdict: ReviewerOutput["verdict"], tags: string[]): string | null {
+  if (verdict === "MATCH") return null;
+  if (tags.includes("insufficient_provenance_pointer_quality")) return "insufficient_provenance_pointer_quality";
+  if (tags.includes("multi_project_span_ambiguity")) return "multi_project_span_ambiguity";
+  if (tags.includes("location_anchor_overweight")) return "location_anchor_overweight";
+  if (tags.includes("wrong_vendor_binding")) return "wrong_vendor_binding";
+  if (tags.includes("missing_alias_anchor")) return "missing_alias_anchor";
+  return "insufficient_provenance_pointer_quality";
+}
+
 async function persistToLedger(
   db: any,
   req: NormalizedRequest,
@@ -677,6 +709,13 @@ async function persistToLedger(
   const competingMargin = topCandidateConfidence !== null && assignedConfidence !== null
     ? Number((topCandidateConfidence - assignedConfidence).toFixed(4))
     : null;
+  const competingCandidates = buildCompetingCandidates(output.top_candidates);
+  const evidencePointers = buildEvidencePointers(packet, output);
+  const failureModeBucket = deriveFailureModeBucket(output.verdict, failureTags);
+  const auditSampleId = req.eval_sample_id && isUuid(req.eval_sample_id) ? req.eval_sample_id : null;
+  const expectedProjectId = (output.verdict === "MISMATCH" && output.top_candidates?.[0]?.project_id && isUuid(output.top_candidates[0].project_id))
+    ? output.top_candidates[0].project_id
+    : null;
 
   const basePayload: JsonRecord = {
     dedupe_key: dedupeKey,
@@ -692,6 +731,15 @@ async function persistToLedger(
     asof_mode: asString(packet.asof_mode) || "KNOWN_AS_OF",
     same_call_excluded: packet.same_call_excluded && !guardrailViolation,
     evidence_event_ids: evidenceEventIds,
+    evidence_pointers: evidencePointers,
+    competing_candidates: competingCandidates,
+    audit_sample_id: auditSampleId,
+    predicted_project_id: assignedProjectId || null,
+    expected_project_id: expectedProjectId,
+    failure_mode_bucket: failureModeBucket,
+    failure_detail: asString(output.notes).slice(0, 500) || null,
+    auditor_model_id: usedModelId,
+    auditor_prompt_version: PROMPT_VERSION,
     span_char_start: spanCharStart === null ? null : Math.round(spanCharStart),
     span_char_end: spanCharEnd === null ? null : Math.round(spanCharEnd),
     transcript_span_hash: transcriptSpanHash,
@@ -747,10 +795,11 @@ async function persistToLedger(
   const currentHitCount = asNumber(existing.hit_count) ?? 1;
   const nextHitCount = Math.max(1, Math.round(currentHitCount + 1));
 
+  // APPEND-ONLY: on dedupe conflict, only bump hit_count + last_seen_at_utc.
+  // Do NOT overwrite semantic snapshot fields (verdict, top_candidates, failure_tags, etc.)
   const { data: updated, error: updateErr } = await db
     .from("attribution_audit_ledger")
     .update({
-      ...basePayload,
       hit_count: nextHitCount,
       last_seen_at_utc: nowIso,
     })
@@ -1082,6 +1131,12 @@ Deno.serve(async (req: Request) => {
     if (lineageErr) console.warn(`lineage_emit: ${lineageErr.message}`);
   } catch { /* lineage emission must never block the response */ }
 
+  // Canonical ledger tags for policy evaluation even in dry_run
+  const ledger_failure_tags = normalizeTagList(
+    uniqueStrings([...output.failure_mode_tags, ...deterministicTags]),
+  );
+  const ledger_failure_mode_bucket = deriveFailureModeBucket(output.verdict, ledger_failure_tags);
+
   return new Response(
     JSON.stringify({
       ok: true,
@@ -1090,6 +1145,8 @@ Deno.serve(async (req: Request) => {
       prompt_version: PROMPT_VERSION,
       ms: Date.now() - t0,
       reviewer_output: output,
+      ledger_failure_tags,
+      ledger_failure_mode_bucket,
       deterministic_checks: {
         failure_mode_tags: deterministicTags,
         missing_evidence: deterministicMissing,
