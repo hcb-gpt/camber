@@ -2,9 +2,15 @@
  * ai-router Edge Function v1.15.0
  * LLM-based project attribution for conversation spans
  *
- * @version 1.15.0
+ * @version 1.15.1
  * @date 2026-02-17
  * @purpose Use Claude Haiku to attribute spans to projects with anchored evidence
+ *
+ * v1.15.1 Changes (stopline: no unanchored assignments):
+ * - Enforces fail-closed provenance gate for decision='assign':
+ *   require transcript anchor pointers OR world-model fact provenance pointers.
+ * - Persists provenance payload to span_attributions.matched_terms + match_positions.
+ * - Emits stopline failure tags when assignments are downgraded to review.
  *
  * v1.15.0 Changes (3-band decision policy):
  * - Replaces 2-band confidence gate (assign/none) with 3-band (assign/review/none).
@@ -112,7 +118,7 @@ import {
 } from "./world_model_facts.ts";
 
 const PROMPT_VERSION_BASE = "v1.13.0";
-const FUNCTION_VERSION = "v1.15.0";
+const FUNCTION_VERSION = "v1.15.1";
 const MODEL_ID = Deno.env.get("AI_ROUTER_MODEL") || "claude-3-haiku-20240307";
 const MAX_TOKENS = 1024;
 const WORLD_MODEL_FACTS_ENABLED = parseBoolEnv(Deno.env.get("WORLD_MODEL_FACTS_ENABLED"), false);
@@ -270,6 +276,19 @@ interface ContextPackage {
   email_context?: EmailContextItem[];
   email_lookup_meta?: EmailLookupMeta | null;
   evidence_brief?: any;
+}
+
+interface ProvenancePointer {
+  term: string;
+  match_type: string;
+  source: "transcript_anchor" | "project_fact";
+  quote: string | null;
+  char_start: number | null;
+  char_end: number | null;
+  candidate_project_id?: string | null;
+  evidence_event_id?: string | null;
+  fact_kind?: string | null;
+  fact_as_of_at?: string | null;
 }
 
 type TranscriptSanitizeMode = "default" | "strict";
@@ -512,6 +531,113 @@ function hasStrongAnchor(anchors: Anchor[]): boolean {
   return anchors.some((a) => STRONG_ANCHOR_TYPES.includes(a.match_type));
 }
 
+function uniqueStrings(values: string[]): string[] {
+  return Array.from(new Set(values.map((v) => String(v || "").trim()).filter(Boolean)));
+}
+
+function firstCaseInsensitiveIndex(haystack: string, needle: string): number {
+  if (!haystack || !needle) return -1;
+  return haystack.toLowerCase().indexOf(needle.toLowerCase());
+}
+
+function buildTranscriptAnchorPointers(
+  anchors: Anchor[],
+  transcript: string,
+  spanCharStart: number | null,
+  spanCharEnd: number | null,
+): ProvenancePointer[] {
+  if (!transcript || !Array.isArray(anchors) || anchors.length === 0) return [];
+
+  const pointers: ProvenancePointer[] = [];
+  const seen = new Set<string>();
+
+  for (const anchor of anchors) {
+    const quote = String(anchor.quote || "").trim();
+    const term = String(anchor.text || quote || "").trim();
+    const primaryNeedle = quote || term;
+    if (!primaryNeedle || primaryNeedle.length < 3) continue;
+
+    let localStart = firstCaseInsensitiveIndex(transcript, primaryNeedle);
+    let localNeedle = primaryNeedle;
+    if (localStart < 0 && quote && term && term !== quote) {
+      localStart = firstCaseInsensitiveIndex(transcript, term);
+      localNeedle = term;
+    }
+    if (localStart < 0) continue;
+
+    const localEnd = localStart + localNeedle.length;
+    const absoluteStart = spanCharStart !== null ? spanCharStart + localStart : localStart;
+    const absoluteEnd = spanCharStart !== null ? spanCharStart + localEnd : localEnd;
+
+    if (spanCharStart !== null && spanCharEnd !== null) {
+      if (absoluteStart < spanCharStart || absoluteEnd > spanCharEnd) continue;
+    }
+
+    const key = `${absoluteStart}:${absoluteEnd}:${term}:${anchor.match_type || "other"}`;
+    if (seen.has(key)) continue;
+    seen.add(key);
+
+    pointers.push({
+      term,
+      match_type: anchor.match_type || "other",
+      source: "transcript_anchor",
+      quote: quote || null,
+      char_start: absoluteStart,
+      char_end: absoluteEnd,
+      candidate_project_id: anchor.candidate_project_id || null,
+    });
+  }
+
+  return pointers;
+}
+
+function buildProjectFactProvenancePointers(
+  projectId: string | null,
+  refs: WorldModelReference[] | undefined,
+  projectFacts: ProjectFactsPack[],
+): ProvenancePointer[] {
+  if (!projectId || !Array.isArray(refs) || refs.length === 0 || !Array.isArray(projectFacts)) return [];
+  const pack = projectFacts.find((p) => p.project_id === projectId);
+  if (!pack || !Array.isArray(pack.facts) || pack.facts.length === 0) return [];
+
+  const pointers: ProvenancePointer[] = [];
+  const seen = new Set<string>();
+  const refsForProject = refs.filter((r) => r.project_id === projectId);
+
+  for (const ref of refsForProject) {
+    const kind = String(ref.fact_kind || "").trim();
+    if (!kind) continue;
+
+    const candidates = pack.facts.filter((f) => f.fact_kind === kind);
+    if (candidates.length === 0) continue;
+
+    let fact = candidates.find((f) => ref.fact_as_of_at && f.as_of_at === ref.fact_as_of_at) ||
+      candidates.find((f) => Boolean(f.evidence_event_id)) ||
+      candidates[0];
+
+    if (!fact?.evidence_event_id) continue;
+
+    const key = `${fact.evidence_event_id}:${fact.fact_kind}:${fact.as_of_at}`;
+    if (seen.has(key)) continue;
+    seen.add(key);
+
+    pointers.push({
+      term: kind,
+      match_type: "project_fact",
+      source: "project_fact",
+      quote: ref.fact_excerpt || null,
+      char_start: null,
+      char_end: null,
+      candidate_project_id: projectId,
+      evidence_event_id: fact.evidence_event_id,
+      fact_kind: fact.fact_kind,
+      fact_as_of_at: fact.as_of_at,
+    });
+  }
+
+  return pointers;
+}
+
 /**
  * Derive attribution_source from anchor composition.
  * Values: llm_strong_anchor, llm_weak_anchor, llm_no_anchor, model_error
@@ -605,6 +731,7 @@ function buildReasonCodes(opts: {
   geoOnly?: boolean;
   commonAliasUnconfirmed?: boolean;
   bizdevWithoutCommitment?: boolean;
+  stoplineReason?: string | null;
 }): string[] {
   const reasons: string[] = [];
   if (Array.isArray(opts.modelReasons)) reasons.push(...opts.modelReasons);
@@ -615,6 +742,7 @@ function buildReasonCodes(opts: {
   if (opts.geoOnly) reasons.push("geo_only");
   if (opts.commonAliasUnconfirmed) reasons.push("common_alias_unconfirmed");
   if (opts.bizdevWithoutCommitment) reasons.push("bizdev_without_commitment");
+  if (opts.stoplineReason) reasons.push(opts.stoplineReason);
   if (opts.modelError) reasons.push("model_error");
 
   return Array.from(new Set(reasons.filter(Boolean)));
@@ -1090,6 +1218,11 @@ Deno.serve(async (req: Request) => {
   let junkCallFiltered = false;
   let junkCallFilterReasonCodes: string[] = [];
   let junkCallFilterSignalSummary: string[] = [];
+  let matchedTermsForWrite: string[] = [];
+  let matchPositionsForWrite: ProvenancePointer[] = [];
+  let stoplineDowngradeReason: "insufficient_provenance_pointer_quality" | "doc_anchor_missing" | null = null;
+  let stoplineTranscriptAnchorCount = 0;
+  let stoplineDocProvenanceCount = 0;
 
   const currentEvidenceEventIds = Array.from(
     new Set(
@@ -1397,6 +1530,43 @@ Deno.serve(async (req: Request) => {
     homeownerDeterministicFallbackApplied;
 
   // ========================================
+  // STOPLINE: NO UNANCHORED ASSIGNMENTS
+  // ========================================
+  const pointerTranscriptMode: TranscriptSanitizeMode = strictSanitizationRetryUsed ? "strict" : "default";
+  const pointerTranscript = withSanitizedTranscript(context_package, pointerTranscriptMode).context.span?.transcript_text ||
+    "";
+  const spanCharStartRaw = Number(context_package.span?.char_start);
+  const spanCharEndRaw = Number(context_package.span?.char_end);
+  const spanCharStart = Number.isFinite(spanCharStartRaw) ? spanCharStartRaw : null;
+  const spanCharEnd = Number.isFinite(spanCharEndRaw) ? spanCharEndRaw : null;
+
+  const transcriptPointers = buildTranscriptAnchorPointers(result.anchors || [], pointerTranscript, spanCharStart, spanCharEnd);
+  const docProvenancePointers = buildProjectFactProvenancePointers(
+    result.project_id,
+    result.world_model_references || world_model_references,
+    projectFactsForPrompt,
+  );
+  stoplineTranscriptAnchorCount = transcriptPointers.length;
+  stoplineDocProvenanceCount = docProvenancePointers.length;
+  matchPositionsForWrite = [...transcriptPointers, ...docProvenancePointers];
+  matchedTermsForWrite = uniqueStrings(matchPositionsForWrite.map((p) => p.term)).slice(0, 32);
+
+  const hasStoplineAnchorEvidence = stoplineTranscriptAnchorCount > 0 || stoplineDocProvenanceCount > 0;
+  if (!model_error && result.decision === "assign" && result.project_id && !hasStoplineAnchorEvidence) {
+    stoplineDowngradeReason = (result.anchors?.length || 0) > 0
+      ? "doc_anchor_missing"
+      : "insufficient_provenance_pointer_quality";
+    result = {
+      ...result,
+      decision: "review",
+      reasoning: `${result.reasoning} stopline_no_unanchored_assignments:${stoplineDowngradeReason}.`,
+    };
+    console.log(
+      `[ai-router] Stopline downgrade assign→review: span=${span_id} reason=${stoplineDowngradeReason}`,
+    );
+  }
+
+  // ========================================
   // BLOCKLIST ENFORCEMENT (belt-and-suspenders)
   // ========================================
   if (result.project_id) {
@@ -1487,29 +1657,33 @@ Deno.serve(async (req: Request) => {
   if (!dry_run) {
     const { data: existingAttribution } = await db
       .from("span_attributions")
-      .select("attribution_lock")
+      .select("attribution_lock, applied_project_id, project_id, applied_at_utc")
       .eq("span_id", span_id)
       .maybeSingle();
 
     const currentLock = existingAttribution?.attribution_lock ?? null;
+    const preservedAppliedProjectId = existingAttribution?.applied_project_id ?? existingAttribution?.project_id ?? null;
+    const preservedAppliedAtUtc = existingAttribution?.applied_at_utc ?? null;
 
     const wouldApply = result.decision === "assign" && result.confidence >= THRESHOLD_AUTO_ASSIGN;
     const newLock = wouldApply ? "ai" : null;
+    const lockCanOverwrite = canOverwriteLock(currentLock, newLock);
 
-    if (!canOverwriteLock(currentLock, newLock)) {
+    if (!lockCanOverwrite) {
       gatekeeper_reason = currentLock === "human" ? "human_lock_present" : "ai_lock_preserved";
       applied = false;
-      applied_project_id = null;
+      applied_project_id = preservedAppliedProjectId;
       console.log(`[ai-router] Lock preserved: current=${currentLock}, attempted=${newLock}`);
     } else {
       const spanTranscript = withSanitizedTranscript(context_package, "default").context.span?.transcript_text || "";
       const { valid: hasValidAnchor } = validateAnchorQuotes(result.anchors, spanTranscript);
       const allowDeterministicHomeownerAssign = homeownerDeterministicAssignApplied && homeownerOverrideStrongAnchor;
+      const hasStoplineProvenanceForApply = stoplineTranscriptAnchorCount > 0 || stoplineDocProvenanceCount > 0;
 
       if (
         result.decision === "assign" &&
         result.confidence >= THRESHOLD_AUTO_ASSIGN &&
-        (hasValidAnchor || allowDeterministicHomeownerAssign)
+        ((hasValidAnchor && hasStoplineProvenanceForApply) || allowDeterministicHomeownerAssign)
       ) {
         applied = true;
         applied_project_id = result.project_id;
@@ -1531,7 +1705,7 @@ Deno.serve(async (req: Request) => {
     // ========================================
     // WRITE TO SPAN_ATTRIBUTIONS (ALWAYS)
     // ========================================
-    const attribution_lock = applied ? "ai" : null;
+    const attribution_lock = !lockCanOverwrite ? currentLock : (applied ? "ai" : null);
     const needs_review = junkCallFiltered ? false : result.decision === "review" || result.decision === "none";
     const attribution_source = junkCallFiltered
       ? "junk_call_prefilter"
@@ -1553,6 +1727,8 @@ Deno.serve(async (req: Request) => {
       decision: result.decision,
       reasoning: result.reasoning,
       anchors: result.anchors,
+      matched_terms: matchedTermsForWrite,
+      match_positions: matchPositionsForWrite,
       journal_references: result.journal_references || [],
       suggested_aliases: result.suggested_aliases || [],
       prompt_version: PROMPT_VERSION,
@@ -1562,7 +1738,7 @@ Deno.serve(async (req: Request) => {
       inference_ms,
       attribution_lock,
       applied_project_id,
-      applied_at_utc: applied ? new Date().toISOString() : null,
+      applied_at_utc: !lockCanOverwrite ? preservedAppliedAtUtc : (applied ? new Date().toISOString() : null),
       needs_review,
       attribution_source,
       evidence_tier,
@@ -1595,11 +1771,11 @@ Deno.serve(async (req: Request) => {
     // REVIEW QUEUE WIRING (PR-4)
     // ========================================
     const interaction_id = context_package.meta?.interaction_id;
-    const quoteVerified = result.anchors.length > 0;
-    const quoteRequirementSatisfied = quoteVerified || homeownerDeterministicAssignApplied;
+    const quoteVerified = stoplineTranscriptAnchorCount > 0;
+    const quoteRequirementSatisfied = quoteVerified || stoplineDocProvenanceCount > 0 || homeownerDeterministicAssignApplied;
     const strongAnchorPresent = hasStrongAnchor(result.anchors);
     const effectiveStrongAnchor = strongAnchorPresent || homeownerOverrideStrongAnchor ||
-      homeownerDeterministicAssignApplied;
+      homeownerDeterministicAssignApplied || stoplineDocProvenanceCount > 0;
     const bizdevGateEffective = bizdev_without_commitment && !homeownerDeterministicAssignApplied;
     const bizdevSuppressedByHomeownerDeterministic = bizdev_without_commitment && homeownerDeterministicAssignApplied;
 
@@ -1625,6 +1801,7 @@ Deno.serve(async (req: Request) => {
         geoOnly: !effectiveStrongAnchor && result.anchors.some((a) => a.match_type === "city_or_location"),
         commonAliasUnconfirmed: common_alias_unconfirmed,
         bizdevWithoutCommitment: bizdevGateEffective,
+        stoplineReason: stoplineDowngradeReason,
       });
 
       const context_payload = {
@@ -1640,6 +1817,13 @@ Deno.serve(async (req: Request) => {
           evidence_tags: c.evidence?.sources || [],
         })) || [],
         anchors: result.anchors,
+        provenance: {
+          transcript_anchor_count: stoplineTranscriptAnchorCount,
+          doc_provenance_count: stoplineDocProvenanceCount,
+          matched_terms: matchedTermsForWrite,
+          match_positions: matchPositionsForWrite,
+          stopline_downgrade_reason: stoplineDowngradeReason,
+        },
         ...(WORLD_MODEL_FACTS_ENABLED
           ? {
             world_model_references: result.world_model_references || [],
@@ -1839,6 +2023,13 @@ Deno.serve(async (req: Request) => {
           commitment_tags: bizdev_commitment_tags,
           gate_active: bizdev_without_commitment && !homeownerDeterministicAssignApplied,
           gate_suppressed_by_homeowner_override: bizdev_without_commitment && homeownerDeterministicAssignApplied,
+        },
+        stopline_no_unanchored_assignments: {
+          transcript_anchor_count: stoplineTranscriptAnchorCount,
+          doc_provenance_count: stoplineDocProvenanceCount,
+          matched_terms_count: matchedTermsForWrite.length,
+          downgraded: stoplineDowngradeReason !== null,
+          reason: stoplineDowngradeReason,
         },
       },
       post_hooks: {
