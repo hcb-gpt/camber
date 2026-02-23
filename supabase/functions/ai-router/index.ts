@@ -1,10 +1,18 @@
 /**
- * ai-router Edge Function v1.15.2
+ * ai-router Edge Function v1.16.0
  * LLM-based project attribution for conversation spans
  *
- * @version 1.15.2
- * @date 2026-02-23
+ * @version 1.16.0
+ * @date 2026-02-22
  * @purpose Use Claude Haiku to attribute spans to projects with anchored evidence
+ *
+ * v1.16.0 Changes (name-vs-content weighting fix):
+ * - Adds name-content guardrail: downgrades assign->review when chosen project
+ *   has low claim crossref but a rival has strong content match (Permar pattern).
+ * - Surfaces claim_crossref_score on LLM Evidence line for content-aware decisions.
+ * - Adds prompt rules 9-10: name-in-transcript != project anchor; trust crossref
+ *   over name coincidence when construction topics match a different project.
+ * - Adds ContextPackage.evidence.claim_crossref_score type field.
  *
  * v1.15.2 Changes (decision-time explainability persistence):
  * - Persists top_candidates snapshot to span_attributions at write time.
@@ -112,6 +120,7 @@ import { applyCommonAliasCorroborationGuardrail, isCommonWordAlias } from "./ali
 import { applyBethanyRoadWinshipGuardrail } from "./bethany_winship_guardrail.ts";
 import { applyBizDevCommitmentGate } from "./bizdev_guardrails.ts";
 import { evaluateHomeownerOverride } from "./homeowner_override_gate.ts";
+import { applyNameContentGuardrail } from "./name_content_guardrail.ts";
 import {
   applyWorldModelReferenceGuardrail,
   buildWorldModelFactsCandidateSummary,
@@ -123,7 +132,7 @@ import {
 } from "./world_model_facts.ts";
 
 const PROMPT_VERSION_BASE = "v1.13.0";
-const FUNCTION_VERSION = "v1.15.2";
+const FUNCTION_VERSION = "v1.16.0";
 const MODEL_ID = Deno.env.get("AI_ROUTER_MODEL") || "claude-3-haiku-20240307";
 const MAX_TOKENS = 1024;
 const WORLD_MODEL_FACTS_ENABLED = parseBoolEnv(Deno.env.get("WORLD_MODEL_FACTS_ENABLED"), false);
@@ -1489,6 +1498,28 @@ Deno.serve(async (req: Request) => {
     if (bethanyGuardrail.applied) {
       console.log(
         `[ai-router] Bethany guardrail forced assignment to Winship candidate ${bethanyGuardrail.chosen_project_id}`,
+      );
+    }
+
+    // v1.16.0: Name-vs-content guardrail — downgrade assign when chosen project
+    // has low claim crossref but a rival has strong content match (Permar pattern)
+    const nameContentGuardrail = applyNameContentGuardrail({
+      decision,
+      project_id,
+      confidence,
+      reasoning,
+      candidates: context_package.candidates || [],
+    });
+    if (nameContentGuardrail.applied) {
+      decision = nameContentGuardrail.decision;
+      confidence = nameContentGuardrail.confidence;
+      reasoning = nameContentGuardrail.reasoning;
+      console.log(
+        `[ai-router] Name-content guardrail downgraded assign→review: chosen_crossref=${
+          nameContentGuardrail.chosen_crossref.toFixed(2)
+        }, rival=${nameContentGuardrail.rival_project_id} rival_crossref=${
+          nameContentGuardrail.rival_crossref.toFixed(2)
+        }`,
       );
     }
 
