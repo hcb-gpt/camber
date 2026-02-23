@@ -33,6 +33,12 @@
  *   exists for interaction_id with payload_ref + integrity_hash.
  * - Fails closed with error_code='call_evidence_write_failed' if evidence upsert cannot be completed.
  *
+ * v2.7.0:
+ * - Per-span chain processing with bounded parallelism (SPAN_PARALLEL_CONCURRENCY env var, default 1).
+ * - Eliminates timeout truncation for calls with 30+ spans.
+ * - Extracted loop body into processSpanChain() with Promise.allSettled dispatch.
+ * - New response field: chain.wall_clock_ms, chain.parallel_concurrency.
+ *
  * Auth (internal gate; verify_jwt=false):
  * - X-Edge-Secret == EDGE_SHARED_SECRET, OR
  * - JWT + ALLOWED_EMAILS verified via auth.getUser() (debug path)
@@ -40,7 +46,7 @@
 import "jsr:@supabase/functions-js/edge-runtime.d.ts";
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
 
-const SEGMENT_CALL_VERSION = "v2.6.3";
+const SEGMENT_CALL_VERSION = "v2.7.0";
 const MAX_SEGMENT_CHARS_HARD_LIMIT = 3000;
 const MAX_HOOK_NON2XX_DIAGNOSTICS = 3;
 
@@ -505,6 +511,31 @@ function shouldRunAssembler(ctx: any): { run: boolean; reasons: string[] } {
 
 function shouldRunAuditor(decision: string, confidence: number): boolean {
   return decision === "assign" && confidence < 0.85;
+}
+
+// v2.7.0: Parallel span chain processing
+// Default 1 = sequential (safe rollback). Set to 5 in prod for parallelism.
+const SPAN_PARALLEL_CONCURRENCY = Math.max(
+  1,
+  parseInt(Deno.env.get("SPAN_PARALLEL_CONCURRENCY") || "1", 10) || 1,
+);
+
+/** Sliding-window concurrency limiter (p-limit pattern, zero deps). */
+function createConcurrencyLimiter(concurrency: number) {
+  let active = 0;
+  const queue: Array<() => void> = [];
+  return async function <T>(fn: () => Promise<T>): Promise<T> {
+    if (active >= concurrency) {
+      await new Promise<void>((resolve) => queue.push(resolve));
+    }
+    active++;
+    try {
+      return await fn();
+    } finally {
+      active--;
+      if (queue.length > 0) queue.shift()!();
+    }
+  };
 }
 
 Deno.serve(async (req: Request) => {
@@ -1091,8 +1122,8 @@ Deno.serve(async (req: Request) => {
 
     // ============================================================
     // 5) PER-SPAN CHAIN: context-assembly → ai-router
+    //    v2.7.0: bounded parallel dispatch (SPAN_PARALLEL_CONCURRENCY)
     // ============================================================
-    const chainStatuses: SpanChainStatus[] = [];
     let hookNon2xxDiagnostics = 0;
 
     const tryConsumeHookNon2xxDiagnosticBudget = (): boolean => {
@@ -1101,7 +1132,10 @@ Deno.serve(async (req: Request) => {
       return true;
     };
 
-    for (const span of insertedSpans) {
+    /** Process a single span through the full chain. Returns status; never throws. */
+    async function processSpanChain(
+      span: { id: string; span_index: number },
+    ): Promise<SpanChainStatus> {
       const status: SpanChainStatus = {
         span_id: span.id,
         span_index: span.span_index,
@@ -1165,8 +1199,7 @@ Deno.serve(async (req: Request) => {
           status.error_code = "context_assembly_failed";
           status.error_detail = await ctxResp.text();
           await enqueueCoverageGapForFailure();
-          chainStatuses.push(status);
-          continue;
+          return status;
         }
 
         contextData = await ctxResp.json();
@@ -1174,16 +1207,14 @@ Deno.serve(async (req: Request) => {
         status.error_code = "context_assembly_exception";
         status.error_detail = e?.message || "unknown";
         await enqueueCoverageGapForFailure();
-        chainStatuses.push(status);
-        continue;
+        return status;
       }
 
       if (!contextData?.context_package) {
         status.error_code = "no_context_package";
         status.error_detail = "context-assembly returned no context_package";
         await enqueueCoverageGapForFailure();
-        chainStatuses.push(status);
-        continue;
+        return status;
       }
 
       // --- EVIDENCE ASSEMBLER (gated, v2.6.0) ---
@@ -1245,8 +1276,7 @@ Deno.serve(async (req: Request) => {
           status.error_code = "ai_router_failed";
           status.error_detail = await routerResp.text();
           await enqueueCoverageGapForFailure();
-          chainStatuses.push(status);
-          continue;
+          return status;
         }
 
         // ============================================================
@@ -1441,12 +1471,35 @@ Deno.serve(async (req: Request) => {
         status.error_code = "ai_router_exception";
         status.error_detail = e?.message || "unknown";
         await enqueueCoverageGapForFailure();
-        chainStatuses.push(status);
-        continue;
+        return status;
       }
 
-      chainStatuses.push(status);
+      return status;
     }
+
+    // Dispatch all span chains with bounded concurrency
+    const chainT0 = Date.now();
+    const runLimited = createConcurrencyLimiter(SPAN_PARALLEL_CONCURRENCY);
+    const settled = await Promise.allSettled(
+      insertedSpans.map((span) => runLimited(() => processSpanChain(span))),
+    );
+
+    const chainStatuses: SpanChainStatus[] = settled.map((result, i) => {
+      if (result.status === "fulfilled") return result.value;
+      // Defense-in-depth: processSpanChain should never throw, but handle it
+      const span = insertedSpans[i];
+      return {
+        span_id: span.id,
+        span_index: span.span_index,
+        context_assembly_status: null,
+        ai_router_status: null,
+        error_code: "span_chain_unhandled_exception",
+        error_detail: String(result.reason),
+        striking_detect_fired: false,
+        journal_extract_fired: false,
+      } as SpanChainStatus;
+    });
+    const chainWallClockMs = Date.now() - chainT0;
 
     const allSuccess = chainStatuses.every((s) =>
       s.context_assembly_status === 200 &&
@@ -1501,6 +1554,8 @@ Deno.serve(async (req: Request) => {
           chain: {
             attempted: true,
             auth_mode: "X-Edge-Secret",
+            parallel_concurrency: SPAN_PARALLEL_CONCURRENCY,
+            wall_clock_ms: chainWallClockMs,
             statuses: chainStatuses,
           },
           coverage_invariant: coverageInvariant,
@@ -1551,6 +1606,8 @@ Deno.serve(async (req: Request) => {
           chain: {
             attempted: true,
             auth_mode: "X-Edge-Secret",
+            parallel_concurrency: SPAN_PARALLEL_CONCURRENCY,
+            wall_clock_ms: chainWallClockMs,
             statuses: chainStatuses,
           },
           coverage_invariant: coverageInvariant,
@@ -1618,6 +1675,8 @@ Deno.serve(async (req: Request) => {
         chain: {
           attempted: true,
           auth_mode: "X-Edge-Secret",
+          parallel_concurrency: SPAN_PARALLEL_CONCURRENCY,
+          wall_clock_ms: chainWallClockMs,
           statuses: chainStatuses,
         },
         coverage_invariant: coverageInvariant,
