@@ -267,7 +267,10 @@ function parsePacket(body: JsonRecord): NormalizedRequest {
   const claimPointersRaw = asArray(
     merged.claim_pointers || evidencePacket.claim_pointers,
   ).map(asRecord);
-  const transcriptFallbackPointer = claimPointersRaw.length === 0
+  const transcriptFallbackPointer = (
+      claimPointersRaw.length === 0 &&
+      transcriptSegment.length > 0
+    )
     ? [{
       pointer_kind: "transcript_span_fallback",
       source_type: "conversation_spans",
