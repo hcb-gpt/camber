@@ -410,7 +410,15 @@ function buildPage(
     if(!raw||typeof raw!=="string")return"";
     var t=raw.trim();
     if(/^DATA-\\d/i.test(t))return"";
-    if(/\\b(backfill|fixture|non-prod|test.?fixture)\\b/i.test(t))return"";
+    /* Strip bracketed suffixes (backfill notes, gate notes) before testing */
+    t=t.replace(/\\s*\\[BACKFILL[^\\]]*\\]/gi,"");
+    t=t.replace(/\\s*\\[BACKFILL_[^\\]]*\\]/gi,"");
+    t=t.replace(/\\s*\\bweak_review_to_none:[^.]*\\./gi,"");
+    t=t.replace(/\\s*\\bdeterministic_[a-z_]+:[^.]*\\./gi,"");
+    t=t.replace(/\\s*\\bblocked_project:[^.]*\\./gi,"");
+    t=t.trim();
+    if(!t)return"";
+    if(/^(backfill|fixture|non-prod|test.?fixture)\\b/i.test(t))return"";
     t=t.replace(/^[a-z][a-z0-9]*(?:_[a-z0-9]+)+\\s*:\\s*[a-z0-9_,]+(?:\\s*\\(.*?\\))?\\s*/i,"");
     t=t.replace(/\\([a-z_]+=[\\d.]+(?:,[a-z_]+=[\\d.]+)*\\)/gi,"");
     t=t.replace(/\\b[a-z]+(?:_[a-z0-9]+){2,}\\b/gi,"");
@@ -908,7 +916,7 @@ function buildPage(
       var hdr=ce("div","detail-call-header");hdr.appendChild(tx("span",c.contactName,"detail-call-name"));
       if(c.callDate)hdr.appendChild(tx("span",fmtDateShort(c.callDate)+" "+fmtTime(c.callDate),"detail-call-date"));
       blk.appendChild(hdr);
-      sortSpansByPriority(c.spanDetails.filter(function(sp){return sp.project===projectName;})).forEach(function(sp){blk.appendChild(renderSpanBlock(sp,c.interactionId,c.contactName,c.callDate));});
+      sortSpansByPriority(c.spanDetails.filter(function(sp){return sp.project===projectName;})).forEach(function(sp){blk.appendChild(renderSpanBlock(sp,c.interactionId,null,null));});
       body.appendChild(blk);
     });
   }
@@ -927,7 +935,7 @@ function buildPage(
     call.projects.forEach(function(p){meta.appendChild(tx("span",shortName(p),"badge badge-amber"));});
     body.appendChild(meta);
     if(call.spanDetails.length===0){body.appendChild(tx("div","No spans to review.","empty-state"));return;}
-    sortSpansByPriority(call.spanDetails).forEach(function(sp){body.appendChild(renderSpanBlock(sp,call.interactionId,call.contactName,call.callDate));});
+    sortSpansByPriority(call.spanDetails).forEach(function(sp){body.appendChild(renderSpanBlock(sp,call.interactionId,null,null));});
   }
 
   /* --- Scroll reveal --- */
