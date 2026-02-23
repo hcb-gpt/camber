@@ -274,11 +274,14 @@ function parsePacket(body: JsonRecord): NormalizedRequest {
       call_at_utc: asString(merged.call_at_utc || asOfWorldModel.call_time_utc),
       asof_mode: asString(merged.asof_mode || merged.known_as_of_mode || asOfWorldModel.mode || "KNOWN_AS_OF") ||
         "KNOWN_AS_OF",
-      same_call_excluded: (typeof merged.same_call_excluded === "boolean"
+      same_call_excluded:
+        (typeof merged.same_call_excluded === "boolean"
           ? merged.same_call_excluded
           : asOfWorldModel.same_call_excluded) !== false,
       assigned_decision: asString(merged.assigned_decision || assignedAttribution.decision || attributionObj.decision),
-      assigned_confidence: asNumber(merged.assigned_confidence || assignedAttribution.confidence || attributionObj.confidence),
+      assigned_confidence: asNumber(
+        merged.assigned_confidence || assignedAttribution.confidence || attributionObj.confidence,
+      ),
       assigned_evidence_tier: asNumber(
         merged.assigned_evidence_tier || assignedAttribution.evidence_tier || attributionObj.evidence_tier,
       ),
@@ -313,11 +316,9 @@ function packetFutureLeakageDetected(packet: NormalizedPacket): boolean {
 
   for (const factObj of packet.project_context_as_of) {
     const fact = asRecord(factObj);
-    const factTs = (
-      parseTimestampMs(fact.observed_at) ??
+    const factTs = parseTimestampMs(fact.observed_at) ??
       parseTimestampMs(fact.as_of_at) ??
-      parseTimestampMs(fact.created_at)
-    );
+      parseTimestampMs(fact.created_at);
     if (factTs !== null && factTs > callTs) {
       return true;
     }
@@ -503,7 +504,9 @@ interface LatestAttributionRow {
 async function lookupLatestAttribution(db: any, spanId: string): Promise<LatestAttributionRow | null> {
   const { data, error } = await db
     .from("span_attributions")
-    .select("id, project_id, applied_project_id, decision, confidence, attribution_source, evidence_tier, attributed_at")
+    .select(
+      "id, project_id, applied_project_id, decision, confidence, attribution_source, evidence_tier, attributed_at",
+    )
     .eq("span_id", spanId)
     .order("attributed_at", { ascending: false, nullsFirst: false })
     .order("id", { ascending: false })
@@ -565,23 +568,17 @@ async function persistToLedger(
   const evidenceTier = evidenceTierRaw === null ? null : Math.round(evidenceTierRaw);
   const spanCharStart = asNumber(packet.span_bounds.char_start);
   const spanCharEnd = asNumber(packet.span_bounds.char_end);
-  const transcriptSpanHash = packet.transcript_segment
-    ? await sha256Hex(packet.transcript_segment)
-    : null;
+  const transcriptSpanHash = packet.transcript_segment ? await sha256Hex(packet.transcript_segment) : null;
   const evidenceEventIds = extractEvidenceEventIds(packet);
   const failureTags = normalizeTagList(output.failure_mode_tags);
   const missingEvidence = normalizeMissingEvidenceList(output.missing_evidence);
-  const pointerQualityViolation = (
-    evidenceEventIds.length === 0 ||
+  const pointerQualityViolation = evidenceEventIds.length === 0 ||
     failureTags.some((tag) => tag.includes("pointer") || tag.includes("provenance")) ||
-    missingEvidence.some((tag) => tag.includes("pointer") || tag.includes("provenance"))
-  );
+    missingEvidence.some((tag) => tag.includes("pointer") || tag.includes("provenance"));
   const topCandidateConfidence = asNumber(asRecord(output.top_candidates[0]).confidence);
-  const competingMargin = (
-    topCandidateConfidence !== null && assignedConfidence !== null
-      ? Number((topCandidateConfidence - assignedConfidence).toFixed(4))
-      : null
-  );
+  const competingMargin = topCandidateConfidence !== null && assignedConfidence !== null
+    ? Number((topCandidateConfidence - assignedConfidence).toFixed(4))
+    : null;
 
   const basePayload: JsonRecord = {
     dedupe_key: dedupeKey,
@@ -937,12 +934,10 @@ Deno.serve(async (req: Request) => {
 
     let ledgerPersist: JsonRecord;
     try {
-      const structuralGuardrailViolation = (
-        leakageDetected ||
+      const structuralGuardrailViolation = leakageDetected ||
         futureLeakageDetected ||
         packet.same_call_excluded !== true ||
-        asString(packet.asof_mode).toUpperCase() !== "KNOWN_AS_OF"
-      );
+        asString(packet.asof_mode).toUpperCase() !== "KNOWN_AS_OF";
       ledgerPersist = await persistToLedger(
         db,
         normalized,

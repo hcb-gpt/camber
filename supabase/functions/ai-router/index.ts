@@ -1533,14 +1533,20 @@ Deno.serve(async (req: Request) => {
   // STOPLINE: NO UNANCHORED ASSIGNMENTS
   // ========================================
   const pointerTranscriptMode: TranscriptSanitizeMode = strictSanitizationRetryUsed ? "strict" : "default";
-  const pointerTranscript = withSanitizedTranscript(context_package, pointerTranscriptMode).context.span?.transcript_text ||
+  const pointerTranscript =
+    withSanitizedTranscript(context_package, pointerTranscriptMode).context.span?.transcript_text ||
     "";
   const spanCharStartRaw = Number(context_package.span?.char_start);
   const spanCharEndRaw = Number(context_package.span?.char_end);
   const spanCharStart = Number.isFinite(spanCharStartRaw) ? spanCharStartRaw : null;
   const spanCharEnd = Number.isFinite(spanCharEndRaw) ? spanCharEndRaw : null;
 
-  const transcriptPointers = buildTranscriptAnchorPointers(result.anchors || [], pointerTranscript, spanCharStart, spanCharEnd);
+  const transcriptPointers = buildTranscriptAnchorPointers(
+    result.anchors || [],
+    pointerTranscript,
+    spanCharStart,
+    spanCharEnd,
+  );
   const docProvenancePointers = buildProjectFactProvenancePointers(
     result.project_id,
     result.world_model_references || world_model_references,
@@ -1662,7 +1668,8 @@ Deno.serve(async (req: Request) => {
       .maybeSingle();
 
     const currentLock = existingAttribution?.attribution_lock ?? null;
-    const preservedAppliedProjectId = existingAttribution?.applied_project_id ?? existingAttribution?.project_id ?? null;
+    const preservedAppliedProjectId = existingAttribution?.applied_project_id ?? existingAttribution?.project_id ??
+      null;
     const preservedAppliedAtUtc = existingAttribution?.applied_at_utc ?? null;
 
     const wouldApply = result.decision === "assign" && result.confidence >= THRESHOLD_AUTO_ASSIGN;
@@ -1772,7 +1779,8 @@ Deno.serve(async (req: Request) => {
     // ========================================
     const interaction_id = context_package.meta?.interaction_id;
     const quoteVerified = stoplineTranscriptAnchorCount > 0;
-    const quoteRequirementSatisfied = quoteVerified || stoplineDocProvenanceCount > 0 || homeownerDeterministicAssignApplied;
+    const quoteRequirementSatisfied = quoteVerified || stoplineDocProvenanceCount > 0 ||
+      homeownerDeterministicAssignApplied;
     const strongAnchorPresent = hasStrongAnchor(result.anchors);
     const effectiveStrongAnchor = strongAnchorPresent || homeownerOverrideStrongAnchor ||
       homeownerDeterministicAssignApplied || stoplineDocProvenanceCount > 0;
