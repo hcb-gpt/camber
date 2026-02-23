@@ -1,0 +1,3 @@
+# morning-manifest-site: Public HTML page with client-side Supabase Auth
+# verify_jwt = false: serves login page to unauthenticated browsers
+verify_jwt = false

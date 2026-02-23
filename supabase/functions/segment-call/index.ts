@@ -39,6 +39,10 @@
  * - Extracted loop body into processSpanChain() with Promise.allSettled dispatch.
  * - New response field: chain.wall_clock_ms, chain.parallel_concurrency.
  *
+ * v2.7.1:
+ * - Fixes rerun 500: replaces hard-delete of active spans with soft-delete (is_superseded=true).
+ *   Hard-delete failed when FK-constrained children (striking_signals) referenced span rows.
+ *
  * Auth (internal gate; verify_jwt=false):
  * - X-Edge-Secret == EDGE_SHARED_SECRET, OR
  * - JWT + ALLOWED_EMAILS verified via auth.getUser() (debug path)
@@ -46,7 +50,7 @@
 import "jsr:@supabase/functions-js/edge-runtime.d.ts";
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
 
-const SEGMENT_CALL_VERSION = "v2.7.0";
+const SEGMENT_CALL_VERSION = "v2.7.1";
 const MAX_SEGMENT_CHARS_HARD_LIMIT = 3000;
 const MAX_HOOK_NON2XX_DIAGNOSTICS = 3;
 
@@ -979,20 +983,21 @@ Deno.serve(async (req: Request) => {
     // 4) REBUILD SPANS (SAFE: NO ATTRIBUTIONS ON ACTIVE SPANS)
     // ============================================================
     if (existingSpans && existingSpans.length > 0) {
-      // Delete only active (non-superseded) spans
-      const { error: deleteErr } = await db
+      // Soft-delete: mark active spans as superseded instead of hard-deleting.
+      // Hard-delete fails when FK-constrained children (striking_signals, etc.) exist.
+      const { error: supersedeErr } = await db
         .from("conversation_spans")
-        .delete()
+        .update({ is_superseded: true })
         .eq("interaction_id", interaction_id)
         .eq("is_superseded", false);
 
-      if (deleteErr) {
+      if (supersedeErr) {
         return new Response(
           JSON.stringify({
             ok: false,
-            error: "span_delete_failed",
+            error: "span_supersede_failed",
             error_code: "db_error",
-            detail: deleteErr.message,
+            detail: supersedeErr.message,
             version: SEGMENT_CALL_VERSION,
           }),
           { status: 500, headers: jsonHeaders },
