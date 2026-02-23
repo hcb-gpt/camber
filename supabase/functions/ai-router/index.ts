@@ -1,10 +1,19 @@
 /**
- * ai-router Edge Function v1.17.0
+ * ai-router Edge Function v1.17.1
  * LLM-based project attribution for conversation spans
  *
- * @version 1.17.0
- * @date 2026-02-23
+ * @version 1.17.1
+ * @date 2026-02-22
  * @purpose Use Claude Haiku to attribute spans to projects with anchored evidence
+ *
+ * v1.17.1 Changes (weak-review-to-none downgrade):
+ * - Adds post-inference check: when decision="review" AND confidence < 0.30
+ *   AND no candidate has claim_crossref_score > 0.20, downgrades to decision="none".
+ * - Eliminates ~209 false-positive review queue items (29% of reviews) that have
+ *   no actionable evidence for human reviewers.
+ * - Preserves reviews where any candidate has meaningful crossref signal (> 0.20).
+ * - Runs AFTER all existing guardrails and promotions (high-confidence gap assign,
+ *   bizdev gate, world model, homeowner override).
  *
  * v1.17.0 Changes (high-confidence gap-based auto-assign):
  * - Adds high-confidence promotion path: review->assign when confidence >= 0.70,
@@ -162,6 +171,8 @@ const THRESHOLD_REVIEW = 0.25;
 const THRESHOLD_SAFE_LOW_ASSIGN = 0.40;
 const THRESHOLD_HIGH_CONFIDENCE_GAP_ASSIGN = 0.70;
 const MIN_RUNNER_UP_GAP = 0.20;
+const THRESHOLD_WEAK_REVIEW_CONFIDENCE = 0.30;
+const THRESHOLD_WEAK_REVIEW_CROSSREF = 0.20;
 
 // Defense-in-depth: closed-project hard filter (mirrors context-assembly VALID_PROJECT_STATUSES)
 const ATTRIBUTION_ELIGIBLE_STATUSES = new Set(["active", "warranty", "estimating"]);
@@ -294,6 +305,12 @@ interface ContextPackage {
       sources: string[];
       affinity_weight: number;
       source_strength?: number;
+      claim_crossref_score?: number;
+      claim_pointer_excerpts?: Array<{
+        text: string;
+        source: string;
+        relevance_score: number;
+      }>;
       assigned: boolean;
       alias_matches: Array<{ term: string; match_type: string; snippet?: string }>;
       geo_distance_km?: number;
@@ -951,6 +968,57 @@ function evaluateHighConfidenceGapAssign(opts: {
       runnerUpConfidence.toFixed(2)
     } gap=${gap.toFixed(2)}`,
     runner_up_confidence: runnerUpConfidence,
+  };
+}
+
+/**
+ * Downgrades very-weak review decisions to "none".
+ *
+ * When the LLM returns decision="review" with very low confidence (< 0.30),
+ * and no candidate has meaningful crossref signal (claim_crossref_score > 0.20),
+ * the span has no actionable evidence for a human reviewer. These create false
+ * triage work — 209 spans (29% of review queue) as of 2026-02-22.
+ *
+ * Conditions for downgrade (ALL must be true):
+ * 1. decision === "review"
+ * 2. confidence < THRESHOLD_WEAK_REVIEW_CONFIDENCE (0.30)
+ * 3. No candidate in context has claim_crossref_score > THRESHOLD_WEAK_REVIEW_CROSSREF (0.20)
+ *
+ * If any candidate has crossref > 0.20, the review is preserved — there IS signal,
+ * just weak overall confidence.
+ */
+function evaluateWeakReviewToNone(opts: {
+  decision: "assign" | "review" | "none";
+  confidence: number;
+  candidates: ContextPackage["candidates"];
+}): { downgraded: boolean; reason: string | null; max_crossref: number } {
+  if (opts.decision !== "review") {
+    return { downgraded: false, reason: null, max_crossref: 0 };
+  }
+  if (opts.confidence >= THRESHOLD_WEAK_REVIEW_CONFIDENCE) {
+    return { downgraded: false, reason: null, max_crossref: 0 };
+  }
+
+  // Find the highest crossref score across all candidates
+  let maxCrossref = 0;
+  for (const candidate of opts.candidates || []) {
+    const crossref = candidate?.evidence?.claim_crossref_score ?? 0;
+    if (crossref > maxCrossref) {
+      maxCrossref = crossref;
+    }
+  }
+
+  // If any candidate has meaningful crossref, preserve the review
+  if (maxCrossref > THRESHOLD_WEAK_REVIEW_CROSSREF) {
+    return { downgraded: false, reason: null, max_crossref: maxCrossref };
+  }
+
+  return {
+    downgraded: true,
+    reason: `weak_review_to_none: conf=${opts.confidence.toFixed(2)} max_crossref=${
+      maxCrossref.toFixed(2)
+    } (thresholds: conf<${THRESHOLD_WEAK_REVIEW_CONFIDENCE}, crossref<=${THRESHOLD_WEAK_REVIEW_CROSSREF})`,
+    max_crossref: maxCrossref,
   };
 }
 
@@ -1788,6 +1856,26 @@ Deno.serve(async (req: Request) => {
       }
     } else if (homeownerOverrideSkipReason === "multi_project_span") {
       console.log("[ai-router] Homeowner deterministic gate skipped: multi-project span detected");
+    }
+
+    // v1.17.1: Weak-review-to-none — downgrade very-weak reviews (conf < 0.30, no crossref signal)
+    // to "none" so they don't create false triage work in the review queue.
+    // Runs AFTER all guardrails and promotions; only fires on surviving "review" decisions.
+    {
+      const weakReview = evaluateWeakReviewToNone({
+        decision,
+        confidence,
+        candidates: context_package.candidates || [],
+      });
+      if (weakReview.downgraded) {
+        decision = "none";
+        reasoning = `${reasoning} ${weakReview.reason}.`;
+        console.log(
+          `[ai-router] Weak review downgraded to none: conf=${confidence.toFixed(2)} max_crossref=${
+            weakReview.max_crossref.toFixed(2)
+          }`,
+        );
+      }
     }
 
     result = {
