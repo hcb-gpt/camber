@@ -403,7 +403,7 @@ async function fetchAttributionDetails(
         const proposedPid = attr ? String(attr.project_id ?? "") : "";
         const bestPid = appliedPid || proposedPid;
         const rawSeg = typeof s.transcript_segment === "string" ? s.transcript_segment.trim() : "";
-        const excerpt = rawSeg.length > 300 ? rawSeg.slice(0, 300) + "..." : rawSeg || null;
+        const excerpt = smartExcerpt(rawSeg, 400);
         return {
           span_id: s.id,
           span_index: s.span_index,
@@ -444,6 +444,77 @@ function extractBearerToken(header: string): string | null {
   if (!match) return null;
   const token = match[1]?.trim();
   return token ? token : null;
+}
+
+/**
+ * Build a smart excerpt: split on speaker turns (inline or newline),
+ * skip greetings/filler, collapse phone labels, join non-adjacent
+ * substantive turns with " ... " ellipses.
+ */
+function smartExcerpt(raw: string, maxLen: number): string | null {
+  if (!raw) return null;
+
+  // Filler: greetings, acks, pleasantries, introductions
+  // Tested against speech AFTER speaker label; $ anchor = entire turn is filler
+  const FILLER =
+    /^(hey\b.*|hi\b.*is this\b.*|hi\b.*|hello\b.*|yo|howdy|how are you\b.*|how you doing\b.*|how's it going\b.*|what's up\b.*|who's this\b.*|yeah who's this\b.*|good how are you\b.*|good\b.*|great|not bad|fine|okay|ok|sure|yep|yeah\b.*|yea|yes|no|right|uh huh|mm hmm|alright|bye\b.*|goodbye\b.*|talk to you later\b.*|have a good one\b.*|see you\b.*|take care\b.*|not much\b.*|what's going on\b.*|how about you\b.*|doing good\b.*|doing well\b.*|pretty good\b.*|this is \w+\b.*calling\b.*|no not much\b.*)$/i;
+
+  // Speaker turn regex: "Name Name:" or "+1234567890:" at start or inline
+  // Split so each turn becomes its own element
+  const TURN_SPLIT = /(?=(?:[A-Z][a-z]+ )+[A-Z][a-z]+:|(?=\+\d{7,15}:))/;
+
+  // First split on newlines, then split each line on inline speaker labels
+  const rawLines = raw.split(/\n/);
+  const turns: string[] = [];
+  for (const rl of rawLines) {
+    const parts = rl.split(TURN_SPLIT).map((p) => p.trim()).filter((p) => p.length > 0);
+    turns.push(...parts);
+  }
+
+  // Normalize phone labels and filter
+  const PHONE_LABEL = /^\+?\d{7,15}:/;
+  const kept: { text: string; idx: number }[] = [];
+
+  for (let i = 0; i < turns.length; i++) {
+    let turn = turns[i].replace(PHONE_LABEL, "Caller:");
+
+    // Extract speech after speaker label
+    const colonIdx = turn.indexOf(":");
+    const speech = colonIdx >= 0 ? turn.slice(colonIdx + 1).trim() : turn.trim();
+
+    // Skip filler and very short turns
+    if (FILLER.test(speech)) continue;
+    if (speech.length < 12) continue;
+
+    // Collapse repeated speaker labels for consecutive same-speaker turns
+    kept.push({ text: turn, idx: i });
+  }
+
+  if (kept.length === 0) {
+    return raw.length > maxLen ? raw.slice(0, maxLen) + "..." : raw;
+  }
+
+  // Build excerpt: ellipses for skipped turns
+  let result = "";
+  let prevIdx = -1;
+  for (const k of kept) {
+    const gap = prevIdx >= 0 && k.idx > prevIdx + 1;
+    const sep = gap ? " ... " : (prevIdx >= 0 ? " " : "");
+    const candidate = result + sep + k.text;
+    if (candidate.length > maxLen) {
+      const remaining = maxLen - result.length - sep.length - 3;
+      if (remaining > 30) {
+        result += sep + k.text.slice(0, remaining) + "...";
+      } else if (result.length > 0) {
+        result += "...";
+      }
+      break;
+    }
+    result = candidate;
+    prevIdx = k.idx;
+  }
+
+  return result || null;
 }
 
 function parseBoundedInt(raw: string | null, fallback: number, min: number, max: number): number {
