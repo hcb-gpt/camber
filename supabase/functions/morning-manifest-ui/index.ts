@@ -315,7 +315,7 @@ async function fetchAttributionDetails(
   // Note: interactions.id is UUID, but interactionIds are text (cll_...) so join on interaction_id
   const { data: interactions, error: intErr } = await db
     .from("interactions")
-    .select("interaction_id, contact_name, event_at_utc")
+    .select("interaction_id, contact_name, owner_name, event_at_utc")
     .in("interaction_id", interactionIds);
 
   if (intErr) {
@@ -326,10 +326,26 @@ async function fetchAttributionDetails(
     string,
     { contact_name: string; call_date: string }
   >();
+  // HCB staff names — these own the phone line and appear on every call
+  const HCB_STAFF = new Set([
+    "zack sittler",
+    "zachary sittler",
+    "alexander nasr",
+    "melissa robinson",
+    "alicia cottrell",
+    "kaylen hurley",
+    "edenilson quevedo",
+  ]);
   if (interactions) {
     for (const i of interactions) {
+      const cn = String(i.contact_name ?? "Unknown");
+      const on = String(i.owner_name ?? "");
+      const cnLower = cn.toLowerCase();
+      // Suppress if contact matches owner_name OR is known HCB staff
+      const isOwner = (on && cnLower === on.toLowerCase()) ||
+        HCB_STAFF.has(cnLower);
       interactionMap.set(String(i.interaction_id), {
-        contact_name: String(i.contact_name ?? "Unknown"),
+        contact_name: isOwner ? "Unknown" : cn,
         call_date: String(i.event_at_utc ?? ""),
       });
     }
