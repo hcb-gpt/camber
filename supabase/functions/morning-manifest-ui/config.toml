@@ -1,0 +1,2 @@
+# verify_jwt = true: browser endpoint requires authenticated JWT
+verify_jwt = true

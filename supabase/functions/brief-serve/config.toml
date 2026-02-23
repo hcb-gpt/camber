@@ -1,0 +1,2 @@
+# verify_jwt = false: internal machine caller via X-Edge-Secret for digest fan-out
+verify_jwt = false
