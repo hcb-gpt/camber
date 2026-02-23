@@ -21,13 +21,16 @@ export type CandidateEntry = {
 };
 
 export type SpanDetail = {
+  span_id: string;
   span_index: number;
   project_name: string;
+  applied_project_id: string | null;
   decision: string;
   confidence: number;
   reasoning: string;
   anchors: AnchorEntry[];
   candidates: CandidateEntry[];
+  transcript_excerpt: string | null;
 };
 
 export type CallAttributionDetail = {

@@ -228,21 +228,24 @@ function parseCandidates(raw: any, projectMap: Map<string, string>): CandidateEn
 async function fetchAttributionDetails(
   db: SupabaseClient,
 ): Promise<CallAttributionDetail[]> {
-  // Step 1: Get 10 most recent non-shadow, non-test interaction_ids
+  // Step 1: Get 50 most recent non-shadow, non-test interaction_ids
   const { data: recentSpans, error: spanErr } = await db
     .from("conversation_spans")
     .select("interaction_id")
     .not("interaction_id", "like", "cll_SHADOW_%")
     .not("interaction_id", "like", "%_TEST_%")
     .order("created_at", { ascending: false })
-    .limit(200);
+    .limit(500);
 
   if (spanErr || !recentSpans || recentSpans.length === 0) {
-    console.warn("[morning-manifest-ui] attribution query failed or empty:", spanErr?.message);
+    console.warn(
+      "[morning-manifest-ui] attribution query failed or empty:",
+      spanErr?.message,
+    );
     return [];
   }
 
-  // Deduplicate interaction_ids, keep order, limit to 10
+  // Deduplicate interaction_ids, keep order, limit to 50
   const seen = new Set<string>();
   const interactionIds: string[] = [];
   for (const row of recentSpans) {
@@ -250,7 +253,7 @@ async function fetchAttributionDetails(
     if (!seen.has(iid)) {
       seen.add(iid);
       interactionIds.push(iid);
-      if (interactionIds.length >= 10) break;
+      if (interactionIds.length >= 50) break;
     }
   }
 
@@ -263,7 +266,8 @@ async function fetchAttributionDetails(
       id,
       interaction_id,
       span_index,
-      created_at
+      created_at,
+      transcript_segment
     `)
     .in("interaction_id", interactionIds)
     .order("span_index", { ascending: true });
@@ -275,39 +279,74 @@ async function fetchAttributionDetails(
 
   const spanIds = spans.map((s: { id: string }) => s.id);
 
-  const { data: attributions, error: attrErr } = await db
-    .from("span_attributions")
-    .select(`
-      span_id,
-      decision,
-      confidence,
-      reasoning,
-      anchors,
-      candidates_snapshot,
-      applied_project_id
-    `)
-    .in("span_id", spanIds);
-
-  if (attrErr) {
-    console.warn("[morning-manifest-ui] attributions fetch failed:", attrErr.message);
+  // Batch .in() queries to avoid PostgREST URL length limits (~8KB)
+  const BATCH_SIZE = 80;
+  // deno-lint-ignore no-explicit-any
+  const attributions: any[] = [];
+  let attrErr: { message: string } | null = null;
+  for (let i = 0; i < spanIds.length; i += BATCH_SIZE) {
+    const batch = spanIds.slice(i, i + BATCH_SIZE);
+    const { data: batchData, error: batchErr } = await db
+      .from("span_attributions")
+      .select(`
+        span_id,
+        decision,
+        confidence,
+        reasoning,
+        anchors,
+        candidates_snapshot,
+        applied_project_id,
+        project_id
+      `)
+      .in("span_id", batch);
+    if (batchErr) {
+      attrErr = batchErr;
+      console.warn("[morning-manifest-ui] attributions batch failed:", batchErr.message);
+    } else if (batchData) {
+      attributions.push(...batchData);
+    }
   }
 
-  // Step 3: Fetch interactions for contact_name / call_date
+  if (attrErr) {
+    console.warn("[morning-manifest-ui] attributions fetch had errors:", attrErr.message);
+  }
+
+  // Step 3: Fetch interactions for contact_name / event date
+  // Note: interactions.id is UUID, but interactionIds are text (cll_...) so join on interaction_id
   const { data: interactions, error: intErr } = await db
     .from("interactions")
-    .select("id, contact_name, call_date")
-    .in("id", interactionIds);
+    .select("interaction_id, contact_name, owner_name, event_at_utc")
+    .in("interaction_id", interactionIds);
 
   if (intErr) {
     console.warn("[morning-manifest-ui] interactions fetch failed:", intErr.message);
   }
 
-  const interactionMap = new Map<string, { contact_name: string; call_date: string }>();
+  const interactionMap = new Map<
+    string,
+    { contact_name: string; call_date: string }
+  >();
+  // HCB staff names — these own the phone line and appear on every call
+  const HCB_STAFF = new Set([
+    "zack sittler",
+    "zachary sittler",
+    "alexander nasr",
+    "melissa robinson",
+    "alicia cottrell",
+    "kaylen hurley",
+    "edenilson quevedo",
+  ]);
   if (interactions) {
     for (const i of interactions) {
-      interactionMap.set(String(i.id), {
-        contact_name: String(i.contact_name ?? "Unknown"),
-        call_date: String(i.call_date ?? ""),
+      const cn = String(i.contact_name ?? "Unknown");
+      const on = String(i.owner_name ?? "");
+      const cnLower = cn.toLowerCase();
+      // Suppress if contact matches owner_name OR is known HCB staff
+      const isOwner = (on && cnLower === on.toLowerCase()) ||
+        HCB_STAFF.has(cnLower);
+      interactionMap.set(String(i.interaction_id), {
+        contact_name: isOwner ? "Unknown" : cn,
+        call_date: String(i.event_at_utc ?? ""),
       });
     }
   }
@@ -317,6 +356,7 @@ async function fetchAttributionDetails(
   if (attributions) {
     for (const a of attributions) {
       if (a.applied_project_id) projectIds.add(String(a.applied_project_id));
+      if (a.project_id) projectIds.add(String(a.project_id));
       if (Array.isArray(a.candidates_snapshot)) {
         for (const c of a.candidates_snapshot) {
           if (c && typeof c === "object" && (c as Record<string, unknown>).project_id) {
@@ -351,6 +391,7 @@ async function fetchAttributionDetails(
     // deno-lint-ignore no-explicit-any
     candidates_snapshot: any;
     applied_project_id: string | null;
+    project_id: string | null;
   };
   const attrBySpan = new Map<string, AttrRow>();
   if (attributions) {
@@ -362,23 +403,53 @@ async function fetchAttributionDetails(
   // Step 6: Assemble results in interaction_id order
   const results: CallAttributionDetail[] = [];
   for (const iid of interactionIds) {
-    const callSpans = spans.filter(
+    const rawCallSpans = spans.filter(
       (s: { interaction_id: string }) => String(s.interaction_id) === iid,
     );
+    // Deduplicate: keep newest span per span_index (re-segmentation creates dupes)
+    const byIndex = new Map<
+      number,
+      { id: string; span_index: number; created_at?: string; transcript_segment?: string | null }
+    >();
+    for (
+      const s of rawCallSpans as {
+        id: string;
+        span_index: number;
+        created_at?: string;
+        transcript_segment?: string | null;
+      }[]
+    ) {
+      const existing = byIndex.get(s.span_index);
+      if (!existing || (s.created_at ?? "") > (existing.created_at ?? "")) {
+        byIndex.set(s.span_index, s);
+      }
+    }
+    const callSpans = [...byIndex.values()].sort((a, b) => a.span_index - b.span_index);
     const info = interactionMap.get(iid) ?? { contact_name: "Unknown", call_date: "" };
 
     const spanDetails: SpanDetail[] = callSpans.map(
-      (s: { id: string; span_index: number }) => {
+      (s: {
+        id: string;
+        span_index: number;
+        transcript_segment?: string | null;
+      }) => {
         const attr = attrBySpan.get(String(s.id));
         const appliedPid = attr ? String(attr.applied_project_id ?? "") : "";
+        const proposedPid = attr ? String(attr.project_id ?? "") : "";
+        const bestPid = appliedPid || proposedPid;
+        const rawSeg = typeof s.transcript_segment === "string" ? s.transcript_segment.trim() : "";
+        const excerpt = smartExcerpt(rawSeg, 400);
         return {
+          span_id: s.id,
           span_index: s.span_index,
-          project_name: appliedPid ? (projectMap.get(appliedPid) ?? appliedPid) : "Unassigned",
+          project_name: bestPid ? (projectMap.get(bestPid) ?? bestPid) : "Unassigned",
+          applied_project_id: appliedPid || null,
           decision: attr ? String(attr.decision ?? "none") : "none",
           confidence: attr ? Number(attr.confidence ?? 0) : 0,
           reasoning: attr ? String(attr.reasoning ?? "") : "",
           anchors: attr ? parseAnchors(attr.anchors) : [],
           candidates: attr ? parseCandidates(attr.candidates_snapshot, projectMap) : [],
+          transcript_excerpt: excerpt,
         };
       },
     );
@@ -408,6 +479,77 @@ function extractBearerToken(header: string): string | null {
   if (!match) return null;
   const token = match[1]?.trim();
   return token ? token : null;
+}
+
+/**
+ * Build a smart excerpt: split on speaker turns (inline or newline),
+ * skip greetings/filler, collapse phone labels, join non-adjacent
+ * substantive turns with " ... " ellipses.
+ */
+function smartExcerpt(raw: string, maxLen: number): string | null {
+  if (!raw) return null;
+
+  // Filler: greetings, acks, pleasantries, introductions
+  // Tested against speech AFTER speaker label; $ anchor = entire turn is filler
+  const FILLER =
+    /^(hey\b.*|hi\b.*is this\b.*|hi\b.*|hello\b.*|yo|howdy|how are you\b.*|how you doing\b.*|how's it going\b.*|what's up\b.*|who's this\b.*|yeah who's this\b.*|good how are you\b.*|good\b.*|great|not bad|fine|okay|ok|sure|yep|yeah\b.*|yea|yes|no|right|uh huh|mm hmm|alright|bye\b.*|goodbye\b.*|talk to you later\b.*|have a good one\b.*|see you\b.*|take care\b.*|not much\b.*|what's going on\b.*|how about you\b.*|doing good\b.*|doing well\b.*|pretty good\b.*|this is \w+\b.*calling\b.*|no not much\b.*)$/i;
+
+  // Speaker turn regex: "Name Name:" or "+1234567890:" at start or inline
+  // Split so each turn becomes its own element
+  const TURN_SPLIT = /(?=(?:[A-Z][a-z]+ )+[A-Z][a-z]+:|(?=\+\d{7,15}:))/;
+
+  // First split on newlines, then split each line on inline speaker labels
+  const rawLines = raw.split(/\n/);
+  const turns: string[] = [];
+  for (const rl of rawLines) {
+    const parts = rl.split(TURN_SPLIT).map((p) => p.trim()).filter((p) => p.length > 0);
+    turns.push(...parts);
+  }
+
+  // Normalize phone labels and filter
+  const PHONE_LABEL = /^\+?\d{7,15}:/;
+  const kept: { text: string; idx: number }[] = [];
+
+  for (let i = 0; i < turns.length; i++) {
+    let turn = turns[i].replace(PHONE_LABEL, "Caller:");
+
+    // Extract speech after speaker label
+    const colonIdx = turn.indexOf(":");
+    const speech = colonIdx >= 0 ? turn.slice(colonIdx + 1).trim() : turn.trim();
+
+    // Skip filler and very short turns
+    if (FILLER.test(speech)) continue;
+    if (speech.length < 12) continue;
+
+    // Collapse repeated speaker labels for consecutive same-speaker turns
+    kept.push({ text: turn, idx: i });
+  }
+
+  if (kept.length === 0) {
+    return raw.length > maxLen ? raw.slice(0, maxLen) + "..." : raw;
+  }
+
+  // Build excerpt: ellipses for skipped turns
+  let result = "";
+  let prevIdx = -1;
+  for (const k of kept) {
+    const gap = prevIdx >= 0 && k.idx > prevIdx + 1;
+    const sep = gap ? "\n...\n" : (prevIdx >= 0 ? "\n" : "");
+    const candidate = result + sep + k.text;
+    if (candidate.length > maxLen) {
+      const remaining = maxLen - result.length - sep.length - 3;
+      if (remaining > 30) {
+        result += sep + k.text.slice(0, remaining) + "...";
+      } else if (result.length > 0) {
+        result += "...";
+      }
+      break;
+    }
+    result = candidate;
+    prevIdx = k.idx;
+  }
+
+  return result || null;
 }
 
 function parseBoundedInt(raw: string | null, fallback: number, min: number, max: number): number {
