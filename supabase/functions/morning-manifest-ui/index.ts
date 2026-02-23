@@ -1,14 +1,21 @@
 /**
- * morning-manifest-ui Edge Function v0.1.0
+ * morning-manifest-ui Edge Function v0.3.0
  *
  * Browser-callable endpoint for Morning Manifest UI.
  * - verify_jwt=true (gateway)
  * - validates bearer token and returns manifest rows + queue summary
+ * - supports `format=html` or `Accept: text/html` for direct dashboard rendering
  */
 import "jsr:@supabase/functions-js/edge-runtime.d.ts";
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
+import {
+  type JsonObj,
+  type ManifestResponse,
+  renderManifestHtml,
+  wantsHtmlResponse,
+} from "./view.ts";
 
-const FUNCTION_VERSION = "v0.1.0";
+const FUNCTION_VERSION = "v0.3.0";
 
 const BASE_HEADERS = {
   "Content-Type": "application/json",
@@ -17,9 +24,6 @@ const BASE_HEADERS = {
   "Access-Control-Allow-Headers": "authorization, x-client-info, apikey, content-type",
   "Access-Control-Allow-Methods": "GET, OPTIONS",
 };
-
-type JsonValue = string | number | boolean | null | JsonValue[] | { [k: string]: JsonValue };
-type JsonObj = { [k: string]: JsonValue };
 
 Deno.serve(async (req: Request) => {
   const startedAt = Date.now();
@@ -86,6 +90,7 @@ Deno.serve(async (req: Request) => {
 
     const url = new URL(req.url);
     const limit = parseBoundedInt(url.searchParams.get("limit"), 50, 1, 250);
+    const wantsHtml = wantsHtmlResponse(req, url);
 
     const { data: manifestRows, error: manifestError } = await db
       .from("v_morning_manifest")
@@ -113,7 +118,7 @@ Deno.serve(async (req: Request) => {
       pendingReviewCount = count ?? 0;
     }
 
-    return json(200, {
+    const payload: ManifestResponse = {
       ok: true,
       function_version: FUNCTION_VERSION,
       generated_at: new Date().toISOString(),
@@ -125,7 +130,13 @@ Deno.serve(async (req: Request) => {
         review_queue_warning: reviewQueueWarning,
       },
       manifest: (manifestRows ?? []) as JsonObj[],
-    });
+    };
+
+    if (wantsHtml) {
+      return html(200, renderManifestHtml(payload, limit));
+    }
+
+    return json(200, payload);
   } catch (err) {
     console.error("[morning-manifest-ui] fatal:", err);
     return json(500, {
@@ -177,5 +188,15 @@ function json(status: number, body: Record<string, unknown>): Response {
   return new Response(JSON.stringify(body, null, 2), {
     status,
     headers: BASE_HEADERS,
+  });
+}
+
+function html(status: number, body: string): Response {
+  return new Response(body, {
+    status,
+    headers: {
+      ...BASE_HEADERS,
+      "Content-Type": "text/html; charset=utf-8",
+    },
   });
 }
