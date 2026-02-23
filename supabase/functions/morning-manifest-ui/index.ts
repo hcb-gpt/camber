@@ -499,7 +499,7 @@ function smartExcerpt(raw: string, maxLen: number): string | null {
   let prevIdx = -1;
   for (const k of kept) {
     const gap = prevIdx >= 0 && k.idx > prevIdx + 1;
-    const sep = gap ? " ... " : (prevIdx >= 0 ? " " : "");
+    const sep = gap ? "\n...\n" : (prevIdx >= 0 ? "\n" : "");
     const candidate = result + sep + k.text;
     if (candidate.length > maxLen) {
       const remaining = maxLen - result.length - sep.length - 3;

@@ -219,7 +219,7 @@ function buildPage(
     .span-meta { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; margin-bottom: 6px; font-size: 0.78rem; color: var(--muted); }
     .span-meta-name { font-weight: 600; color: var(--charcoal); }
     .span-meta-date { font-family: "JetBrains Mono", monospace; font-size: 0.72rem; }
-    .transcript-excerpt { font-size: 0.82rem; line-height: 1.55; color: var(--charcoal); background: #f0eeea; border-radius: 6px; padding: 10px 12px; margin: 8px 0; border-left: 3px solid var(--border-l); max-height: 120px; overflow-y: auto; white-space: pre-wrap; word-break: break-word; }
+    .transcript-excerpt { font-size: 0.82rem; line-height: 1.55; color: var(--charcoal); background: #f0eeea; border-radius: 6px; padding: 10px 12px; margin: 8px 0; border-left: 3px solid var(--border-l); max-height: 220px; overflow-y: auto; white-space: pre-wrap; word-break: break-word; }
 
     /* Detail call blocks */
     .detail-call-block { margin-bottom: 20px; padding-bottom: 20px; border-bottom: 1px solid var(--border-l); }
