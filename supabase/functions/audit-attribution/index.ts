@@ -214,17 +214,34 @@ function normalizeToken(v: string, maxLen: number): string {
 // attribution_audit_failure_tags_vocab. Tags not in this set are dropped
 // before persist to prevent constraint violations from LLM-generated tags.
 const FAILURE_TAGS_VOCAB = new Set([
-  "missing_alias_anchor", "wrong_vendor_binding", "multi_project_span_ambiguity",
-  "known_asof_violation", "same_call_leakage", "insufficient_provenance_pointer_quality",
-  "competing_candidate_too_close", "location_anchor_overweight", "floater_confusion",
-  "timeline_anchor_missing", "doc_anchor_missing", "matched_terms_spurious",
-  "reviewer_runtime_error", "pointer_or_provenance_gap", "same_call_leakage_detected",
-  "future_context_leakage_detected", "asof_mode_not_known_as_of",
-  "same_call_exclusion_not_asserted", "fake_assigned_confidence",
-  "missing_assigned_project", "missing_transcript_segment",
-  "missing_project_context", "missing_evidence_packet", "missing_evidence_events",
-  "provenance_context_missing", "span_attribution_id_missing_for_ledger",
-  "top_candidate_disagrees_with_assignment", "assignment_disagreement",
+  "missing_alias_anchor",
+  "wrong_vendor_binding",
+  "multi_project_span_ambiguity",
+  "known_asof_violation",
+  "same_call_leakage",
+  "insufficient_provenance_pointer_quality",
+  "competing_candidate_too_close",
+  "location_anchor_overweight",
+  "floater_confusion",
+  "timeline_anchor_missing",
+  "doc_anchor_missing",
+  "matched_terms_spurious",
+  "reviewer_runtime_error",
+  "pointer_or_provenance_gap",
+  "same_call_leakage_detected",
+  "future_context_leakage_detected",
+  "asof_mode_not_known_as_of",
+  "same_call_exclusion_not_asserted",
+  "fake_assigned_confidence",
+  "missing_assigned_project",
+  "missing_transcript_segment",
+  "missing_project_context",
+  "missing_evidence_packet",
+  "missing_evidence_events",
+  "provenance_context_missing",
+  "span_attribution_id_missing_for_ledger",
+  "top_candidate_disagrees_with_assignment",
+  "assignment_disagreement",
 ]);
 
 function normalizeTagList(values: string[]): string[] {
@@ -739,9 +756,11 @@ async function persistToLedger(
   const evidencePointers = buildEvidencePointers(packet, output);
   const failureModeBucket = deriveFailureModeBucket(output.verdict, failureTags);
   const auditSampleId = req.eval_sample_id && isUuid(req.eval_sample_id) ? req.eval_sample_id : null;
-  const expectedProjectId = (output.verdict === "MISMATCH" && output.top_candidates?.[0]?.project_id && isUuid(output.top_candidates[0].project_id))
-    ? output.top_candidates[0].project_id
-    : null;
+  const expectedProjectId =
+    (output.verdict === "MISMATCH" && output.top_candidates?.[0]?.project_id &&
+        isUuid(output.top_candidates[0].project_id))
+      ? output.top_candidates[0].project_id
+      : null;
 
   const basePayload: JsonRecord = {
     dedupe_key: dedupeKey,
