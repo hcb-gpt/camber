@@ -357,10 +357,8 @@ function parsePacket(body: JsonRecord): NormalizedRequest {
       call_at_utc: callAtUtc,
       asof_mode: asString(merged.asof_mode || merged.known_as_of_mode || legacyAsOf.mode || "KNOWN_AS_OF") ||
         "KNOWN_AS_OF",
-      same_call_excluded: (
-        merged.same_call_excluded !== false &&
-        legacyAsOf.same_call_excluded !== false
-      ),
+      same_call_excluded: merged.same_call_excluded !== false &&
+        legacyAsOf.same_call_excluded !== false,
     },
   };
 }
