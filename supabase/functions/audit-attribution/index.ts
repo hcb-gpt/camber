@@ -756,11 +756,11 @@ async function persistToLedger(
   const evidencePointers = buildEvidencePointers(packet, output);
   const failureModeBucket = deriveFailureModeBucket(output.verdict, failureTags);
   const auditSampleId = req.eval_sample_id && isUuid(req.eval_sample_id) ? req.eval_sample_id : null;
-  const expectedProjectId =
-    (output.verdict === "MISMATCH" && output.top_candidates?.[0]?.project_id &&
-        isUuid(output.top_candidates[0].project_id))
-      ? output.top_candidates[0].project_id
-      : null;
+  const expectedProjectId = (output.verdict === "MISMATCH" &&
+      output.top_candidates?.[0]?.project_id &&
+      isUuid(output.top_candidates[0].project_id))
+    ? output.top_candidates[0].project_id
+    : null;
 
   const basePayload: JsonRecord = {
     dedupe_key: dedupeKey,
