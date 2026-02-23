@@ -1,10 +1,16 @@
 /**
- * ai-router Edge Function v1.15.2
+ * ai-router Edge Function v1.15.3
  * LLM-based project attribution for conversation spans
  *
- * @version 1.15.2
+ * @version 1.15.3
  * @date 2026-02-23
  * @purpose Use Claude Haiku to attribute spans to projects with anchored evidence
+ *
+ * v1.15.3 Changes (name-vs-content weighting guardrail):
+ * - Adds deterministic post-inference guardrail to prefer evidence-leading candidates
+ *   when evidence confidence delta is large (>0.5).
+ * - Prevents project-name mentions from overriding stronger claim-pointer/content evidence.
+ * - Adds explicit prompt instruction to prioritize content evidence over named mentions.
  *
  * v1.15.2 Changes (decision-time explainability persistence):
  * - Persists top_candidates snapshot to span_attributions at write time.
@@ -112,6 +118,7 @@ import { applyCommonAliasCorroborationGuardrail, isCommonWordAlias } from "./ali
 import { applyBethanyRoadWinshipGuardrail } from "./bethany_winship_guardrail.ts";
 import { applyBizDevCommitmentGate } from "./bizdev_guardrails.ts";
 import { evaluateHomeownerOverride } from "./homeowner_override_gate.ts";
+import { applyNameVsContentGuardrail } from "./name_vs_content_guardrail.ts";
 import {
   applyWorldModelReferenceGuardrail,
   buildWorldModelFactsCandidateSummary,
@@ -122,8 +129,8 @@ import {
   type WorldModelReference,
 } from "./world_model_facts.ts";
 
-const PROMPT_VERSION_BASE = "v1.13.0";
-const FUNCTION_VERSION = "v1.15.2";
+const PROMPT_VERSION_BASE = "v1.13.1";
+const FUNCTION_VERSION = "v1.15.3";
 const MODEL_ID = Deno.env.get("AI_ROUTER_MODEL") || "claude-3-haiku-20240307";
 const MAX_TOKENS = 1024;
 const WORLD_MODEL_FACTS_ENABLED = parseBoolEnv(Deno.env.get("WORLD_MODEL_FACTS_ENABLED"), false);
@@ -943,6 +950,7 @@ RULES:
 6. Only choose "none" with confidence <0.25 when the transcript has truly NO project-related content (admin, overhead, wrong number, etc.)
 7. Common-word/material aliases (for example color/material terms like "white", "mystery white", "granite") are ambiguous and CANNOT be sole evidence for decision="assign"
 8. If a common-word alias appears, require corroboration in transcript from exact project name, address fragment, or client name before decision="assign"
+9. Project-name mention alone is weaker than claim-pointer/content evidence; if one candidate has a much higher evidence score (about 0.5+ delta), choose that stronger candidate even if a different project name is spoken
 
 PROJECT JOURNAL CONTEXT (when available):
 Some candidate projects may include journal state — recent claims, decisions,
@@ -1489,6 +1497,25 @@ Deno.serve(async (req: Request) => {
     if (bethanyGuardrail.applied) {
       console.log(
         `[ai-router] Bethany guardrail forced assignment to Winship candidate ${bethanyGuardrail.chosen_project_id}`,
+      );
+    }
+
+    const nameVsContentGuardrail = applyNameVsContentGuardrail({
+      decision,
+      project_id,
+      confidence,
+      reasoning,
+      candidates: context_package.candidates || [],
+    });
+    decision = nameVsContentGuardrail.decision;
+    project_id = nameVsContentGuardrail.project_id;
+    confidence = nameVsContentGuardrail.confidence;
+    reasoning = nameVsContentGuardrail.reasoning;
+    if (nameVsContentGuardrail.applied) {
+      console.log(
+        `[ai-router] Name-vs-content guardrail override: ${nameVsContentGuardrail.from_project_id} -> ${nameVsContentGuardrail.to_project_id} (delta=${
+          (nameVsContentGuardrail.confidence_delta ?? 0).toFixed(3)
+        })`,
       );
     }
 
