@@ -338,6 +338,7 @@ function buildPage(
   function fmtDate(d){try{return(d?new Date(d):new Date()).toLocaleDateString("en-US",{weekday:"long",month:"long",day:"numeric",year:"numeric"});}catch(e){return"";}}
   function fmtTime(iso){if(!iso)return"";try{return new Date(iso).toLocaleTimeString("en-US",{hour:"numeric",minute:"2-digit"});}catch(e){return iso;}}
   function fmtDateShort(iso){if(!iso)return"";try{return new Date(iso).toLocaleDateString("en-US",{month:"short",day:"numeric"});}catch(e){return iso;}}
+  function fmtRelDate(iso){if(!iso)return"";try{var d=new Date(iso),now=new Date(),t=fmtTime(iso);var ds=d.toDateString(),ns=now.toDateString();if(ds===ns)return t;var yd=new Date(now);yd.setDate(yd.getDate()-1);if(ds===yd.toDateString())return"yesterday "+t;return fmtDateShort(iso)+" "+t;}catch(e){return iso;}}
   function shortName(n){if(!n)return n;return n.replace(/\\s+(Residence|Build|Project|Construction|Remodel|Renovation)\\s*$/i,"").trim();}
 
   var loadingEl=document.getElementById("loading-section");
@@ -555,11 +556,15 @@ function buildPage(
         if(p.calls>0)bg.appendChild(tx("span",p.calls+" call"+(p.calls!==1?"s":""),"badge badge-muted"));
         if(p.resolved>0)bg.appendChild(tx("span",p.resolved+" resolved","badge badge-muted"));
         top.appendChild(bg);card.appendChild(top);
-        if(p.caller&&p.caller.contact_name&&p.caller.contact_name!=="Incoming call"){
+        if(p.caller){
           var calDiv=ce("div","p-caller");
           calDiv.appendChild(document.createTextNode("Latest: "));
-          var strong=ce("strong");strong.textContent=p.caller.contact_name;
-          calDiv.appendChild(strong);card.appendChild(calDiv);
+          var cName=p.caller.contact_name||"";
+          var isNameReal=cName&&cName!=="Incoming call"&&cName!=="Unknown"&&!/^Call /.test(cName);
+          var strong=ce("strong");strong.textContent=isNameReal?cName:"Caller";
+          calDiv.appendChild(strong);
+          if(p.caller.call_date){calDiv.appendChild(document.createTextNode(" \u00b7 "+fmtRelDate(p.caller.call_date)));}
+          card.appendChild(calDiv);
         }
         card.addEventListener("click",function(){navigateTo("project",{name:p.name});});
         card.addEventListener("keydown",function(e){if(e.key==="Enter"||e.key===" "){e.preventDefault();card.click();}});
@@ -575,7 +580,7 @@ function buildPage(
         var card=ce("div",cls);card.style.transitionDelay=(i*0.06)+"s";
         card.setAttribute("role","button");card.setAttribute("tabindex","0");
         var top=ce("div","c-top");top.appendChild(tx("span",c.contactName,"c-name"));
-        if(c.callDate)top.appendChild(tx("span",fmtDateShort(c.callDate)+" "+fmtTime(c.callDate),"c-time"));
+        if(c.callDate)top.appendChild(tx("span",fmtRelDate(c.callDate),"c-time"));
         card.appendChild(top);
         var tags=ce("div","c-tags");
         c.projects.forEach(function(pn){tags.appendChild(tx("span",shortName(pn),c.uncertain?"tag tag-amber":"tag tag-green"));});
