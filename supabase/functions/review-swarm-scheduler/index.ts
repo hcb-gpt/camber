@@ -1,13 +1,16 @@
 /**
- * review-swarm-scheduler Edge Function v1.0.0
+ * review-swarm-scheduler Edge Function v1.1.0
  *
- * Cron-triggered scheduler (every 5 min). Checks backlog metrics
- * and triggers review-swarm-runner when thresholds are met.
+ * Cron-triggered scheduler (every 5 min). Checks SSOT backlog
+ * (review_queue pending) and triggers review-swarm-runner when
+ * thresholds are met.
+ *
+ * v1.1.0: Aligned to SSOT (review_queue), skip observability.
  *
  * Trigger signals (any one fires):
- *   open_count >= 150
- *   oldest_age_h > 4
- *   sla_breach > 0  (overrides cooldown)
+ *   open_count >= 150  (review_queue pending)
+ *   oldest_age_h > 4   (oldest pending item)
+ *   sla_breach > 0     (pending > 24h, overrides cooldown)
  *
  * Safety limits:
  *   - 10 min cooldown between runs (unless sla_breach)
@@ -20,7 +23,7 @@ import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
 import { authErrorResponse, requireEdgeSecret } from "../_shared/auth.ts";
 
 const FUNCTION_SLUG = "review-swarm-scheduler";
-const FUNCTION_VERSION = "v1.0.0";
+const FUNCTION_VERSION = "v1.1.0";
 const JSON_HEADERS = { "Content-Type": "application/json" };
 
 const TRIGGER_OPEN_COUNT = 150;
@@ -81,57 +84,32 @@ Deno.serve(async (req: Request) => {
     Deno.env.get("SUPABASE_SERVICE_ROLE_KEY") || "",
   );
 
-  // --- Step 2: Query trigger metrics ---
-  // Get all needs_review spans
-  const { data: unreviewedData, error: unreviewedError } = await db
-    .from("span_attributions")
-    .select("span_id, attributed_at")
-    .eq("needs_review", true);
+  // --- Step 2: Query trigger metrics from SSOT (review_queue) ---
+  const { data: pendingData, error: pendingError } = await db
+    .from("review_queue")
+    .select("id, span_id, created_at")
+    .eq("status", "pending");
 
-  if (unreviewedError) {
+  if (pendingError) {
     return jsonResponse({
       ok: false,
       function_slug: FUNCTION_SLUG,
       version: FUNCTION_VERSION,
       error: "query_failed",
-      detail: unreviewedError.message,
+      detail: pendingError.message,
     }, 500);
   }
 
-  // Get already-reviewed span_ids (source = llm_proxy_review)
-  const { data: reviewedData, error: reviewedError } = await db
-    .from("attribution_validation_feedback")
-    .select("span_id")
-    .eq("source", "llm_proxy_review");
+  const pendingRows = pendingData || [];
+  const openCount = pendingRows.length;
 
-  if (reviewedError) {
-    return jsonResponse({
-      ok: false,
-      function_slug: FUNCTION_SLUG,
-      version: FUNCTION_VERSION,
-      error: "query_failed",
-      detail: reviewedError.message,
-    }, 500);
-  }
-
-  // Client-side: filter unreviewed to exclude those already reviewed
-  const reviewedSet = new Set<string>(
-    (reviewedData || []).map((r: JsonRecord) => asString(r.span_id)),
-  );
-
-  const openSpans = (unreviewedData || []).filter(
-    (r: JsonRecord) => !reviewedSet.has(asString(r.span_id)),
-  );
-
-  const openCount = openSpans.length;
-
-  // Compute oldest_age_h from attributed_at timestamps
+  // Compute oldest_age_h from review_queue.created_at
   let oldestAgeH: number | null = null;
-  if (openSpans.length > 0) {
+  if (pendingRows.length > 0) {
     const now = Date.now();
     let minTime = Infinity;
-    for (const row of openSpans) {
-      const ts = asString((row as JsonRecord).attributed_at);
+    for (const row of pendingRows) {
+      const ts = asString((row as JsonRecord).created_at);
       if (ts) {
         const t = new Date(ts).getTime();
         if (Number.isFinite(t) && t < minTime) {
@@ -144,11 +122,11 @@ Deno.serve(async (req: Request) => {
     }
   }
 
-  // Compute sla_breach: spans with attributed_at > 24h ago
+  // Compute sla_breach: pending items older than 24h
   const twentyFourHoursAgo = Date.now() - 24 * 3600 * 1000;
   let slaBreach = 0;
-  for (const row of openSpans) {
-    const ts = asString((row as JsonRecord).attributed_at);
+  for (const row of pendingRows) {
+    const ts = asString((row as JsonRecord).created_at);
     if (ts) {
       const t = new Date(ts).getTime();
       if (Number.isFinite(t) && t < twentyFourHoursAgo) {
@@ -170,12 +148,30 @@ Deno.serve(async (req: Request) => {
   const shouldTrigger = triggerOpenCount || triggerOldestAge || triggerSlaBreach;
 
   if (!shouldTrigger) {
+    // Skip observability: log why we skipped
+    await db.from("evidence_events").insert({
+      source_type: "scheduler",
+      source_id: `skip_${new Date().toISOString().replace(/[-:T]/g, "").slice(0, 15)}`,
+      transcript_variant: "n/a",
+      metadata: {
+        scheduler_version: FUNCTION_VERSION,
+        action: "skip",
+        reason: "no_trigger_met",
+        backlog_source: "review_queue",
+        open_count: openCount,
+        oldest_age_h: oldestAgeH,
+        sla_breach: slaBreach,
+        thresholds: { open_count: TRIGGER_OPEN_COUNT, oldest_age_h: TRIGGER_OLDEST_AGE_H },
+        ms: Date.now() - t0,
+      },
+    }).then(() => {}, () => {}); // fire-and-forget
     return jsonResponse({
       ok: true,
       function_slug: FUNCTION_SLUG,
       version: FUNCTION_VERSION,
       action: "skip",
       reason: "no_trigger_met",
+      backlog_source: "review_queue",
       triggers: {
         open_count: openCount,
         oldest_age_h: oldestAgeH,
@@ -276,23 +272,13 @@ Deno.serve(async (req: Request) => {
   const reviewerModel = openCount >= HIGH_VOLUME_THRESHOLD ? "full-power" : undefined;
 
   // --- Step 7: Abort check — re-verify open_count before calling runner ---
-  // Re-query to avoid stale data race
+  // Re-query review_queue to avoid stale data race
   const { data: recheckData } = await db
-    .from("span_attributions")
-    .select("span_id")
-    .eq("needs_review", true);
+    .from("review_queue")
+    .select("id", { count: "exact", head: true })
+    .eq("status", "pending");
 
-  const { data: recheckReviewed } = await db
-    .from("attribution_validation_feedback")
-    .select("span_id")
-    .eq("source", "llm_proxy_review");
-
-  const recheckReviewedSet = new Set<string>(
-    (recheckReviewed || []).map((r: JsonRecord) => asString(r.span_id)),
-  );
-  const recheckOpenCount = (recheckData || []).filter(
-    (r: JsonRecord) => !recheckReviewedSet.has(asString(r.span_id)),
-  ).length;
+  const recheckOpenCount = recheckData?.length ?? openCount;
 
   // If open_count dropped below all thresholds and no sla_breach, abort
   if (
@@ -365,6 +351,7 @@ Deno.serve(async (req: Request) => {
     transcript_variant: "n/a",
     metadata: {
       scheduler_version: FUNCTION_VERSION,
+      backlog_source: "review_queue",
       open_count: openCount,
       recheck_open_count: recheckOpenCount,
       oldest_age_h: oldestAgeH,
