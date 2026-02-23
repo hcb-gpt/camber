@@ -1867,9 +1867,10 @@ Deno.serve(async (req: Request) => {
       needs_review,
       attribution_source,
       evidence_tier,
-      candidates_snapshot: context_package.candidates?.map((c) => ({
+      candidates_snapshot: context_package.candidates?.map((c: any) => ({
         project_id: c.project_id,
         project_name: c.project_name,
+        rrf_score: c.evidence?.rrf_score ?? c.rrf_score ?? null,
         affinity_weight: c.evidence?.affinity_weight ?? null,
         source_strength: c.evidence?.source_strength ?? null,
         evidence_sources: c.evidence?.sources || [],
