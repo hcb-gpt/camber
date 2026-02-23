@@ -508,7 +508,8 @@ function buildPage(
     if(sp.candidates&&sp.candidates.length>0){
       var cd=ce("div","candidates-section");cd.appendChild(tx("span","Candidates:","conf-label"));
       var cl=ce("ul","candidate-list");
-      sp.candidates.forEach(function(c){cl.appendChild(tx("li",(c.project_name||c.project_id||"?")+" ("+Math.round((c.score||0)*100)+"%)","candidate-item"));});
+      var maxScore=Math.max.apply(null,sp.candidates.map(function(c){return c.score||0;}));
+      sp.candidates.forEach(function(c){var s=c.score||0;var pct=maxScore>0?Math.round(s/maxScore*100):0;cl.appendChild(tx("li",(c.project_name||c.project_id||"?")+" ("+pct+"%)","candidate-item"));});
       cd.appendChild(cl);block.appendChild(cd);
     }
     if(sp.span_id){
