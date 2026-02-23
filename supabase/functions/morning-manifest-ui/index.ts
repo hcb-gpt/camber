@@ -51,12 +51,36 @@ Deno.serve(async (req: Request) => {
     const serviceRoleKey = mustGetEnv("SUPABASE_SERVICE_ROLE_KEY");
 
     const db = createClient(supabaseUrl, serviceRoleKey);
-    const { data: userData, error: userError } = await db.auth.getUser(token);
-    if (userError || !userData?.user) {
+    const claims = decodeJwtPayload(token);
+    const tokenRole = typeof claims.role === "string" ? claims.role : null;
+    const hasSubject = typeof claims.sub === "string" && claims.sub.trim().length > 0;
+
+    let viewer: { id: string | null; email: string | null; role: string | null } = {
+      id: null,
+      email: null,
+      role: tokenRole,
+    };
+
+    if (hasSubject) {
+      const { data: userData, error: userError } = await db.auth.getUser(token);
+      if (userError || !userData?.user) {
+        return json(401, {
+          ok: false,
+          error: "invalid_jwt",
+          detail: userError?.message ?? "Unable to validate token",
+        });
+      }
+
+      viewer = {
+        id: userData.user.id,
+        email: userData.user.email ?? null,
+        role: userData.user.role ?? tokenRole,
+      };
+    } else if (tokenRole !== "service_role") {
       return json(401, {
         ok: false,
         error: "invalid_jwt",
-        detail: userError?.message ?? "Unable to validate token",
+        detail: "token must include sub claim or service_role role",
       });
     }
 
@@ -94,11 +118,7 @@ Deno.serve(async (req: Request) => {
       function_version: FUNCTION_VERSION,
       generated_at: new Date().toISOString(),
       ms: Date.now() - startedAt,
-      user: {
-        id: userData.user.id,
-        email: userData.user.email ?? null,
-        role: userData.user.role ?? null,
-      },
+      user: viewer,
       summary: {
         project_row_count: manifestRows?.length ?? 0,
         pending_review_count: pendingReviewCount,
@@ -136,6 +156,21 @@ function parseBoundedInt(raw: string | null, fallback: number, min: number, max:
   const parsed = Number.parseInt(raw, 10);
   if (!Number.isFinite(parsed)) return fallback;
   return Math.max(min, Math.min(max, parsed));
+}
+
+function decodeJwtPayload(token: string): Record<string, unknown> {
+  const parts = token.split(".");
+  if (parts.length < 2) return {};
+
+  try {
+    const base64 = parts[1].replace(/-/g, "+").replace(/_/g, "/");
+    const padded = base64 + "=".repeat((4 - (base64.length % 4)) % 4);
+    const jsonText = atob(padded);
+    const parsed = JSON.parse(jsonText);
+    return parsed && typeof parsed === "object" ? parsed as Record<string, unknown> : {};
+  } catch {
+    return {};
+  }
 }
 
 function json(status: number, body: Record<string, unknown>): Response {
