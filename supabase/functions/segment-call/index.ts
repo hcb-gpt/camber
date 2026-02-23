@@ -29,6 +29,9 @@
  *
  * v2.6.3:
  * - Adds per-request run_id correlation to stopline/failure diagnostics.
+ * - Stopline evidence pointer guard: before span writes, ensure source_type='call' evidence_events row
+ *   exists for interaction_id with payload_ref + integrity_hash.
+ * - Fails closed with error_code='call_evidence_write_failed' if evidence upsert cannot be completed.
  *
  * Auth (internal gate; verify_jwt=false):
  * - X-Edge-Secret == EDGE_SHARED_SECRET, OR
@@ -99,6 +102,12 @@ function sanitizeTranscriptForPipeline(text: string): TranscriptSanitizeResult {
 function normalizeReasonCodes(raw: unknown): string[] {
   if (!Array.isArray(raw)) return [];
   return raw.map((r) => String(r || "").trim()).filter(Boolean);
+}
+
+async function sha256Hex(input: string): Promise<string> {
+  const bytes = new TextEncoder().encode(input);
+  const digest = await crypto.subtle.digest("SHA-256", bytes);
+  return Array.from(new Uint8Array(digest)).map((b) => b.toString(16).padStart(2, "0")).join("");
 }
 
 function deterministicSegmentsForLength(
@@ -685,6 +694,63 @@ Deno.serve(async (req: Request) => {
     const transcriptSanitize = sanitizeTranscriptForPipeline(spanTranscript || "");
     spanTranscript = transcriptSanitize.text;
     const transcriptControlCharsSanitized = transcriptSanitize.replaced;
+
+    // ============================================================
+    // 1b) STOPLINE: ENSURE CALL EVIDENCE EVENT EXISTS
+    // ============================================================
+    if (!dry_run) {
+      const { data: callsRawMeta } = await db
+        .from("calls_raw")
+        .select("id, event_at_utc, transcript")
+        .eq("interaction_id", interaction_id)
+        .maybeSingle();
+
+      const callEvidenceOccurredAt = callsRawMeta?.event_at_utc || new Date().toISOString();
+      const callEvidencePayloadRef = callsRawMeta?.id
+        ? `calls_raw:${callsRawMeta.id}`
+        : `call_interaction:${interaction_id}:baseline`;
+      const callEvidenceIntegrityHash = await sha256Hex(
+        `${interaction_id}|baseline|${spanTranscript || callsRawMeta?.transcript || ""}`,
+      );
+
+      const { error: callEvidenceErr } = await db.from("evidence_events").upsert({
+        source_type: "call",
+        source_id: interaction_id,
+        source_run_id: `segment-call:${SEGMENT_CALL_VERSION}`,
+        transcript_variant: "baseline",
+        occurred_at_utc: callEvidenceOccurredAt,
+        payload_ref: callEvidencePayloadRef,
+        integrity_hash: callEvidenceIntegrityHash,
+        metadata: {
+          ensured_by: "segment-call",
+          ensured_version: SEGMENT_CALL_VERSION,
+          guard: "call_evidence_coverage_stopline",
+          is_shadow: String(interaction_id || "").startsWith("cll_SHADOW"),
+        },
+      }, {
+        onConflict: "source_type,source_id,transcript_variant",
+        ignoreDuplicates: true,
+      });
+
+      if (callEvidenceErr) {
+        await logDiagnostic("DB_WRITE_FAILED", {
+          reason: "call_evidence_upsert_failed",
+          interaction_id,
+          detail: callEvidenceErr.message,
+        });
+        return new Response(
+          JSON.stringify({
+            ok: false,
+            error: "call_evidence_write_failed",
+            error_code: "call_evidence_write_failed",
+            detail: callEvidenceErr.message,
+            interaction_id,
+            version: SEGMENT_CALL_VERSION,
+          }),
+          { status: 500, headers: jsonHeaders },
+        );
+      }
+    }
 
     // ============================================================
     // 2) RESEED RULE (409 IF ANY ATTRIBUTIONS EXIST ON ACTIVE SPANS)
