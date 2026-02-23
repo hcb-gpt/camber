@@ -246,7 +246,7 @@ function buildExcerpt(
       // Center a window around the anchor match
       const half = Math.floor((maxLen - quote.length) / 2);
       let start = Math.max(0, idx - half);
-      let end = Math.min(text.length, start + maxLen);
+      const end = Math.min(text.length, start + maxLen);
       // Adjust start if we hit the end
       if (end === text.length) start = Math.max(0, end - maxLen);
       let slice = text.slice(start, end);
