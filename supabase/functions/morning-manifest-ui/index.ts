@@ -1,14 +1,16 @@
 /**
- * morning-manifest-ui Edge Function v0.1.0
+ * morning-manifest-ui Edge Function v0.2.0
  *
  * Browser-callable endpoint for Morning Manifest UI.
  * - verify_jwt=true (gateway)
  * - validates bearer token and returns manifest rows + queue summary
+ * - supports `format=html` or `Accept: text/html` for direct browser dashboard view
  */
 import "jsr:@supabase/functions-js/edge-runtime.d.ts";
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
+import { type ManifestResponse, renderManifestHtml, wantsHtmlResponse } from "./view.ts";
 
-const FUNCTION_VERSION = "v0.1.0";
+const FUNCTION_VERSION = "v0.2.0";
 
 const BASE_HEADERS = {
   "Content-Type": "application/json",
@@ -17,9 +19,6 @@ const BASE_HEADERS = {
   "Access-Control-Allow-Headers": "authorization, x-client-info, apikey, content-type",
   "Access-Control-Allow-Methods": "GET, OPTIONS",
 };
-
-type JsonValue = string | number | boolean | null | JsonValue[] | { [k: string]: JsonValue };
-type JsonObj = { [k: string]: JsonValue };
 
 Deno.serve(async (req: Request) => {
   const startedAt = Date.now();
@@ -51,41 +50,18 @@ Deno.serve(async (req: Request) => {
     const serviceRoleKey = mustGetEnv("SUPABASE_SERVICE_ROLE_KEY");
 
     const db = createClient(supabaseUrl, serviceRoleKey);
-    const claims = decodeJwtPayload(token);
-    const tokenRole = typeof claims.role === "string" ? claims.role : null;
-    const hasSubject = typeof claims.sub === "string" && claims.sub.trim().length > 0;
-
-    let viewer: { id: string | null; email: string | null; role: string | null } = {
-      id: null,
-      email: null,
-      role: tokenRole,
-    };
-
-    if (hasSubject) {
-      const { data: userData, error: userError } = await db.auth.getUser(token);
-      if (userError || !userData?.user) {
-        return json(401, {
-          ok: false,
-          error: "invalid_jwt",
-          detail: userError?.message ?? "Unable to validate token",
-        });
-      }
-
-      viewer = {
-        id: userData.user.id,
-        email: userData.user.email ?? null,
-        role: userData.user.role ?? tokenRole,
-      };
-    } else if (tokenRole !== "service_role") {
+    const { data: userData, error: userError } = await db.auth.getUser(token);
+    if (userError || !userData?.user) {
       return json(401, {
         ok: false,
         error: "invalid_jwt",
-        detail: "token must include sub claim or service_role role",
+        detail: userError?.message ?? "Unable to validate token",
       });
     }
 
     const url = new URL(req.url);
     const limit = parseBoundedInt(url.searchParams.get("limit"), 50, 1, 250);
+    const wantsHtml = wantsHtmlResponse(req, url);
 
     const { data: manifestRows, error: manifestError } = await db
       .from("v_morning_manifest")
@@ -113,19 +89,29 @@ Deno.serve(async (req: Request) => {
       pendingReviewCount = count ?? 0;
     }
 
-    return json(200, {
+    const payload: ManifestResponse = {
       ok: true,
       function_version: FUNCTION_VERSION,
       generated_at: new Date().toISOString(),
       ms: Date.now() - startedAt,
-      user: viewer,
+      user: {
+        id: userData.user.id,
+        email: userData.user.email ?? null,
+        role: userData.user.role ?? null,
+      },
       summary: {
         project_row_count: manifestRows?.length ?? 0,
         pending_review_count: pendingReviewCount,
         review_queue_warning: reviewQueueWarning,
       },
-      manifest: (manifestRows ?? []) as JsonObj[],
-    });
+      manifest: (manifestRows ?? []),
+    };
+
+    if (wantsHtml) {
+      return html(200, renderManifestHtml(payload, limit));
+    }
+
+    return json(200, payload);
   } catch (err) {
     console.error("[morning-manifest-ui] fatal:", err);
     return json(500, {
@@ -158,24 +144,19 @@ function parseBoundedInt(raw: string | null, fallback: number, min: number, max:
   return Math.max(min, Math.min(max, parsed));
 }
 
-function decodeJwtPayload(token: string): Record<string, unknown> {
-  const parts = token.split(".");
-  if (parts.length < 2) return {};
-
-  try {
-    const base64 = parts[1].replace(/-/g, "+").replace(/_/g, "/");
-    const padded = base64 + "=".repeat((4 - (base64.length % 4)) % 4);
-    const jsonText = atob(padded);
-    const parsed = JSON.parse(jsonText);
-    return parsed && typeof parsed === "object" ? parsed as Record<string, unknown> : {};
-  } catch {
-    return {};
-  }
-}
-
 function json(status: number, body: Record<string, unknown>): Response {
   return new Response(JSON.stringify(body, null, 2), {
     status,
     headers: BASE_HEADERS,
+  });
+}
+
+function html(status: number, body: string): Response {
+  return new Response(body, {
+    status,
+    headers: {
+      ...BASE_HEADERS,
+      "Content-Type": "text/html; charset=utf-8",
+    },
   });
 }
