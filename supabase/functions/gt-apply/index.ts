@@ -176,6 +176,24 @@ Deno.serve(async (req: Request) => {
     `[gt-apply] batch=${batchId} total=${body.corrections.length} ok=${successCount} err=${errorCount} ms=${elapsed}`,
   );
 
+  // RUNTIME LINEAGE (fire-and-forget)
+  try {
+    const lineageEdges: { from: string; to: string; type: string }[] = [
+      { from: "edge:gt-apply", to: "table:public.conversation_spans", type: "reads" },
+      { from: "edge:gt-apply", to: "table:public.projects", type: "reads" },
+      { from: "edge:gt-apply", to: "table:public.span_attributions", type: "writes" },
+      { from: "edge:gt-apply", to: "table:public.override_log", type: "writes" },
+    ];
+    const { error: lineageErr } = await db.from("evidence_events").upsert({
+      source_type: "lineage",
+      source_id: batchId,
+      source_run_id: "gt-apply:" + VERSION,
+      transcript_variant: "baseline",
+      metadata: { edges: lineageEdges, pipeline_version: VERSION },
+    }, { onConflict: "source_type,source_id,transcript_variant" });
+    if (lineageErr) console.warn(`lineage_emit: ${lineageErr.message}`);
+  } catch { /* lineage must never block */ }
+
   return jsonResponse({
     ok: errorCount === 0,
     version: VERSION,

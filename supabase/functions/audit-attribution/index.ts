@@ -1063,6 +1063,25 @@ Deno.serve(async (req: Request) => {
     };
   }
 
+  // RUNTIME LINEAGE EVIDENCE (fire-and-forget)
+  try {
+    const lineageEdges: { from: string; to: string; type: string }[] = [
+      { from: "edge:audit-attribution", to: "table:public.eval_samples", type: "reads" },
+      { from: "edge:audit-attribution", to: "table:public.span_attributions", type: "reads" },
+      { from: "edge:audit-attribution", to: "table:public.attribution_audit_ledger", type: "writes" },
+      { from: "edge:audit-attribution", to: "table:public.eval_samples", type: "writes" },
+      { from: "edge:audit-attribution", to: "table:public.eval_runs", type: "writes" },
+    ];
+    const { error: lineageErr } = await db.from("evidence_events").upsert({
+      source_type: "lineage",
+      source_id: normalized.packet.span_id || normalized.packet.interaction_id,
+      source_run_id: "audit-attribution:" + FUNCTION_VERSION,
+      transcript_variant: "baseline",
+      metadata: { edges: lineageEdges, pipeline_version: FUNCTION_VERSION },
+    }, { onConflict: "source_type,source_id,transcript_variant" });
+    if (lineageErr) console.warn(`lineage_emit: ${lineageErr.message}`);
+  } catch { /* lineage emission must never block the response */ }
+
   return new Response(
     JSON.stringify({
       ok: true,

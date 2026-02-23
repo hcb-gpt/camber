@@ -1867,6 +1867,13 @@ Deno.serve(async (req: Request) => {
       needs_review,
       attribution_source,
       evidence_tier,
+      candidates_snapshot: context_package.candidates?.map((c) => ({
+        project_id: c.project_id,
+        project_name: c.project_name,
+        affinity_weight: c.evidence?.affinity_weight ?? null,
+        source_strength: c.evidence?.source_strength ?? null,
+        evidence_sources: c.evidence?.sources || [],
+      })) || null,
       attributed_by: `ai-router-${FUNCTION_VERSION}`,
       attributed_at: new Date().toISOString(),
     }, {

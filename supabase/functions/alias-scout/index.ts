@@ -179,6 +179,36 @@ Deno.serve(async (req: Request) => {
     `[alias-scout] dry_run=${dryRun} found=${deduped.length} inserted=${insertedCount} ms=${elapsed}`,
   );
 
+  // RUNTIME LINEAGE (fire-and-forget)
+  try {
+    const lineageEdges: { from: string; to: string; type: string }[] = [
+      { from: "edge:alias-scout", to: "table:public.projects", type: "reads" },
+      { from: "edge:alias-scout", to: "table:public.project_aliases", type: "reads" },
+      { from: "edge:alias-scout", to: "table:public.suggested_aliases", type: "reads" },
+      { from: "edge:alias-scout", to: "table:public.contacts", type: "reads" },
+      { from: "edge:alias-scout", to: "table:public.span_attributions", type: "reads" },
+    ];
+    if (!dryRun && insertedCount > 0) {
+      lineageEdges.push({
+        from: "edge:alias-scout",
+        to: "table:public.suggested_aliases",
+        type: "writes",
+      });
+    }
+    const { error: lineageErr } = await db.from("evidence_events").upsert({
+      source_type: "lineage",
+      source_id: `alias-scout:${Date.now()}`,
+      source_run_id: "alias-scout:" + VERSION,
+      transcript_variant: "baseline",
+      metadata: {
+        edges: lineageEdges,
+        pipeline_version: VERSION,
+        dry_run: dryRun,
+      },
+    }, { onConflict: "source_type,source_id,transcript_variant" });
+    if (lineageErr) console.warn(`lineage_emit: ${lineageErr.message}`);
+  } catch { /* lineage must never block */ }
+
   return jsonResponse({
     ok: true,
     version: VERSION,
