@@ -1124,18 +1124,18 @@ Deno.serve(async (req: Request) => {
     // 5) PER-SPAN CHAIN: context-assembly → ai-router
     //    v2.7.0: bounded parallel dispatch (SPAN_PARALLEL_CONCURRENCY)
     // ============================================================
-    let hookNon2xxDiagnostics = 0;
-
-    const tryConsumeHookNon2xxDiagnosticBudget = (): boolean => {
-      if (hookNon2xxDiagnostics >= MAX_HOOK_NON2XX_DIAGNOSTICS) return false;
-      hookNon2xxDiagnostics += 1;
-      return true;
-    };
-
     /** Process a single span through the full chain. Returns status; never throws. */
     const processSpanChain = async (
       span: { id: string; span_index: number },
     ): Promise<SpanChainStatus> => {
+      // Per-span diagnostic budget (safe for concurrent execution)
+      let hookNon2xxDiagnostics = 0;
+      const tryConsumeHookNon2xxDiagnosticBudget = (): boolean => {
+        if (hookNon2xxDiagnostics >= MAX_HOOK_NON2XX_DIAGNOSTICS) return false;
+        hookNon2xxDiagnostics += 1;
+        return true;
+      };
+
       const status: SpanChainStatus = {
         span_id: span.id,
         span_index: span.span_index,
