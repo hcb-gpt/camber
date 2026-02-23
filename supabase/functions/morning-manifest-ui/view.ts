@@ -30,6 +30,8 @@ export type SpanDetail = {
   reasoning: string;
   anchors: AnchorEntry[];
   candidates: CandidateEntry[];
+  needs_review: boolean;
+  project_id: string;
   transcript_excerpt: string | null;
 };
 

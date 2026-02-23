@@ -225,6 +225,42 @@ function parseCandidates(raw: any, projectMap: Map<string, string>): CandidateEn
   });
 }
 
+/**
+ * Build an excerpt that prioritizes showing text around anchor evidence.
+ * If anchors are found in the transcript, center the excerpt on the first match.
+ * Falls back to the beginning of the segment if no anchor text is found.
+ */
+function buildExcerpt(
+  raw: string,
+  anchorQuotes: string[],
+  maxLen: number,
+): string | null {
+  if (!raw) return null;
+  const text = raw.trim();
+  if (text.length <= maxLen) return text;
+
+  // Try to find anchor text in the transcript and center excerpt around it
+  for (const quote of anchorQuotes) {
+    const idx = text.toLowerCase().indexOf(quote.toLowerCase());
+    if (idx >= 0) {
+      // Center a window around the anchor match
+      const half = Math.floor((maxLen - quote.length) / 2);
+      let start = Math.max(0, idx - half);
+      let end = Math.min(text.length, start + maxLen);
+      // Adjust start if we hit the end
+      if (end === text.length) start = Math.max(0, end - maxLen);
+      let slice = text.slice(start, end);
+      // Add ellipsis indicators
+      if (start > 0) slice = "..." + slice;
+      if (end < text.length) slice = slice + "...";
+      return slice;
+    }
+  }
+
+  // Fallback: beginning of segment
+  return text.slice(0, maxLen) + "...";
+}
+
 async function fetchAttributionDetails(
   db: SupabaseClient,
 ): Promise<CallAttributionDetail[]> {
@@ -276,39 +312,67 @@ async function fetchAttributionDetails(
 
   const spanIds = spans.map((s: { id: string }) => s.id);
 
-  const { data: attributions, error: attrErr } = await db
-    .from("span_attributions")
-    .select(`
-      span_id,
-      decision,
-      confidence,
-      reasoning,
-      anchors,
-      candidates_snapshot,
-      applied_project_id
-    `)
-    .in("span_id", spanIds);
+  // Batch .in() to avoid PostgREST URL length limits (~12KB with 300+ UUIDs)
+  const BATCH_SIZE = 80;
+  // deno-lint-ignore no-explicit-any
+  const attributions: any[] = [];
+  let attrErr: { message: string } | null = null;
+  for (let i = 0; i < spanIds.length; i += BATCH_SIZE) {
+    const batch = spanIds.slice(i, i + BATCH_SIZE);
+    const { data: batchData, error: batchErr } = await db
+      .from("span_attributions")
+      .select(`
+        span_id,
+        decision,
+        confidence,
+        reasoning,
+        anchors,
+        candidates_snapshot,
+        applied_project_id,
+        project_id,
+        needs_review
+      `)
+      .in("span_id", batch);
+    if (batchErr) attrErr = batchErr;
+    else if (batchData) attributions.push(...batchData);
+  }
 
   if (attrErr) {
     console.warn("[morning-manifest-ui] attributions fetch failed:", attrErr.message);
   }
 
   // Step 3: Fetch interactions for contact_name / call_date
+  // NOTE: interactions.interaction_id is TEXT (not UUID .id)
+  // and the date column is event_at_utc (not call_date)
   const { data: interactions, error: intErr } = await db
     .from("interactions")
-    .select("id, contact_name, call_date")
-    .in("id", interactionIds);
+    .select("interaction_id, contact_name, owner_name, event_at_utc")
+    .in("interaction_id", interactionIds);
 
   if (intErr) {
     console.warn("[morning-manifest-ui] interactions fetch failed:", intErr.message);
   }
 
+  // Suppress HCB staff names (they own the phone, appear on every call)
+  const HCB_STAFF = new Set([
+    "zack sittler",
+    "zachary sittler",
+    "alexander nasr",
+    "melissa robinson",
+    "alicia cottrell",
+    "kaylen hurley",
+    "edenilson quevedo",
+  ]);
   const interactionMap = new Map<string, { contact_name: string; call_date: string }>();
   if (interactions) {
     for (const i of interactions) {
-      interactionMap.set(String(i.id), {
-        contact_name: String(i.contact_name ?? "Unknown"),
-        call_date: String(i.call_date ?? ""),
+      const cn = String(i.contact_name ?? "Unknown");
+      const cnLower = cn.toLowerCase();
+      const on = i.owner_name ? String(i.owner_name) : null;
+      const isOwner = (on && cnLower === on.toLowerCase()) || HCB_STAFF.has(cnLower);
+      interactionMap.set(String(i.interaction_id), {
+        contact_name: isOwner ? "Unknown" : cn,
+        call_date: String(i.event_at_utc ?? ""),
       });
     }
   }
@@ -352,6 +416,8 @@ async function fetchAttributionDetails(
     // deno-lint-ignore no-explicit-any
     candidates_snapshot: any;
     applied_project_id: string | null;
+    project_id: string | null;
+    needs_review: boolean;
   };
   const attrBySpan = new Map<string, AttrRow>();
   if (attributions) {
@@ -377,7 +443,12 @@ async function fetchAttributionDetails(
         const attr = attrBySpan.get(String(s.id));
         const appliedPid = attr ? String(attr.applied_project_id ?? "") : "";
         const rawSeg = typeof s.transcript_segment === "string" ? s.transcript_segment.trim() : "";
-        const excerpt = rawSeg.length > 300 ? rawSeg.slice(0, 300) + "..." : rawSeg || null;
+        const anchorQuotes = attr
+          ? parseAnchors(attr.anchors).map((a: { quote?: string; text?: string }) => a.quote || a.text || "").filter((
+            q: string,
+          ) => q.length > 8)
+          : [];
+        const excerpt = buildExcerpt(rawSeg, anchorQuotes, 400);
         return {
           span_id: s.id,
           span_index: s.span_index,
@@ -388,6 +459,8 @@ async function fetchAttributionDetails(
           reasoning: attr ? String(attr.reasoning ?? "") : "",
           anchors: attr ? parseAnchors(attr.anchors) : [],
           candidates: attr ? parseCandidates(attr.candidates_snapshot, projectMap) : [],
+          needs_review: attr ? Boolean(attr.needs_review) : false,
+          project_id: attr ? String(attr.project_id ?? "") : "",
           transcript_excerpt: excerpt,
         };
       },
