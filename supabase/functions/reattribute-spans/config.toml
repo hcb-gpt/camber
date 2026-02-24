@@ -1,0 +1,3 @@
+# reattribute-spans: Re-runs attribution for specified spans
+# Auth: verify_jwt=false (internal). Uses X-Edge-Secret.
+verify_jwt = false
