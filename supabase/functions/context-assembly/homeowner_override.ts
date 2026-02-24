@@ -21,13 +21,21 @@ function normalizeRoleText(value: unknown): string {
     .replace(/\s+/g, " ");
 }
 
-export function isHomeownerRoleLabel(value: unknown): boolean {
+export function isHomeownerRoleLabel(
+  value: unknown,
+  trade?: unknown,
+): boolean {
   const normalized = normalizeRoleText(value);
   if (!normalized) return false;
   if (normalized.includes("homeowner")) return true;
   if (normalized.includes("home owner")) return true;
   if (normalized.includes("property owner")) return true;
-  if (normalized === "owner") return true;
+  if (normalized === "owner") {
+    // Bare "owner" with a trade means company owner (sub/vendor), not homeowner
+    const normalizedTrade = normalizeRoleText(trade);
+    if (normalizedTrade) return false;
+    return true;
+  }
   return false;
 }
 
