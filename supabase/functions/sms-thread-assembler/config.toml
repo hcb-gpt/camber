@@ -1,0 +1,3 @@
+# sms-thread-assembler: Thread assembly for SMS pipeline
+# verify_jwt = false: auth handled internally via X-Edge-Secret + X-Source allowlist
+verify_jwt = false
