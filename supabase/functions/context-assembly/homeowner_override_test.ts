@@ -14,6 +14,20 @@ Deno.test("isHomeownerRoleLabel recognizes homeowner/owner labels", () => {
   assertEquals(isHomeownerRoleLabel("business owner"), false);
 });
 
+Deno.test("isHomeownerRoleLabel excludes bare owner when trade is present", () => {
+  // "owner" with a trade = company owner (sub/vendor), not homeowner
+  assertEquals(isHomeownerRoleLabel("owner", "Framing"), false);
+  assertEquals(isHomeownerRoleLabel("owner", "Tile"), false);
+  assertEquals(isHomeownerRoleLabel("owner", "Plumbing"), false);
+  // Explicit homeowner labels still match even with a trade
+  assertEquals(isHomeownerRoleLabel("homeowner", "General Contractor"), true);
+  assertEquals(isHomeownerRoleLabel("property owner", "Landscaping"), true);
+  // No trade = bare owner still matches
+  assertEquals(isHomeownerRoleLabel("owner"), true);
+  assertEquals(isHomeownerRoleLabel("owner", null), true);
+  assertEquals(isHomeownerRoleLabel("owner", ""), true);
+});
+
 Deno.test("isExplicitContradictoryProjectAnchor accepts explicit name/alias anchors", () => {
   assertEquals(isExplicitContradictoryProjectAnchor("name_match", "Winship Residence"), true);
   assertEquals(isExplicitContradictoryProjectAnchor("alias_match", "White Residence"), true);

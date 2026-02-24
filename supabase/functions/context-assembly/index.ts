@@ -1624,12 +1624,13 @@ Deno.serve(async (req: Request) => {
               }
             }
 
+            const pcTrade = r.trade;
             const homeownerLabelCandidates = [
               r.contact_role,
               r.role,
               r.trade,
             ];
-            if (homeownerLabelCandidates.some((value) => isHomeownerRoleLabel(value))) {
+            if (homeownerLabelCandidates.some((value) => isHomeownerRoleLabel(value, pcTrade))) {
               homeownerProjectIds.add(projectId);
             }
           }
@@ -1641,7 +1642,7 @@ Deno.serve(async (req: Request) => {
           homeownerOverrideSkippedReason = "homeowner_link_not_unique";
           warnings.push("homeowner_override_not_unique");
         } else if (
-          isHomeownerRoleLabel(contact_role) ||
+          isHomeownerRoleLabel(contact_role, contact_trade) ||
           isHomeownerRoleLabel(contact_trade)
         ) {
           if (source1ProjectIds.size === 1) {
