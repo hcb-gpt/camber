@@ -43,7 +43,6 @@ BASE_URL="${SUPABASE_URL}/functions/v1"
 PIPELINE_FUNCTIONS=(
   "morning-digest|GET||401"
   "loop-closure|POST|{\"interaction_id\":\"cll_SMOKE_TEST\",\"project_id\":\"00000000-0000-0000-0000-000000000000\"}|401"
-  "review-triage|POST|{\"action\":\"list\"}|401"
   "process-call|POST|{\"interaction_id\":\"cll_SMOKE_TEST\",\"transcript\":\"test\"}|401"
   "segment-call|POST|{\"interaction_id\":\"cll_SMOKE_TEST\",\"transcript\":\"test\"}|401"
   "context-assembly|POST|{\"span_id\":\"00000000-0000-0000-0000-000000000000\"}|401"
