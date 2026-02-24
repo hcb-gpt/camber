@@ -725,6 +725,26 @@ const STRONG_ANCHOR_TYPES = [
   "chain_continuity",
 ];
 
+const KNOWN_MATCH_TYPES = new Set([
+  "exact_project_name",
+  "alias",
+  "address_fragment",
+  "city_or_location",
+  "client_name",
+  "mentioned_contact",
+  "phonetic_or_pronunciation",
+  "continuity_callback",
+  "chain_continuity",
+  "db_scan",
+  "project_fact",
+  "other",
+]);
+
+function normalizeMatchType(matchType: string | undefined | null): string {
+  const mt = String(matchType || "other").trim().toLowerCase();
+  return KNOWN_MATCH_TYPES.has(mt) ? mt : "other";
+}
+
 const _WEAK_ANCHOR_TYPES = [
   "city_or_location",
   "mentioned_contact",
@@ -1656,7 +1676,9 @@ Deno.serve(async (req: Request) => {
 
     let project_id = parsed.project_id || null;
     let confidence = Math.max(0, Math.min(1, Number(parsed.confidence) || 0));
-    const anchors: Anchor[] = Array.isArray(parsed.anchors) ? parsed.anchors : [];
+    const anchors: Anchor[] = Array.isArray(parsed.anchors)
+      ? parsed.anchors.map((a: Anchor) => ({ ...a, match_type: normalizeMatchType(a.match_type) }))
+      : [];
     const suggested_aliases: SuggestedAlias[] = Array.isArray(parsed.suggested_aliases) ? parsed.suggested_aliases : [];
     const journal_references: JournalReference[] = Array.isArray(parsed.journal_references)
       ? parsed.journal_references
