@@ -91,7 +91,7 @@ import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
 import { computeClaimCrossref } from "./claim_crossref.ts";
 import { findHomeownerOverrideConflict, isHomeownerRoleLabel } from "./homeowner_override.ts";
 
-const ASSEMBLY_VERSION = "v2.1.1"; // v2.1.1: P0 homeowner override + contradiction escape hatch
+const ASSEMBLY_VERSION = "v2.1.2"; // v2.1.2: reduce floater affinity discount 0.5→0.25 (Moss Residence RCA)
 const SELECTION_RULES_VERSION = "v1.0.0";
 const MAX_CANDIDATES = 8;
 const MAX_CANDIDATES_FLOATER = 12; // Expanded for internal floater contacts
@@ -134,7 +134,7 @@ const SOURCE_SCORE_STRUCTURAL_TYPE_SINGLE = 0.50; // Source 12: structural type 
 const SOURCE_SCORE_STRUCTURAL_TYPE_MULTI = 0.30; // Source 12: structural type match (multiple matches)
 const SOURCE_SCORE_COMMON_WORD_ALIAS_DEMOTION = 0.65; // Common-word alias demotion (e.g., "mystery white")
 const SOURCE_SCORE_HOMEOWNER_OVERRIDE = 1.25; // Deterministic owner-contact constraint signal
-const FLOATER_AFFINITY_DISCOUNT = 0.5; // Floater modifier: halve affinity weights for sources 2-3
+const FLOATER_AFFINITY_DISCOUNT = 0.25; // Floater modifier: quarter affinity weights for sources 2-3 (reduced from 0.5 per Moss Residence RCA)
 const COMMON_WORD_ALIAS_TERMS = new Set(["white"]);
 const CROSS_CONTACT_MAX_SEARCH_TERMS = 20;
 const CROSS_CONTACT_MAX_LIKE_PATTERNS = 24;
