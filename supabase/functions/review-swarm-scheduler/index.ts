@@ -5,13 +5,14 @@
  * (review_queue pending) and triggers review-swarm-runner when
  * thresholds are met.
  *
+ * v1.2.0: Align thresholds to 2h SLA; log all skip types to evidence_events.
  * v1.1.1: Fix runner fetch timeout (fire-and-forget pattern).
  * v1.1.0: Aligned to SSOT (review_queue), skip observability.
  *
  * Trigger signals (any one fires):
  *   open_count >= 150  (review_queue pending)
- *   oldest_age_h > 4   (oldest pending item)
- *   sla_breach > 0     (pending > 24h, overrides cooldown)
+ *   oldest_age_h > 2   (oldest pending item — 2h SLA)
+ *   sla_breach > 0     (pending > 2h, overrides cooldown)
  *
  * Safety limits:
  *   - 10 min cooldown between runs (unless sla_breach)
@@ -24,11 +25,11 @@ import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
 import { authErrorResponse, requireEdgeSecret } from "../_shared/auth.ts";
 
 const FUNCTION_SLUG = "review-swarm-scheduler";
-const FUNCTION_VERSION = "v1.1.1";
+const FUNCTION_VERSION = "v1.2.0";
 const JSON_HEADERS = { "Content-Type": "application/json" };
 
 const TRIGGER_OPEN_COUNT = 150;
-const TRIGGER_OLDEST_AGE_H = 4;
+const TRIGGER_OLDEST_AGE_H = 2;
 const COOLDOWN_MINUTES = 10;
 const MAX_RUNS_PER_HOUR = 6;
 const BATCH_LIMIT = 100;
@@ -116,14 +117,14 @@ Deno.serve(async (req: Request) => {
       }
     }
 
-    // Compute sla_breach: pending items older than 24h
-    const twentyFourHoursAgo = Date.now() - 24 * 3600 * 1000;
+    // Compute sla_breach: pending items older than 2h (SLA threshold)
+    const slaThresholdMs = Date.now() - 2 * 3600 * 1000;
     let slaBreach = 0;
     for (const row of pendingRows) {
       const ts = asString((row as JsonRecord).created_at);
       if (ts) {
         const t = new Date(ts).getTime();
-        if (Number.isFinite(t) && t < twentyFourHoursAgo) {
+        if (Number.isFinite(t) && t < slaThresholdMs) {
           slaBreach++;
         }
       }
@@ -203,6 +204,22 @@ Deno.serve(async (req: Request) => {
       const minutesSinceLast = (Date.now() - lastRunAt) / (1000 * 60);
 
       if (minutesSinceLast < COOLDOWN_MINUTES && !triggerSlaBreach) {
+        await db.from("evidence_events").insert({
+          source_type: "scheduler",
+          source_id: `skip_cd_${new Date().toISOString().replace(/[-:T]/g, "").slice(0, 15)}`,
+          transcript_variant: null,
+          metadata: {
+            scheduler_version: FUNCTION_VERSION,
+            action: "skip",
+            reason: "cooldown_active",
+            backlog_source: "review_queue",
+            cooldown_remaining_min: Math.round((COOLDOWN_MINUTES - minutesSinceLast) * 10) / 10,
+            open_count: openCount,
+            oldest_age_h: oldestAgeH,
+            sla_breach: slaBreach,
+            ms: Date.now() - t0,
+          },
+        }).then(() => {}, () => {});
         return jsonResponse({
           ok: true,
           function_slug: FUNCTION_SLUG,
@@ -249,6 +266,23 @@ Deno.serve(async (req: Request) => {
     }
 
     if (recentBatchIds.size >= MAX_RUNS_PER_HOUR) {
+      await db.from("evidence_events").insert({
+        source_type: "scheduler",
+        source_id: `skip_cap_${new Date().toISOString().replace(/[-:T]/g, "").slice(0, 15)}`,
+        transcript_variant: null,
+        metadata: {
+          scheduler_version: FUNCTION_VERSION,
+          action: "skip",
+          reason: "hourly_cap_reached",
+          backlog_source: "review_queue",
+          runs_this_hour: recentBatchIds.size,
+          max_runs_per_hour: MAX_RUNS_PER_HOUR,
+          open_count: openCount,
+          oldest_age_h: oldestAgeH,
+          sla_breach: slaBreach,
+          ms: Date.now() - t0,
+        },
+      }).then(() => {}, () => {});
       return jsonResponse({
         ok: true,
         function_slug: FUNCTION_SLUG,
@@ -280,6 +314,22 @@ Deno.serve(async (req: Request) => {
       !triggerOldestAge &&
       !triggerSlaBreach
     ) {
+      await db.from("evidence_events").insert({
+        source_type: "scheduler",
+        source_id: `skip_rc_${new Date().toISOString().replace(/[-:T]/g, "").slice(0, 15)}`,
+        transcript_variant: null,
+        metadata: {
+          scheduler_version: FUNCTION_VERSION,
+          action: "skip",
+          reason: "abort_recheck_below_threshold",
+          backlog_source: "review_queue",
+          recheck_open_count: recheckOpenCount,
+          original_open_count: openCount,
+          oldest_age_h: oldestAgeH,
+          sla_breach: slaBreach,
+          ms: Date.now() - t0,
+        },
+      }).then(() => {}, () => {});
       return jsonResponse({
         ok: true,
         function_slug: FUNCTION_SLUG,
@@ -357,7 +407,7 @@ Deno.serve(async (req: Request) => {
     const evidencePayload = {
       source_type: "scheduler",
       source_id: batchId,
-      transcript_variant: "n/a",
+      transcript_variant: null,
       metadata: {
         scheduler_version: FUNCTION_VERSION,
         backlog_source: "review_queue",
