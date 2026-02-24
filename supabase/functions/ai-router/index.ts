@@ -1,10 +1,27 @@
 /**
- * ai-router Edge Function v1.19.0
+ * ai-router Edge Function v1.21.0
  * LLM-based project attribution for conversation spans
  *
- * @version 1.19.0
- * @date 2026-02-22
+ * @version 1.21.0
+ * @date 2026-02-24
  * @purpose Use Claude Haiku to attribute spans to projects with anchored evidence
+ *
+ * v1.21.0 Changes (single-candidate confidence penalty):
+ * - Caps confidence at 0.65 when only 1 candidate exists and no strong anchor
+ *   is present. Prevents over-confident assignments when the LLM has no
+ *   comparison to make (forces gatekeeper review path).
+ * - Adds single_candidate_weak_anchor to needs_review_reasons.
+ * - Adds single_candidate_penalty diagnostic block to metadata and response.
+ *
+ * v1.20.0 Changes (misattribution guardrails — Moss Residence RCA mitigations):
+ * - Normalizes unknown LLM match_types to "other" (prevents fabricated anchor types
+ *   like structural_type_match from bypassing guardrails).
+ * - Adds generic-structural-terms guardrail: downgrades assign→review when ALL anchors
+ *   reference only generic construction terms (crawl space, rebar, concrete, etc.)
+ *   with no strong project-specific anchor.
+ * - Adds personal-call detector: downgrades assign→review when possessive language
+ *   ("my house", "my place", "at home") detected with no strong project anchor.
+ * - Adds reason codes: generic_structural_only, personal_call_detected.
  *
  * v1.19.0 Changes (name-vs-content weighting fix, rebased onto v1.18.0):
  * - Adds name-content guardrail: downgrades assign->review when chosen project
@@ -162,7 +179,7 @@ import {
 } from "./world_model_facts.ts";
 
 const PROMPT_VERSION_BASE = "v1.13.0";
-const FUNCTION_VERSION = "v1.19.0";
+const FUNCTION_VERSION = "v1.21.0";
 const MODEL_ID = Deno.env.get("AI_ROUTER_MODEL") || "claude-3-haiku-20240307";
 const MAX_TOKENS = 1024;
 const WORLD_MODEL_FACTS_ENABLED = parseBoolEnv(Deno.env.get("WORLD_MODEL_FACTS_ENABLED"), false);
@@ -180,6 +197,7 @@ const THRESHOLD_HIGH_CONFIDENCE_GAP_ASSIGN = 0.70;
 const MIN_RUNNER_UP_GAP = 0.20;
 const THRESHOLD_WEAK_REVIEW_CONFIDENCE = 0.30;
 const THRESHOLD_WEAK_REVIEW_CROSSREF = 0.20;
+const THRESHOLD_SINGLE_CANDIDATE_CAP = 0.65;
 
 // Defense-in-depth: closed-project hard filter (mirrors context-assembly VALID_PROJECT_STATUSES)
 const ATTRIBUTION_ELIGIBLE_STATUSES = new Set(["active", "warranty", "estimating"]);
@@ -725,6 +743,26 @@ const STRONG_ANCHOR_TYPES = [
   "chain_continuity",
 ];
 
+const KNOWN_MATCH_TYPES = new Set([
+  "exact_project_name",
+  "alias",
+  "address_fragment",
+  "city_or_location",
+  "client_name",
+  "mentioned_contact",
+  "phonetic_or_pronunciation",
+  "continuity_callback",
+  "chain_continuity",
+  "db_scan",
+  "project_fact",
+  "other",
+]);
+
+function normalizeMatchType(matchType: string | undefined | null): string {
+  const mt = String(matchType || "other").trim().toLowerCase();
+  return KNOWN_MATCH_TYPES.has(mt) ? mt : "other";
+}
+
 const _WEAK_ANCHOR_TYPES = [
   "city_or_location",
   "mentioned_contact",
@@ -736,6 +774,138 @@ const _WEAK_ANCHOR_TYPES = [
 
 function hasStrongAnchor(anchors: Anchor[]): boolean {
   return anchors.some((a) => STRONG_ANCHOR_TYPES.includes(a.match_type));
+}
+
+// v1.20.0: Generic structural terms — construction terms that are never
+// project-specific by themselves. When ALL anchors reference only these terms
+// (and no strong anchor types), the attribution is unreliable.
+const GENERIC_STRUCTURAL_TERMS = new Set([
+  "crawl space",
+  "crawlspace",
+  "rebar",
+  "concrete",
+  "foundation",
+  "framing",
+  "drywall",
+  "sheetrock",
+  "basement",
+  "siding",
+  "roofing",
+  "gutter",
+  "gutters",
+  "irrigation",
+  "insulation",
+  "grading",
+  "excavation",
+  "footings",
+  "footing",
+  "subfloor",
+  "soffit",
+  "fascia",
+  "flashing",
+  "shingles",
+  "joists",
+  "studs",
+  "trusses",
+  "hvac",
+  "plumbing",
+  "electrical",
+  "ductwork",
+  "vapor barrier",
+  "house wrap",
+]);
+
+function anchorUsesOnlyGenericStructuralTerms(anchor: Anchor): boolean {
+  const text = String(anchor.text || "").trim().toLowerCase();
+  const quote = String(anchor.quote || "").trim().toLowerCase();
+  if (!text && !quote) return false;
+  // Check if the anchor text itself is a generic structural term
+  if (text && GENERIC_STRUCTURAL_TERMS.has(text)) return true;
+  // Check if the quote contains ONLY generic structural content (all words match)
+  if (quote) {
+    const words = quote.split(/\s+/).filter((w) => w.length >= 3);
+    if (words.length > 0 && words.every((w) => GENERIC_STRUCTURAL_TERMS.has(w))) return true;
+  }
+  return false;
+}
+
+function evaluateGenericStructuralGuardrail(
+  decision: string,
+  anchors: Anchor[],
+): { downgraded: boolean; reason: string } {
+  if (decision !== "assign") return { downgraded: false, reason: "" };
+  if (anchors.length === 0) return { downgraded: false, reason: "" };
+  // If ANY anchor is a strong type, pass through
+  if (hasStrongAnchor(anchors)) return { downgraded: false, reason: "" };
+  // Check if ALL anchors use only generic structural terms
+  const allGeneric = anchors.every((a) => anchorUsesOnlyGenericStructuralTerms(a));
+  if (allGeneric) {
+    const terms = anchors.map((a) => String(a.text || a.quote || "").trim()).join(", ");
+    return {
+      downgraded: true,
+      reason:
+        `generic_structural_only: all anchors reference generic construction terms (${terms}) — not project-specific`,
+    };
+  }
+  return { downgraded: false, reason: "" };
+}
+
+// v1.20.0: Personal-call detector — possessive language indicating the
+// speaker is discussing their OWN property, not an HCB project.
+const PERSONAL_CALL_PATTERNS = [
+  /\bmy\s+house\b/i,
+  /\bmy\s+place\b/i,
+  /\bmy\s+home\b/i,
+  /\bmy\s+property\b/i,
+  /\bmy\s+addition\b/i,
+  /\bmy\s+project\b/i,
+  /\bmy\s+garage\b/i,
+  /\bmy\s+basement\b/i,
+  /\bmy\s+kitchen\b/i,
+  /\bmy\s+bathroom\b/i,
+  /\bour\s+house\b/i,
+  /\bour\s+place\b/i,
+  /\bour\s+home\b/i,
+  /\bat\s+home\b/i,
+  /\bi'?m\s+doing\s+an?\s+addition/i,
+  /\bi'?m\s+building/i,
+  /\bi'?m\s+renovating/i,
+  /\bi'?m\s+remodeling/i,
+];
+
+function detectPersonalCallSignal(transcript: string): { detected: boolean; matchedPatterns: string[] } {
+  if (!transcript) return { detected: false, matchedPatterns: [] };
+  const matched: string[] = [];
+  for (const pat of PERSONAL_CALL_PATTERNS) {
+    const m = transcript.match(pat);
+    if (m) matched.push(m[0]);
+  }
+  return { detected: matched.length > 0, matchedPatterns: matched };
+}
+
+function evaluatePersonalCallGuardrail(
+  decision: string,
+  transcript: string,
+  anchors: Anchor[],
+  homeownerOverrideActive: boolean,
+): { downgraded: boolean; reason: string; matchedPatterns: string[] } {
+  if (decision !== "assign") return { downgraded: false, reason: "", matchedPatterns: [] };
+  if (homeownerOverrideActive) return { downgraded: false, reason: "", matchedPatterns: [] };
+
+  const { detected, matchedPatterns } = detectPersonalCallSignal(transcript);
+  if (!detected) return { downgraded: false, reason: "", matchedPatterns: [] };
+
+  // If there's a strong project-specific anchor, the personal-call signal is
+  // likely about a different part of the conversation — let it pass
+  if (hasStrongAnchor(anchors)) return { downgraded: false, reason: "", matchedPatterns };
+
+  return {
+    downgraded: true,
+    reason: `personal_call_detected: possessive language (${
+      matchedPatterns.join(", ")
+    }) with no strong project-specific anchor — likely personal call`,
+    matchedPatterns,
+  };
 }
 
 function uniqueStrings(values: string[]): string[] {
@@ -1050,6 +1220,9 @@ function buildReasonCodes(opts: {
   commonAliasUnconfirmed?: boolean;
   bizdevWithoutCommitment?: boolean;
   stoplineReason?: string | null;
+  genericStructuralOnly?: boolean;
+  personalCallDetected?: boolean;
+  singleCandidateWeakAnchor?: boolean;
 }): string[] {
   const reasons: string[] = [];
   if (Array.isArray(opts.modelReasons)) reasons.push(...opts.modelReasons);
@@ -1060,6 +1233,9 @@ function buildReasonCodes(opts: {
   if (opts.geoOnly) reasons.push("geo_only");
   if (opts.commonAliasUnconfirmed) reasons.push("common_alias_unconfirmed");
   if (opts.bizdevWithoutCommitment) reasons.push("bizdev_without_commitment");
+  if (opts.genericStructuralOnly) reasons.push("generic_structural_only");
+  if (opts.personalCallDetected) reasons.push("personal_call_detected");
+  if (opts.singleCandidateWeakAnchor) reasons.push("single_candidate_weak_anchor");
   if (opts.stoplineReason) reasons.push(opts.stoplineReason);
   if (opts.modelError) reasons.push("model_error");
 
@@ -1152,6 +1328,8 @@ RULES:
 6. Only choose "none" with confidence <0.25 when the transcript has truly NO project-related content (admin, overhead, wrong number, etc.)
 7. Common-word/material aliases (for example color/material terms like "white", "mystery white", "granite") are ambiguous and CANNOT be sole evidence for decision="assign"
 8. If a common-word alias appears, require corroboration in transcript from exact project name, address fragment, or client name before decision="assign"
+9. GENERIC STRUCTURAL TERMS (crawl space, rebar, concrete, foundation, framing, drywall, basement, siding, gutter, irrigation, insulation, etc.) are NEVER project-specific anchors. Many projects share these terms. Do NOT use structural_type_match or any fabricated match_type — only use the valid match_types listed in OUTPUT FORMAT.
+10. PERSONAL CALL DETECTION: If the speaker says "my house", "my place", "at home", "my addition", "our house", or similar possessive language about property, this signals a PERSONAL call — the topic is the speaker's own property, NOT an HCB project. When possessive personal language is present AND no strong project-specific anchor exists, choose decision="review" or decision="none".
 
 PROJECT JOURNAL CONTEXT (when available):
 Some candidate projects may include journal state — recent claims, decisions,
@@ -1569,6 +1747,10 @@ Deno.serve(async (req: Request) => {
   let stoplineDowngradeReason: "insufficient_provenance_pointer_quality" | "doc_anchor_missing" | null = null;
   let stoplineTranscriptAnchorCount = 0;
   let stoplineDocProvenanceCount = 0;
+  let genericStructuralDowngraded = false;
+  let personalCallDetected = false;
+  let personalCallPatterns: string[] = [];
+  let singleCandidateWeakAnchorPenalty = false;
 
   const currentEvidenceEventIds = Array.from(
     new Set(
@@ -1656,7 +1838,9 @@ Deno.serve(async (req: Request) => {
 
     let project_id = parsed.project_id || null;
     let confidence = Math.max(0, Math.min(1, Number(parsed.confidence) || 0));
-    const anchors: Anchor[] = Array.isArray(parsed.anchors) ? parsed.anchors : [];
+    const anchors: Anchor[] = Array.isArray(parsed.anchors)
+      ? parsed.anchors.map((a: Anchor) => ({ ...a, match_type: normalizeMatchType(a.match_type) }))
+      : [];
     const suggested_aliases: SuggestedAlias[] = Array.isArray(parsed.suggested_aliases) ? parsed.suggested_aliases : [];
     const journal_references: JournalReference[] = Array.isArray(parsed.journal_references)
       ? parsed.journal_references
@@ -1693,6 +1877,75 @@ Deno.serve(async (req: Request) => {
       console.log(
         "[ai-router] Homeowner override active: preserving assign despite weak anchor set",
       );
+    }
+
+    // v1.20.0: Generic structural terms guardrail — downgrade when ALL anchors
+    // reference only generic construction terms (crawl space, rebar, etc.)
+    {
+      const structuralGuardrail = evaluateGenericStructuralGuardrail(decision, validatedAnchors);
+      if (structuralGuardrail.downgraded) {
+        decision = "review";
+        genericStructuralDowngraded = true;
+        reasoning = `${reasoning} ${structuralGuardrail.reason}.`;
+        console.log(
+          `[ai-router] Generic structural guardrail downgraded assign→review: ${structuralGuardrail.reason}`,
+        );
+      }
+    }
+
+    // v1.20.0: Personal-call detector — downgrade when possessive language
+    // (my house, my place, at home) detected with no strong project anchor
+    {
+      const personalCallGuardrail = evaluatePersonalCallGuardrail(
+        decision,
+        spanTranscript,
+        validatedAnchors,
+        homeownerOverrideStrongAnchor,
+      );
+      if (personalCallGuardrail.downgraded) {
+        decision = "review";
+        personalCallDetected = true;
+        personalCallPatterns = personalCallGuardrail.matchedPatterns;
+        reasoning = `${reasoning} ${personalCallGuardrail.reason}.`;
+        console.log(
+          `[ai-router] Personal-call guardrail downgraded assign→review: patterns=${
+            personalCallGuardrail.matchedPatterns.join(", ")
+          }`,
+        );
+      } else if (personalCallGuardrail.matchedPatterns.length > 0) {
+        personalCallPatterns = personalCallGuardrail.matchedPatterns;
+        console.log(
+          `[ai-router] Personal-call signal detected but strong anchor present — no downgrade: patterns=${
+            personalCallGuardrail.matchedPatterns.join(", ")
+          }`,
+        );
+      }
+    }
+
+    // v1.21.0: Single-candidate confidence penalty — when only 1 candidate
+    // exists and anchors are weak, the LLM has no comparison to make and
+    // tends to over-confidently assign. Cap at 0.65 to force gatekeeper review.
+    {
+      const candidateCount = Array.isArray(context_package.candidates) ? context_package.candidates.length : 0;
+      const hasStrong = hasStrongAnchor(validatedAnchors);
+      if (
+        candidateCount <= 1 &&
+        !hasStrong &&
+        !homeownerOverrideStrongAnchor &&
+        confidence > THRESHOLD_SINGLE_CANDIDATE_CAP
+      ) {
+        const originalConfidence = confidence;
+        confidence = THRESHOLD_SINGLE_CANDIDATE_CAP;
+        singleCandidateWeakAnchorPenalty = true;
+        reasoning = `${reasoning} single_candidate_weak_anchor_penalty: conf ${originalConfidence.toFixed(2)}→${
+          confidence.toFixed(2)
+        } (${candidateCount} candidate(s), no strong anchor).`;
+        console.log(
+          `[ai-router] Single-candidate penalty: conf=${originalConfidence.toFixed(2)}→${
+            confidence.toFixed(2)
+          } candidates=${candidateCount} span=${span_id}`,
+        );
+      }
     }
 
     const aliasGuardrail = applyCommonAliasCorroborationGuardrail({
@@ -2248,6 +2501,9 @@ Deno.serve(async (req: Request) => {
         geoOnly: !effectiveStrongAnchor && result.anchors.some((a) => a.match_type === "city_or_location"),
         commonAliasUnconfirmed: common_alias_unconfirmed,
         bizdevWithoutCommitment: bizdevGateEffective,
+        genericStructuralOnly: genericStructuralDowngraded,
+        personalCallDetected: personalCallDetected,
+        singleCandidateWeakAnchor: singleCandidateWeakAnchorPenalty,
         stoplineReason: stoplineDowngradeReason,
       });
 
@@ -2316,6 +2572,16 @@ Deno.serve(async (req: Request) => {
           applied: junkCallFiltered,
           reason_codes: junkCallFilterReasonCodes,
           signal_summary: junkCallFilterSignalSummary,
+        },
+        generic_structural_guardrail: {
+          downgraded: genericStructuralDowngraded,
+        },
+        personal_call_guardrail: {
+          detected: personalCallDetected,
+          patterns: personalCallPatterns,
+        },
+        single_candidate_penalty: {
+          applied: singleCandidateWeakAnchorPenalty,
         },
         model_id: MODEL_ID,
         prompt_version: PROMPT_VERSION,
@@ -2453,6 +2719,10 @@ Deno.serve(async (req: Request) => {
             },
           }
           : {}),
+        single_candidate_penalty: {
+          applied: singleCandidateWeakAnchorPenalty,
+          cap: THRESHOLD_SINGLE_CANDIDATE_CAP,
+        },
         junk_call_prefilter: {
           applied: junkCallFiltered,
           reason_codes: junkCallFilterReasonCodes,

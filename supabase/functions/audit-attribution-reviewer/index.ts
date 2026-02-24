@@ -13,7 +13,7 @@ import { authErrorResponse, requireEdgeSecret } from "../_shared/auth.ts";
 import { parseLlmJson } from "../_shared/llm_json.ts";
 
 const FUNCTION_SLUG = "audit-attribution-reviewer";
-const FUNCTION_VERSION = "v0.1.2";
+const FUNCTION_VERSION = "v0.1.3";
 const SAFE_FALLBACK_MODEL_ID = "claude-3-haiku-20240307";
 const REQUESTED_MODEL_ID = Deno.env.get("AUDIT_ATTRIBUTION_REVIEWER_MODEL") ||
   Deno.env.get("AUDIT_ATTRIBUTION_MODEL") ||
@@ -57,7 +57,12 @@ Rules:
 - If evidence cannot justify assignment, return INSUFFICIENT.
 - If a better candidate exists in packet evidence, return MISMATCH.
 - Keep confidence in [0,1].
-- Use concise factual notes only.`;
+- Use concise factual notes only.
+
+Anti-patterns (flag these — verdict should be MISMATCH or INSUFFICIENT):
+- PERSONAL CALL: If transcript contains possessive language about property ("my house", "my place", "at home", "my addition", "our house") AND the assigned project relies on generic structural terms (crawl space, rebar, foundation, framing, drywall, etc.) without a specific project name/address/client anchor, the call is likely personal — not about the assigned project. Tag: "generic_structural_possessive_match".
+- FLOATER CONTACT: If the contact is linked to many projects (floater/drifter) and the only evidence is contact affinity + generic structural terms, the attribution is unreliable. Tag: "floater_generic_structural".
+- FABRICATED ANCHOR TYPES: If anchors use match_types not in the standard set (exact_project_name, alias, address_fragment, city_or_location, client_name, mentioned_contact, chain_continuity, other), flag as unreliable. Tag: "fabricated_anchor_type".`;
 
 type JsonRecord = Record<string, unknown>;
 
