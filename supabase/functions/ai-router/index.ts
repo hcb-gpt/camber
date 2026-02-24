@@ -1,10 +1,17 @@
 /**
- * ai-router Edge Function v1.20.0
+ * ai-router Edge Function v1.21.0
  * LLM-based project attribution for conversation spans
  *
- * @version 1.20.0
+ * @version 1.21.0
  * @date 2026-02-24
  * @purpose Use Claude Haiku to attribute spans to projects with anchored evidence
+ *
+ * v1.21.0 Changes (single-candidate confidence penalty):
+ * - Caps confidence at 0.65 when only 1 candidate exists and no strong anchor
+ *   is present. Prevents over-confident assignments when the LLM has no
+ *   comparison to make (forces gatekeeper review path).
+ * - Adds single_candidate_weak_anchor to needs_review_reasons.
+ * - Adds single_candidate_penalty diagnostic block to metadata and response.
  *
  * v1.20.0 Changes (misattribution guardrails — Moss Residence RCA mitigations):
  * - Normalizes unknown LLM match_types to "other" (prevents fabricated anchor types
@@ -172,7 +179,7 @@ import {
 } from "./world_model_facts.ts";
 
 const PROMPT_VERSION_BASE = "v1.13.0";
-const FUNCTION_VERSION = "v1.20.0";
+const FUNCTION_VERSION = "v1.21.0";
 const MODEL_ID = Deno.env.get("AI_ROUTER_MODEL") || "claude-3-haiku-20240307";
 const MAX_TOKENS = 1024;
 const WORLD_MODEL_FACTS_ENABLED = parseBoolEnv(Deno.env.get("WORLD_MODEL_FACTS_ENABLED"), false);
@@ -190,6 +197,7 @@ const THRESHOLD_HIGH_CONFIDENCE_GAP_ASSIGN = 0.70;
 const MIN_RUNNER_UP_GAP = 0.20;
 const THRESHOLD_WEAK_REVIEW_CONFIDENCE = 0.30;
 const THRESHOLD_WEAK_REVIEW_CROSSREF = 0.20;
+const THRESHOLD_SINGLE_CANDIDATE_CAP = 0.65;
 
 // Defense-in-depth: closed-project hard filter (mirrors context-assembly VALID_PROJECT_STATUSES)
 const ATTRIBUTION_ELIGIBLE_STATUSES = new Set(["active", "warranty", "estimating"]);
@@ -1214,6 +1222,7 @@ function buildReasonCodes(opts: {
   stoplineReason?: string | null;
   genericStructuralOnly?: boolean;
   personalCallDetected?: boolean;
+  singleCandidateWeakAnchor?: boolean;
 }): string[] {
   const reasons: string[] = [];
   if (Array.isArray(opts.modelReasons)) reasons.push(...opts.modelReasons);
@@ -1226,6 +1235,7 @@ function buildReasonCodes(opts: {
   if (opts.bizdevWithoutCommitment) reasons.push("bizdev_without_commitment");
   if (opts.genericStructuralOnly) reasons.push("generic_structural_only");
   if (opts.personalCallDetected) reasons.push("personal_call_detected");
+  if (opts.singleCandidateWeakAnchor) reasons.push("single_candidate_weak_anchor");
   if (opts.stoplineReason) reasons.push(opts.stoplineReason);
   if (opts.modelError) reasons.push("model_error");
 
@@ -1740,6 +1750,7 @@ Deno.serve(async (req: Request) => {
   let genericStructuralDowngraded = false;
   let personalCallDetected = false;
   let personalCallPatterns: string[] = [];
+  let singleCandidateWeakAnchorPenalty = false;
 
   const currentEvidenceEventIds = Array.from(
     new Set(
@@ -1907,6 +1918,32 @@ Deno.serve(async (req: Request) => {
           `[ai-router] Personal-call signal detected but strong anchor present — no downgrade: patterns=${
             personalCallGuardrail.matchedPatterns.join(", ")
           }`,
+        );
+      }
+    }
+
+    // v1.21.0: Single-candidate confidence penalty — when only 1 candidate
+    // exists and anchors are weak, the LLM has no comparison to make and
+    // tends to over-confidently assign. Cap at 0.65 to force gatekeeper review.
+    {
+      const candidateCount = Array.isArray(context_package.candidates) ? context_package.candidates.length : 0;
+      const hasStrong = hasStrongAnchor(validatedAnchors);
+      if (
+        candidateCount <= 1 &&
+        !hasStrong &&
+        !homeownerOverrideStrongAnchor &&
+        confidence > THRESHOLD_SINGLE_CANDIDATE_CAP
+      ) {
+        const originalConfidence = confidence;
+        confidence = THRESHOLD_SINGLE_CANDIDATE_CAP;
+        singleCandidateWeakAnchorPenalty = true;
+        reasoning = `${reasoning} single_candidate_weak_anchor_penalty: conf ${originalConfidence.toFixed(2)}→${
+          confidence.toFixed(2)
+        } (${candidateCount} candidate(s), no strong anchor).`;
+        console.log(
+          `[ai-router] Single-candidate penalty: conf=${originalConfidence.toFixed(2)}→${
+            confidence.toFixed(2)
+          } candidates=${candidateCount} span=${span_id}`,
         );
       }
     }
@@ -2466,6 +2503,7 @@ Deno.serve(async (req: Request) => {
         bizdevWithoutCommitment: bizdevGateEffective,
         genericStructuralOnly: genericStructuralDowngraded,
         personalCallDetected: personalCallDetected,
+        singleCandidateWeakAnchor: singleCandidateWeakAnchorPenalty,
         stoplineReason: stoplineDowngradeReason,
       });
 
@@ -2541,6 +2579,9 @@ Deno.serve(async (req: Request) => {
         personal_call_guardrail: {
           detected: personalCallDetected,
           patterns: personalCallPatterns,
+        },
+        single_candidate_penalty: {
+          applied: singleCandidateWeakAnchorPenalty,
         },
         model_id: MODEL_ID,
         prompt_version: PROMPT_VERSION,
@@ -2678,6 +2719,10 @@ Deno.serve(async (req: Request) => {
             },
           }
           : {}),
+        single_candidate_penalty: {
+          applied: singleCandidateWeakAnchorPenalty,
+          cap: THRESHOLD_SINGLE_CANDIDATE_CAP,
+        },
         junk_call_prefilter: {
           applied: junkCallFiltered,
           reason_codes: junkCallFilterReasonCodes,
