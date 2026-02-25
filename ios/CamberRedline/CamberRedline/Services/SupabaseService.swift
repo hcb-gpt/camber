@@ -101,11 +101,6 @@ final class SupabaseService {
 
 // MARK: - Response Types
 
-struct ContactsResponse: Decodable {
-    let ok: Bool
-    let contacts: [Contact]
-}
-
 struct ThreadContactInfo: Decodable {
     let id: UUID
     let name: String

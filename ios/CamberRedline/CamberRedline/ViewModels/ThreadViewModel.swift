@@ -132,10 +132,7 @@ final class ThreadViewModel {
 
     private func mergeGrade(from action: InsertAction) {
         guard
-            let record = try? action.decodeRecord(
-                as: RealtimeGradeRecord.self,
-                decoder: PostgrestClient.Configuration.jsonDecoder
-            )
+            let record = try? action.decodeRecord(as: RealtimeGradeRecord.self)
         else { return }
 
         applyGradeUpdate(record)
@@ -143,10 +140,7 @@ final class ThreadViewModel {
 
     private func mergeGrade(from action: UpdateAction) {
         guard
-            let record = try? action.decodeRecord(
-                as: RealtimeGradeRecord.self,
-                decoder: PostgrestClient.Configuration.jsonDecoder
-            )
+            let record = try? action.decodeRecord(as: RealtimeGradeRecord.self)
         else { return }
 
         applyGradeUpdate(record)
