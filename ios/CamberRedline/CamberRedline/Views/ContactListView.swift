@@ -61,12 +61,18 @@ struct ContactListView: View {
                         .padding()
                 }
             }
-            .task {
-                if contactListViewModel.contacts.isEmpty {
+            .onAppear {
+                Task {
                     await contactListViewModel.loadContacts()
+                    await contactListViewModel.subscribeToNewInteractions()
+                    contactListViewModel.startLiveRefresh()
                 }
-                // Realtime subscription is optional; fail silently if auth is unavailable
-                await contactListViewModel.subscribeToNewInteractions()
+            }
+            .onDisappear {
+                contactListViewModel.stopLiveRefresh()
+                Task {
+                    await contactListViewModel.unsubscribe()
+                }
             }
         }
         .preferredColorScheme(.dark)

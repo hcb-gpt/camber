@@ -6,6 +6,8 @@ struct ReviewItem: Codable, Identifiable {
     let id: String
     let spanId: String
     let interactionId: String
+    let createdAt: String?
+    let eventAt: String?
     let transcriptSegment: String
     let confidence: Double
     let aiGuessProjectId: String?
@@ -21,6 +23,8 @@ struct ReviewItem: Codable, Identifiable {
         case id
         case spanId = "span_id"
         case interactionId = "interaction_id"
+        case createdAt = "created_at"
+        case eventAt = "event_at"
         case transcriptSegment = "transcript_segment"
         case confidence
         case aiGuessProjectId = "ai_guess_project_id"
@@ -31,6 +35,30 @@ struct ReviewItem: Codable, Identifiable {
         case reasons
         case reasonCodes = "reason_codes"
         case decision
+    }
+
+    var sortDate: Date {
+        if let eventDate = parseISO8601(eventAt) {
+            return eventDate
+        }
+        if let createdDate = parseISO8601(createdAt) {
+            return createdDate
+        }
+        return .distantPast
+    }
+
+    private func parseISO8601(_ value: String?) -> Date? {
+        guard let value, !value.isEmpty else { return nil }
+
+        let fractionalFormatter = ISO8601DateFormatter()
+        fractionalFormatter.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
+        if let date = fractionalFormatter.date(from: value) {
+            return date
+        }
+
+        let basicFormatter = ISO8601DateFormatter()
+        basicFormatter.formatOptions = [.withInternetDateTime]
+        return basicFormatter.date(from: value)
     }
 }
 

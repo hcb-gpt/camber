@@ -35,6 +35,8 @@ private enum DisplayGroup: Identifiable {
 struct ThreadView: View {
     var viewModel: ThreadViewModel
     let contact: Contact
+    @State private var hasScrolledToLatest = false
+    private let bottomAnchorID = "thread-bottom-anchor"
 
     // MARK: - Derived display groups
 
@@ -82,74 +84,107 @@ struct ThreadView: View {
     // MARK: - Body
 
     var body: some View {
-        ScrollView {
-            LazyVStack(spacing: 0) {
-                let groups = displayGroups
-                ForEach(Array(groups.enumerated()), id: \.element.id) { index, group in
+        ScrollViewReader { proxy in
+            ScrollView {
+                LazyVStack(spacing: 0) {
+                    let groups = displayGroups
 
-                    // Date separator when the calendar date changes between items.
-                    if shouldShowDateSeparator(at: index, in: groups) {
-                        DateSeparatorRow(date: group.eventAtDate)
-                            .padding(.top, index == 0 ? 12 : 20)
-                            .padding(.bottom, 8)
+                    if viewModel.isLoadingOlderThread {
+                        ProgressView()
+                            .tint(.white)
+                            .padding(.vertical, 8)
                     }
 
-                    switch group {
-                    case .callGroup(let header, let turns):
-                        CallCard(
-                            header: header,
-                            turns: turns,
-                            contactName: header.contactName ?? contact.name,
-                            viewModel: viewModel
-                        )
-                        .padding(.horizontal, 16)
-                        .padding(.bottom, 12)
+                    ForEach(Array(groups.enumerated()), id: \.element.id) { index, group in
 
-                    case .smsBubble(let entry):
-                        SMSRow(entry: entry, contact: contact)
+                        // Date separator when the calendar date changes between items.
+                        if shouldShowDateSeparator(at: index, in: groups) {
+                            DateSeparatorRow(date: group.eventAtDate)
+                                .padding(.top, index == 0 ? 12 : 20)
+                                .padding(.bottom, 8)
+                        }
+
+                        switch group {
+                        case .callGroup(let header, let turns):
+                            CallCard(
+                                header: header,
+                                turns: turns,
+                                contactName: header.contactName ?? contact.name,
+                                viewModel: viewModel
+                            )
                             .padding(.horizontal, 16)
-                            .padding(.bottom, smsBubbleBottomPadding(at: index, in: groups))
-                    }
-                }
+                            .padding(.bottom, 12)
+                            .onAppear {
+                                guard index == 0 else { return }
+                                Task {
+                                    await viewModel.loadOlderThreadPageIfNeeded()
+                                }
+                            }
 
-                // Bottom breathing room so content clears the home indicator.
-                Color.clear.frame(height: 20)
+                        case .smsBubble(let entry):
+                            SMSRow(entry: entry, contact: contact)
+                                .padding(.horizontal, 16)
+                                .padding(.bottom, smsBubbleBottomPadding(at: index, in: groups))
+                                .onAppear {
+                                    guard index == 0 else { return }
+                                    Task {
+                                        await viewModel.loadOlderThreadPageIfNeeded()
+                                    }
+                                }
+                        }
+                    }
+
+                    Color.clear
+                        .frame(height: 1)
+                        .id(bottomAnchorID)
+
+                    // Bottom breathing room so content clears the home indicator.
+                    Color.clear.frame(height: 20)
+                }
             }
-        }
-        .defaultScrollAnchor(.bottom)
-        .background(Color.black)
-        .refreshable {
-            await viewModel.loadThread(contactId: contact.contactId)
-            try? await Task.sleep(for: .milliseconds(500))
-        }
-        .navigationTitle(contact.name)
-        .navigationBarTitleDisplayMode(.inline)
-        .toolbarBackground(Color.black, for: .navigationBar)
-        .toolbarColorScheme(.dark, for: .navigationBar)
-        .overlay {
-            if viewModel.isLoading && viewModel.threadItems.isEmpty {
-                ProgressView()
-                    .tint(.white)
+            .background(Color.black)
+            .refreshable {
+                await viewModel.loadThread(contactId: contact.contactId)
+                try? await Task.sleep(for: .milliseconds(500))
             }
-        }
-        .overlay(alignment: .bottom) {
-            if let error = viewModel.error {
-                Text(error)
-                    .font(.caption)
-                    .foregroundStyle(.red)
-                    .padding(8)
-                    .background(.ultraThinMaterial, in: RoundedRectangle(cornerRadius: 8))
-                    .padding()
+            .navigationTitle(contact.name)
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbarBackground(Color.black, for: .navigationBar)
+            .toolbarColorScheme(.dark, for: .navigationBar)
+            .overlay {
+                if viewModel.isLoading && viewModel.threadItems.isEmpty {
+                    ProgressView()
+                        .tint(.white)
+                }
             }
-        }
-        .task(id: contact.contactId) {
-            viewModel.currentContact = contact
-            await viewModel.loadThread(contactId: contact.contactId)
-            await viewModel.startClaimGradeSubscription(contactId: contact.contactId)
-        }
-        .onDisappear {
-            Task {
-                await viewModel.stopClaimGradeSubscription()
+            .overlay(alignment: .bottom) {
+                if let error = viewModel.error {
+                    Text(error)
+                        .font(.caption)
+                        .foregroundStyle(.red)
+                        .padding(8)
+                        .background(.ultraThinMaterial, in: RoundedRectangle(cornerRadius: 8))
+                        .padding()
+                }
+            }
+            .task(id: contact.contactId) {
+                hasScrolledToLatest = false
+                viewModel.currentContact = contact
+                viewModel.threadItems = []
+                await viewModel.loadThread(contactId: contact.contactId)
+                await viewModel.startClaimGradeSubscription(contactId: contact.contactId)
+            }
+            .onChange(of: viewModel.threadItems.count) { _, newCount in
+                guard newCount > 0, !hasScrolledToLatest else { return }
+                withAnimation(.none) {
+                    proxy.scrollTo(bottomAnchorID, anchor: .bottom)
+                }
+                hasScrolledToLatest = true
+            }
+            .onDisappear {
+                Task {
+                    await viewModel.stopClaimGradeSubscription()
+                }
             }
         }
     }

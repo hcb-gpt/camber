@@ -11,6 +11,8 @@ final class ThreadViewModel {
     var currentContact: Contact?
     var threadItems: [ThreadItem] = []
     var isLoading = false
+    var isLoadingOlderThread = false
+    var hasOlderThreadItems = false
     var error: String?
 
     // MARK: - Dependencies
@@ -20,6 +22,9 @@ final class ThreadViewModel {
     private var gradeInsertTask: Task<Void, Never>?
     private var gradeUpdateTask: Task<Void, Never>?
     private var subscribedContactId: UUID?
+    private let threadPageSize = 50
+    private var currentThreadOffset = 0
+    private var totalThreadCount = 0
 
     // MARK: - Load Thread
 
@@ -28,66 +33,96 @@ final class ThreadViewModel {
         error = nil
         defer { isLoading = false }
 
-        await loadThreadInternal(contactId: contactId)
+        currentThreadOffset = 0
+        totalThreadCount = 0
+        hasOlderThreadItems = false
+        await loadThreadPage(contactId: contactId, offset: 0, resetItems: true)
     }
 
-    private func loadThreadInternal(contactId: UUID) async {
+    func loadOlderThreadPageIfNeeded() async {
+        guard let contactId = currentContact?.contactId else { return }
+        guard hasOlderThreadItems, !isLoadingOlderThread else { return }
+
+        isLoadingOlderThread = true
+        defer { isLoadingOlderThread = false }
+
+        let nextOffset = currentThreadOffset + threadPageSize
+        await loadThreadPage(contactId: contactId, offset: nextOffset, resetItems: false)
+    }
+
+    private func loadThreadPage(contactId: UUID, offset: Int, resetItems: Bool) async {
         do {
-            let response = try await service.fetchThread(contactId: contactId)
-            var items: [ThreadItem] = []
+            let response = try await service.fetchThread(
+                contactId: contactId,
+                limit: threadPageSize,
+                offset: offset
+            )
+            let pageItems = makeThreadItems(from: response)
 
-            for raw in response.thread {
-                guard let item = raw.toThreadItem() else { continue }
-                switch item {
-                case .call(let entry):
-                    // Create compact call header with all claims aggregated
-                    let allClaims = entry.allClaims
-                    let header = CallHeaderEntry(
-                        interactionId: entry.interactionId,
-                        eventAt: entry.eventAt,
-                        contactName: entry.contactName,
-                        direction: entry.direction,
-                        channel: entry.channel,
-                        summary: entry.summary,
-                        claims: allClaims
-                    )
-                    items.append(.callHeader(header))
-
-                    // Use full transcript from calls_raw; fall back to span assembly
-                    let transcript: String
-                    if let raw = entry.rawTranscript, !raw.isEmpty {
-                        transcript = raw
-                    } else {
-                        transcript = entry.spans
-                            .sorted { $0.spanIndex < $1.spanIndex }
-                            .compactMap(\.transcriptSegment)
-                            .joined(separator: "\n")
-                    }
-
-                    if !transcript.isEmpty {
-                        let contactName = response.contact.name
-                        let turns = TranscriptParser.parse(
-                            transcript, contactName: contactName
-                        )
-                        for turn in turns {
-                            items.append(.speakerTurn(turn))
-                        }
-                    }
-
-                case .sms(let entry):
-                    items.append(.sms(entry))
-
-                default:
-                    items.append(item)
-                }
+            if resetItems {
+                threadItems = pageItems
+            } else {
+                let existingIDs = Set(threadItems.map(\.id))
+                let uniqueOlderItems = pageItems.filter { !existingIDs.contains($0.id) }
+                threadItems = uniqueOlderItems + threadItems
             }
 
-            // Don't re-sort. API returns chronological order.
-            // Flattening preserves: callHeader -> speakerTurns -> next item
-            threadItems = items
+            currentThreadOffset = offset
+            totalThreadCount = response.pagination.total
+            hasOlderThreadItems = (offset + response.pagination.limit) < totalThreadCount
         } catch {
             self.error = error.localizedDescription
         }
+    }
+
+    private func makeThreadItems(from response: ThreadResponse) -> [ThreadItem] {
+        var items: [ThreadItem] = []
+
+        for raw in response.thread {
+            guard let item = raw.toThreadItem() else { continue }
+            switch item {
+            case .call(let entry):
+                let allClaims = entry.allClaims
+                let header = CallHeaderEntry(
+                    interactionId: entry.interactionId,
+                    eventAt: entry.eventAt,
+                    contactName: entry.contactName,
+                    direction: entry.direction,
+                    channel: entry.channel,
+                    summary: entry.summary,
+                    claims: allClaims
+                )
+                items.append(.callHeader(header))
+
+                let transcript: String
+                if let raw = entry.rawTranscript, !raw.isEmpty {
+                    transcript = raw
+                } else {
+                    transcript = entry.spans
+                        .sorted { $0.spanIndex < $1.spanIndex }
+                        .compactMap(\.transcriptSegment)
+                        .joined(separator: "\n")
+                }
+
+                if !transcript.isEmpty {
+                    let turns = TranscriptParser.parse(
+                        transcript,
+                        contactName: response.contact.name
+                    )
+                    for turn in turns {
+                        items.append(.speakerTurn(turn))
+                    }
+                }
+
+            case .sms(let entry):
+                items.append(.sms(entry))
+
+            default:
+                items.append(item)
+            }
+        }
+
+        return items
     }
 
     // MARK: - Grade Claim
@@ -110,7 +145,7 @@ final class ThreadViewModel {
                 correctionText: correctionText,
                 gradedBy: "ios_reviewer"
             )
-            await loadThreadInternal(contactId: contactId)
+            await loadThread(contactId: contactId)
         } catch {
             self.error = error.localizedDescription
         }
@@ -146,7 +181,7 @@ final class ThreadViewModel {
             if shouldIgnoreRealtimeError(error) {
                 return
             }
-            self.error = "Realtime unavailable: \(error.localizedDescription)"
+            print("Claim grade realtime unavailable: \(error.localizedDescription)")
             await stopClaimGradeSubscription()
             return
         }
@@ -242,7 +277,12 @@ final class ThreadViewModel {
         }
 
         let nsError = error as NSError
-        return nsError.domain == NSURLErrorDomain && nsError.code == NSURLErrorCancelled
+        if nsError.domain == NSURLErrorDomain && nsError.code == NSURLErrorCancelled {
+            return true
+        }
+
+        let message = error.localizedDescription.lowercased()
+        return message.contains("cancellationerror") || message.contains("cancelled")
     }
 }
 
@@ -256,6 +296,7 @@ final class ContactListViewModel {
     private let service = SupabaseService.shared
     private var interactionsChannel: RealtimeChannelV2?
     private var interactionsTask: Task<Void, Never>?
+    private var liveRefreshTask: Task<Void, Never>?
 
     func loadContacts() async {
         isLoading = true
@@ -263,7 +304,8 @@ final class ContactListViewModel {
         defer { isLoading = false }
 
         do {
-            contacts = try await service.fetchContactsList()
+            let fetched = try await service.fetchContactsList()
+            contacts = sortNewestFirst(fetched)
         } catch {
             self.error = error.localizedDescription
         }
@@ -285,7 +327,7 @@ final class ContactListViewModel {
             if shouldIgnoreRealtimeError(error) {
                 return
             }
-            self.error = "Realtime unavailable: \(error.localizedDescription)"
+            print("Interactions realtime unavailable: \(error.localizedDescription)")
             return
         }
 
@@ -310,12 +352,67 @@ final class ContactListViewModel {
         }
     }
 
+    func startLiveRefresh() {
+        guard liveRefreshTask == nil else { return }
+
+        liveRefreshTask = Task { @MainActor [weak self] in
+            guard let self else { return }
+            while !Task.isCancelled {
+                do {
+                    try await Task.sleep(for: .seconds(8))
+                } catch {
+                    break
+                }
+                guard !Task.isCancelled else { break }
+                await self.reloadContactsFromRealtime()
+            }
+        }
+    }
+
+    func stopLiveRefresh() {
+        liveRefreshTask?.cancel()
+        liveRefreshTask = nil
+    }
+
     private func reloadContactsFromRealtime() async {
         do {
-            contacts = try await service.fetchContactsList()
+            let fetched = try await service.fetchContactsList()
+            contacts = sortNewestFirst(fetched)
         } catch {
             self.error = error.localizedDescription
         }
+    }
+
+    private func sortNewestFirst(_ rows: [Contact]) -> [Contact] {
+        rows.sorted { lhs, rhs in
+            let lhsDate = parseISO8601(lhs.lastActivity)
+            let rhsDate = parseISO8601(rhs.lastActivity)
+
+            switch (lhsDate, rhsDate) {
+            case let (left?, right?):
+                return left > right
+            case (.some, .none):
+                return true
+            case (.none, .some):
+                return false
+            case (.none, .none):
+                return lhs.name.localizedCaseInsensitiveCompare(rhs.name) == .orderedAscending
+            }
+        }
+    }
+
+    private func parseISO8601(_ raw: String?) -> Date? {
+        guard let raw, !raw.isEmpty else { return nil }
+
+        let fractionalFormatter = ISO8601DateFormatter()
+        fractionalFormatter.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
+        if let date = fractionalFormatter.date(from: raw) {
+            return date
+        }
+
+        let basicFormatter = ISO8601DateFormatter()
+        basicFormatter.formatOptions = [.withInternetDateTime]
+        return basicFormatter.date(from: raw)
     }
 
     private func shouldIgnoreRealtimeError(_ error: Error) -> Bool {
@@ -324,7 +421,12 @@ final class ContactListViewModel {
         }
 
         let nsError = error as NSError
-        return nsError.domain == NSURLErrorDomain && nsError.code == NSURLErrorCancelled
+        if nsError.domain == NSURLErrorDomain && nsError.code == NSURLErrorCancelled {
+            return true
+        }
+
+        let message = error.localizedDescription.lowercased()
+        return message.contains("cancellationerror") || message.contains("cancelled")
     }
 }
 

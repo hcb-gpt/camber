@@ -54,10 +54,10 @@ async function handleQueue(
     const { data: rqData, error: rqErr } = await db
       .from("review_queue")
       .select(
-        "id, span_id, interaction_id, context_payload, reasons, reason_codes, module, status",
+        "id, span_id, interaction_id, context_payload, reasons, reason_codes, module, status, created_at",
       )
       .eq("status", "pending")
-      .order("created_at", { ascending: true })
+      .order("created_at", { ascending: false })
       .limit(limit);
 
     if (rqErr) {
@@ -108,7 +108,7 @@ async function handleQueue(
       interactionIds.length > 0
         ? db
           .from("interactions")
-          .select("interaction_id, contact_name, human_summary")
+          .select("interaction_id, contact_name, human_summary, event_at_utc")
           .in("interaction_id", interactionIds)
         : Promise.resolve({ data: [], error: null }),
       interactionIds.length > 0
@@ -141,6 +141,8 @@ async function handleQueue(
         id: rq.id,
         span_id: rq.span_id,
         interaction_id: rq.interaction_id,
+        created_at: rq.created_at || null,
+        event_at: interaction.event_at_utc || null,
         context_payload: rq.context_payload,
         reasons: rq.reasons,
         reason_codes: rq.reason_codes,
@@ -157,11 +159,12 @@ async function handleQueue(
     items = queueItems || [];
   }
 
-  // Sort by confidence DESC (AI's best guesses first = easiest to triage)
+  // Sort by most recent first for feed-style triage.
   items.sort((a: any, b: any) => {
-    const ca = a.confidence ?? a.context_payload?.candidate_confidence ?? -1;
-    const cb = b.confidence ?? b.context_payload?.candidate_confidence ?? -1;
-    return cb - ca;
+    const aTime = Date.parse(a.event_at || a.created_at || "") || 0;
+    const bTime = Date.parse(b.event_at || b.created_at || "") || 0;
+    if (aTime !== bTime) return bTime - aTime;
+    return String(b.id || "").localeCompare(String(a.id || ""));
   });
 
   // Get total pending count
