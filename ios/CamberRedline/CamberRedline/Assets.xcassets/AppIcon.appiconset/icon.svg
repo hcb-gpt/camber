@@ -1,0 +1,71 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1024 1024" width="1024" height="1024">
+  <defs>
+    <!-- Subtle radial gradient for depth on the background -->
+    <radialGradient id="bgGrad" cx="50%" cy="40%" r="70%">
+      <stop offset="0%" stop-color="#2C2C2E"/>
+      <stop offset="100%" stop-color="#1C1C1E"/>
+    </radialGradient>
+    <!-- Red gradient for the strikethrough line -->
+    <linearGradient id="redlineGrad" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#FF453A"/>
+      <stop offset="100%" stop-color="#D63030"/>
+    </linearGradient>
+  </defs>
+
+  <!-- Background: dark rounded rectangle (iOS icon shape is applied by the OS, but fill the full square) -->
+  <rect width="1024" height="1024" rx="224" ry="224" fill="url(#bgGrad)"/>
+
+  <!-- Bold "R" letterform — geometric, modern, slightly condensed -->
+  <!-- Constructed as a single path for crispness -->
+  <g transform="translate(250, 180)">
+    <!-- Main R body -->
+    <path d="
+      M 80 0
+      L 180 0
+      L 180 0
+      Q 340 0, 380 60
+      Q 420 120, 380 200
+      Q 350 260, 280 280
+      L 420 580
+      L 310 580
+      L 185 295
+      L 180 295
+      L 180 580
+      L 80 580
+      Z
+      M 180 85
+      L 180 215
+      L 240 215
+      Q 300 215, 310 180
+      Q 320 150, 310 120
+      Q 300 85, 240 85
+      Z
+    " fill="#E5E5E7"/>
+  </g>
+
+  <!-- The REDLINE: bold diagonal red stroke cutting across the R -->
+  <!-- Angled from lower-left to upper-right, like a pen marking up a document -->
+  <line
+    x1="200" y1="760"
+    x2="824" y2="264"
+    stroke="url(#redlineGrad)"
+    stroke-width="48"
+    stroke-linecap="round"
+    opacity="0.95"
+  />
+
+  <!-- Small green checkmark accent — bottom right, representing "confirm" -->
+  <g transform="translate(700, 740)" opacity="0.85">
+    <polyline
+      points="0,25 15,45 45,0"
+      fill="none"
+      stroke="#30D158"
+      stroke-width="14"
+      stroke-linecap="round"
+      stroke-linejoin="round"
+    />
+  </g>
+
+  <!-- Small orange dot accent — represents "correct" action, top-left area -->
+  <circle cx="248" cy="810" r="16" fill="#FF9F0A" opacity="0.7"/>
+</svg>
