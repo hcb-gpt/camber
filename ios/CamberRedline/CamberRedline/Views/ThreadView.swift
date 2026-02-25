@@ -115,7 +115,7 @@ struct ThreadView: View {
                             .padding(.horizontal, 16)
                             .padding(.bottom, 12)
                             .onAppear {
-                                guard index == 0 else { return }
+                                guard index == 0, hasScrolledToLatest else { return }
                                 Task {
                                     await viewModel.loadOlderThreadPageIfNeeded()
                                 }
@@ -126,7 +126,7 @@ struct ThreadView: View {
                                 .padding(.horizontal, 16)
                                 .padding(.bottom, smsBubbleBottomPadding(at: index, in: groups))
                                 .onAppear {
-                                    guard index == 0 else { return }
+                                    guard index == 0, hasScrolledToLatest else { return }
                                     Task {
                                         await viewModel.loadOlderThreadPageIfNeeded()
                                     }
@@ -144,8 +144,15 @@ struct ThreadView: View {
             }
             .background(Color.black)
             .refreshable {
+                hasScrolledToLatest = false
                 await viewModel.loadThread(contactId: contact.contactId)
-                try? await Task.sleep(for: .milliseconds(500))
+                for _ in 0..<2 {
+                    withAnimation(.none) {
+                        proxy.scrollTo(bottomAnchorID, anchor: .bottom)
+                    }
+                    try? await Task.sleep(for: .milliseconds(80))
+                }
+                hasScrolledToLatest = true
             }
             .navigationTitle(contact.name)
             .navigationBarTitleDisplayMode(.inline)
@@ -172,6 +179,14 @@ struct ThreadView: View {
                 viewModel.currentContact = contact
                 viewModel.threadItems = []
                 await viewModel.loadThread(contactId: contact.contactId)
+                for _ in 0..<3 {
+                    if Task.isCancelled { return }
+                    withAnimation(.none) {
+                        proxy.scrollTo(bottomAnchorID, anchor: .bottom)
+                    }
+                    try? await Task.sleep(for: .milliseconds(80))
+                }
+                hasScrolledToLatest = true
                 await viewModel.startClaimGradeSubscription(contactId: contact.contactId)
             }
             .onChange(of: viewModel.threadItems.count) { _, newCount in
