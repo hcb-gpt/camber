@@ -1,0 +1,413 @@
+// !$*UTF8*$!
+{
+	archiveVersion = 1;
+	classes = {
+	};
+	objectVersion = 77;
+	objects = {
+
+/* Begin PBXBuildFile section */
+		09304E51DC232ACF9D604391 /* CallSummaryCard.swift in Sources */ = {isa = PBXBuildFile; fileRef = C92779B3641C0D2DE6615612 /* CallSummaryCard.swift */; };
+		13531F3AAFCDFA21ECFB9E65 /* ThreadView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 055EAEA048AB6BB4CA4EEE80 /* ThreadView.swift */; };
+		193B96A4F6E1BC3B7A0B3B61 /* GradeIndicator.swift in Sources */ = {isa = PBXBuildFile; fileRef = 595848F3F46DFB87B0C65D55 /* GradeIndicator.swift */; };
+		1C7C72BCA9A6EDFBC2A43B96 /* CorrectionSheet.swift in Sources */ = {isa = PBXBuildFile; fileRef = A3F820DB38BA1EDB02EAE746 /* CorrectionSheet.swift */; };
+		2B69E6BF52B2A2AB640CBC77 /* Contact.swift in Sources */ = {isa = PBXBuildFile; fileRef = 93F9EB787CFB3448E1EFC024 /* Contact.swift */; };
+		547C08130F2822252B3296F9 /* ClaimRow.swift in Sources */ = {isa = PBXBuildFile; fileRef = B70C4EA922BE454A904F95BB /* ClaimRow.swift */; };
+		87C400F4F3874303B94EB83B /* SMSBubble.swift in Sources */ = {isa = PBXBuildFile; fileRef = C0B838D3F03C0D2CDB76E802 /* SMSBubble.swift */; };
+		9729A9C737A2F3FB6C1A448C /* ThreadItem.swift in Sources */ = {isa = PBXBuildFile; fileRef = E620CD5610E49C34C8D6DD31 /* ThreadItem.swift */; };
+		986CB6A00F10B14F7508F67B /* Supabase in Frameworks */ = {isa = PBXBuildFile; productRef = 187F6B7C7E102040AC0AAD35 /* Supabase */; };
+		B4148DF1A17F77A1103A1796 /* SupabaseService.swift in Sources */ = {isa = PBXBuildFile; fileRef = 49A9C46539AA007D7645122A /* SupabaseService.swift */; };
+		D7B89133BD2CD72F5991596D /* ThreadViewModel.swift in Sources */ = {isa = PBXBuildFile; fileRef = 51E44482F637661C85D155F8 /* ThreadViewModel.swift */; };
+		D9002DC58A8E1B0580E9CEAF /* ClaimGrade.swift in Sources */ = {isa = PBXBuildFile; fileRef = E49C0E479C5BF9BBBEA78C7F /* ClaimGrade.swift */; };
+		F74E8AAE36B43E7F30B8CE53 /* CamberRedlineApp.swift in Sources */ = {isa = PBXBuildFile; fileRef = FF5BA52015DDCF6F215FA113 /* CamberRedlineApp.swift */; };
+/* End PBXBuildFile section */
+
+/* Begin PBXFileReference section */
+		055EAEA048AB6BB4CA4EEE80 /* ThreadView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ThreadView.swift; sourceTree = "<group>"; };
+		34CB7D73C1D3046EEE6ECAAE /* CamberRedline.app */ = {isa = PBXFileReference; includeInIndex = 0; lastKnownFileType = wrapper.application; path = CamberRedline.app; sourceTree = BUILT_PRODUCTS_DIR; };
+		49A9C46539AA007D7645122A /* SupabaseService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SupabaseService.swift; sourceTree = "<group>"; };
+		51E44482F637661C85D155F8 /* ThreadViewModel.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ThreadViewModel.swift; sourceTree = "<group>"; };
+		595848F3F46DFB87B0C65D55 /* GradeIndicator.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = GradeIndicator.swift; sourceTree = "<group>"; };
+		93F9EB787CFB3448E1EFC024 /* Contact.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Contact.swift; sourceTree = "<group>"; };
+		A3F820DB38BA1EDB02EAE746 /* CorrectionSheet.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CorrectionSheet.swift; sourceTree = "<group>"; };
+		B70C4EA922BE454A904F95BB /* ClaimRow.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ClaimRow.swift; sourceTree = "<group>"; };
+		C0B838D3F03C0D2CDB76E802 /* SMSBubble.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SMSBubble.swift; sourceTree = "<group>"; };
+		C92779B3641C0D2DE6615612 /* CallSummaryCard.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CallSummaryCard.swift; sourceTree = "<group>"; };
+		E49C0E479C5BF9BBBEA78C7F /* ClaimGrade.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ClaimGrade.swift; sourceTree = "<group>"; };
+		E620CD5610E49C34C8D6DD31 /* ThreadItem.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ThreadItem.swift; sourceTree = "<group>"; };
+		FF5BA52015DDCF6F215FA113 /* CamberRedlineApp.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CamberRedlineApp.swift; sourceTree = "<group>"; };
+/* End PBXFileReference section */
+
+/* Begin PBXFrameworksBuildPhase section */
+		56C7ADADFB21BBCBD91D3760 /* Frameworks */ = {
+			isa = PBXFrameworksBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				986CB6A00F10B14F7508F67B /* Supabase in Frameworks */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+/* End PBXFrameworksBuildPhase section */
+
+/* Begin PBXGroup section */
+		46E176F410BCCCB75B44DF99 /* Views */ = {
+			isa = PBXGroup;
+			children = (
+				C92779B3641C0D2DE6615612 /* CallSummaryCard.swift */,
+				B70C4EA922BE454A904F95BB /* ClaimRow.swift */,
+				A3F820DB38BA1EDB02EAE746 /* CorrectionSheet.swift */,
+				595848F3F46DFB87B0C65D55 /* GradeIndicator.swift */,
+				C0B838D3F03C0D2CDB76E802 /* SMSBubble.swift */,
+				055EAEA048AB6BB4CA4EEE80 /* ThreadView.swift */,
+			);
+			path = Views;
+			sourceTree = "<group>";
+		};
+		4CBF2260079024E63D8ABDC0 /* CamberRedline */ = {
+			isa = PBXGroup;
+			children = (
+				FF5BA52015DDCF6F215FA113 /* CamberRedlineApp.swift */,
+				C32672D30BE75E53A0CBB17B /* Models */,
+				99BF2C7EF9F55A8850309EB3 /* Services */,
+				939AA6BCD9867C76C54DBD7E /* ViewModels */,
+				46E176F410BCCCB75B44DF99 /* Views */,
+			);
+			path = CamberRedline;
+			sourceTree = "<group>";
+		};
+		939AA6BCD9867C76C54DBD7E /* ViewModels */ = {
+			isa = PBXGroup;
+			children = (
+				51E44482F637661C85D155F8 /* ThreadViewModel.swift */,
+			);
+			path = ViewModels;
+			sourceTree = "<group>";
+		};
+		995D21D79BDD924FD730FCD1 /* Products */ = {
+			isa = PBXGroup;
+			children = (
+				34CB7D73C1D3046EEE6ECAAE /* CamberRedline.app */,
+			);
+			name = Products;
+			sourceTree = "<group>";
+		};
+		99BF2C7EF9F55A8850309EB3 /* Services */ = {
+			isa = PBXGroup;
+			children = (
+				49A9C46539AA007D7645122A /* SupabaseService.swift */,
+			);
+			path = Services;
+			sourceTree = "<group>";
+		};
+		C32672D30BE75E53A0CBB17B /* Models */ = {
+			isa = PBXGroup;
+			children = (
+				E49C0E479C5BF9BBBEA78C7F /* ClaimGrade.swift */,
+				93F9EB787CFB3448E1EFC024 /* Contact.swift */,
+				E620CD5610E49C34C8D6DD31 /* ThreadItem.swift */,
+			);
+			path = Models;
+			sourceTree = "<group>";
+		};
+		D399D60F76C7B3E0D59E8D69 = {
+			isa = PBXGroup;
+			children = (
+				4CBF2260079024E63D8ABDC0 /* CamberRedline */,
+				995D21D79BDD924FD730FCD1 /* Products */,
+			);
+			sourceTree = "<group>";
+		};
+/* End PBXGroup section */
+
+/* Begin PBXNativeTarget section */
+		B6293C378A63EBC6B48CFBE2 /* CamberRedline */ = {
+			isa = PBXNativeTarget;
+			buildConfigurationList = 8FCC5439A471F0FFD3E9A720 /* Build configuration list for PBXNativeTarget "CamberRedline" */;
+			buildPhases = (
+				926888D8F0B8A01F55E0FCF6 /* Sources */,
+				56C7ADADFB21BBCBD91D3760 /* Frameworks */,
+			);
+			buildRules = (
+			);
+			dependencies = (
+			);
+			name = CamberRedline;
+			packageProductDependencies = (
+				187F6B7C7E102040AC0AAD35 /* Supabase */,
+			);
+			productName = CamberRedline;
+			productReference = 34CB7D73C1D3046EEE6ECAAE /* CamberRedline.app */;
+			productType = "com.apple.product-type.application";
+		};
+/* End PBXNativeTarget section */
+
+/* Begin PBXProject section */
+		4E1AE00C54DB256E75EAAAF4 /* Project object */ = {
+			isa = PBXProject;
+			attributes = {
+				BuildIndependentTargetsInParallel = YES;
+				LastUpgradeCheck = 1600;
+				TargetAttributes = {
+					B6293C378A63EBC6B48CFBE2 = {
+						DevelopmentTeam = "";
+					};
+				};
+			};
+			buildConfigurationList = 03FB81D1446DD0CD384BA5A0 /* Build configuration list for PBXProject "CamberRedline" */;
+			compatibilityVersion = "Xcode 14.0";
+			developmentRegion = en;
+			hasScannedForEncodings = 0;
+			knownRegions = (
+				Base,
+				en,
+			);
+			mainGroup = D399D60F76C7B3E0D59E8D69;
+			minimizedProjectReferenceProxies = 1;
+			packageReferences = (
+				1325FF3460611FE0F2BEB17C /* XCRemoteSwiftPackageReference "supabase-swift" */,
+			);
+			preferredProjectObjectVersion = 77;
+			projectDirPath = "";
+			projectRoot = "";
+			targets = (
+				B6293C378A63EBC6B48CFBE2 /* CamberRedline */,
+			);
+		};
+/* End PBXProject section */
+
+/* Begin PBXSourcesBuildPhase section */
+		926888D8F0B8A01F55E0FCF6 /* Sources */ = {
+			isa = PBXSourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				09304E51DC232ACF9D604391 /* CallSummaryCard.swift in Sources */,
+				F74E8AAE36B43E7F30B8CE53 /* CamberRedlineApp.swift in Sources */,
+				D9002DC58A8E1B0580E9CEAF /* ClaimGrade.swift in Sources */,
+				547C08130F2822252B3296F9 /* ClaimRow.swift in Sources */,
+				2B69E6BF52B2A2AB640CBC77 /* Contact.swift in Sources */,
+				1C7C72BCA9A6EDFBC2A43B96 /* CorrectionSheet.swift in Sources */,
+				193B96A4F6E1BC3B7A0B3B61 /* GradeIndicator.swift in Sources */,
+				87C400F4F3874303B94EB83B /* SMSBubble.swift in Sources */,
+				B4148DF1A17F77A1103A1796 /* SupabaseService.swift in Sources */,
+				9729A9C737A2F3FB6C1A448C /* ThreadItem.swift in Sources */,
+				13531F3AAFCDFA21ECFB9E65 /* ThreadView.swift in Sources */,
+				D7B89133BD2CD72F5991596D /* ThreadViewModel.swift in Sources */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+/* End PBXSourcesBuildPhase section */
+
+/* Begin XCBuildConfiguration section */
+		07D3F34749C663839BBABE2F /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ALWAYS_SEARCH_USER_PATHS = NO;
+				CLANG_ANALYZER_NONNULL = YES;
+				CLANG_ANALYZER_NUMBER_OBJECT_CONVERSION = YES_AGGRESSIVE;
+				CLANG_CXX_LANGUAGE_STANDARD = "gnu++14";
+				CLANG_CXX_LIBRARY = "libc++";
+				CLANG_ENABLE_MODULES = YES;
+				CLANG_ENABLE_OBJC_ARC = YES;
+				CLANG_ENABLE_OBJC_WEAK = YES;
+				CLANG_WARN_BLOCK_CAPTURE_AUTORELEASING = YES;
+				CLANG_WARN_BOOL_CONVERSION = YES;
+				CLANG_WARN_COMMA = YES;
+				CLANG_WARN_CONSTANT_CONVERSION = YES;
+				CLANG_WARN_DEPRECATED_OBJC_IMPLEMENTATIONS = YES;
+				CLANG_WARN_DIRECT_OBJC_ISA_USAGE = YES_ERROR;
+				CLANG_WARN_DOCUMENTATION_COMMENTS = YES;
+				CLANG_WARN_EMPTY_BODY = YES;
+				CLANG_WARN_ENUM_CONVERSION = YES;
+				CLANG_WARN_INFINITE_RECURSION = YES;
+				CLANG_WARN_INT_CONVERSION = YES;
+				CLANG_WARN_NON_LITERAL_NULL_CONVERSION = YES;
+				CLANG_WARN_OBJC_IMPLICIT_RETAIN_SELF = YES;
+				CLANG_WARN_OBJC_LITERAL_CONVERSION = YES;
+				CLANG_WARN_OBJC_ROOT_CLASS = YES_ERROR;
+				CLANG_WARN_QUOTED_INCLUDE_IN_FRAMEWORK_HEADER = YES;
+				CLANG_WARN_RANGE_LOOP_ANALYSIS = YES;
+				CLANG_WARN_STRICT_PROTOTYPES = YES;
+				CLANG_WARN_SUSPICIOUS_MOVE = YES;
+				CLANG_WARN_UNGUARDED_AVAILABILITY = YES_AGGRESSIVE;
+				CLANG_WARN_UNREACHABLE_CODE = YES;
+				CLANG_WARN__DUPLICATE_METHOD_MATCH = YES;
+				COPY_PHASE_STRIP = NO;
+				DEBUG_INFORMATION_FORMAT = dwarf;
+				ENABLE_STRICT_OBJC_MSGSEND = YES;
+				ENABLE_TESTABILITY = YES;
+				GCC_C_LANGUAGE_STANDARD = gnu11;
+				GCC_DYNAMIC_NO_PIC = NO;
+				GCC_NO_COMMON_BLOCKS = YES;
+				GCC_OPTIMIZATION_LEVEL = 0;
+				GCC_PREPROCESSOR_DEFINITIONS = (
+					"$(inherited)",
+					"DEBUG=1",
+				);
+				GCC_WARN_64_TO_32_BIT_CONVERSION = YES;
+				GCC_WARN_ABOUT_RETURN_TYPE = YES_ERROR;
+				GCC_WARN_UNDECLARED_SELECTOR = YES;
+				GCC_WARN_UNINITIALIZED_AUTOS = YES_AGGRESSIVE;
+				GCC_WARN_UNUSED_FUNCTION = YES;
+				GCC_WARN_UNUSED_VARIABLE = YES;
+				IPHONEOS_DEPLOYMENT_TARGET = 17.0;
+				MTL_ENABLE_DEBUG_INFO = INCLUDE_SOURCE;
+				MTL_FAST_MATH = YES;
+				ONLY_ACTIVE_ARCH = YES;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SDKROOT = auto;
+				SWIFT_ACTIVE_COMPILATION_CONDITIONS = DEBUG;
+				SWIFT_OPTIMIZATION_LEVEL = "-Onone";
+				SWIFT_VERSION = 5.0;
+			};
+			name = Debug;
+		};
+		16F12FB0A2B49E040E594FCE /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ALWAYS_SEARCH_USER_PATHS = NO;
+				CLANG_ANALYZER_NONNULL = YES;
+				CLANG_ANALYZER_NUMBER_OBJECT_CONVERSION = YES_AGGRESSIVE;
+				CLANG_CXX_LANGUAGE_STANDARD = "gnu++14";
+				CLANG_CXX_LIBRARY = "libc++";
+				CLANG_ENABLE_MODULES = YES;
+				CLANG_ENABLE_OBJC_ARC = YES;
+				CLANG_ENABLE_OBJC_WEAK = YES;
+				CLANG_WARN_BLOCK_CAPTURE_AUTORELEASING = YES;
+				CLANG_WARN_BOOL_CONVERSION = YES;
+				CLANG_WARN_COMMA = YES;
+				CLANG_WARN_CONSTANT_CONVERSION = YES;
+				CLANG_WARN_DEPRECATED_OBJC_IMPLEMENTATIONS = YES;
+				CLANG_WARN_DIRECT_OBJC_ISA_USAGE = YES_ERROR;
+				CLANG_WARN_DOCUMENTATION_COMMENTS = YES;
+				CLANG_WARN_EMPTY_BODY = YES;
+				CLANG_WARN_ENUM_CONVERSION = YES;
+				CLANG_WARN_INFINITE_RECURSION = YES;
+				CLANG_WARN_INT_CONVERSION = YES;
+				CLANG_WARN_NON_LITERAL_NULL_CONVERSION = YES;
+				CLANG_WARN_OBJC_IMPLICIT_RETAIN_SELF = YES;
+				CLANG_WARN_OBJC_LITERAL_CONVERSION = YES;
+				CLANG_WARN_OBJC_ROOT_CLASS = YES_ERROR;
+				CLANG_WARN_QUOTED_INCLUDE_IN_FRAMEWORK_HEADER = YES;
+				CLANG_WARN_RANGE_LOOP_ANALYSIS = YES;
+				CLANG_WARN_STRICT_PROTOTYPES = YES;
+				CLANG_WARN_SUSPICIOUS_MOVE = YES;
+				CLANG_WARN_UNGUARDED_AVAILABILITY = YES_AGGRESSIVE;
+				CLANG_WARN_UNREACHABLE_CODE = YES;
+				CLANG_WARN__DUPLICATE_METHOD_MATCH = YES;
+				COPY_PHASE_STRIP = NO;
+				DEBUG_INFORMATION_FORMAT = "dwarf-with-dsym";
+				ENABLE_NS_ASSERTIONS = NO;
+				ENABLE_STRICT_OBJC_MSGSEND = YES;
+				GCC_C_LANGUAGE_STANDARD = gnu11;
+				GCC_NO_COMMON_BLOCKS = YES;
+				GCC_WARN_64_TO_32_BIT_CONVERSION = YES;
+				GCC_WARN_ABOUT_RETURN_TYPE = YES_ERROR;
+				GCC_WARN_UNDECLARED_SELECTOR = YES;
+				GCC_WARN_UNINITIALIZED_AUTOS = YES_AGGRESSIVE;
+				GCC_WARN_UNUSED_FUNCTION = YES;
+				GCC_WARN_UNUSED_VARIABLE = YES;
+				IPHONEOS_DEPLOYMENT_TARGET = 17.0;
+				MTL_ENABLE_DEBUG_INFO = NO;
+				MTL_FAST_MATH = YES;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SDKROOT = auto;
+				SWIFT_COMPILATION_MODE = wholemodule;
+				SWIFT_OPTIMIZATION_LEVEL = "-O";
+				SWIFT_VERSION = 5.0;
+			};
+			name = Release;
+		};
+		4D232F895AA52E7247DD376B /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
+				CODE_SIGN_IDENTITY = "iPhone Developer";
+				CURRENT_PROJECT_VERSION = 1;
+				DEVELOPMENT_TEAM = "";
+				INFOPLIST_KEY_UILaunchScreen_Generation = YES;
+				INFOPLIST_KEY_UISupportedInterfaceOrientations_iPhone = UIInterfaceOrientationPortrait;
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/Frameworks",
+				);
+				MARKETING_VERSION = 1.0.0;
+				PRODUCT_BUNDLE_IDENTIFIER = com.heartwoodcustombuilders.CamberRedline;
+				SDKROOT = auto;
+				SUPPORTED_PLATFORMS = "iphoneos iphonesimulator";
+				SUPPORTS_MACCATALYST = NO;
+				SUPPORTS_MAC_DESIGNED_FOR_IPHONE_IPAD = YES;
+				SUPPORTS_XR_DESIGNED_FOR_IPHONE_IPAD = YES;
+				SWIFT_STRICT_CONCURRENCY = complete;
+				TARGETED_DEVICE_FAMILY = "1,2";
+			};
+			name = Release;
+		};
+		FD1A407D257817D119105698 /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
+				CODE_SIGN_IDENTITY = "iPhone Developer";
+				CURRENT_PROJECT_VERSION = 1;
+				DEVELOPMENT_TEAM = "";
+				INFOPLIST_KEY_UILaunchScreen_Generation = YES;
+				INFOPLIST_KEY_UISupportedInterfaceOrientations_iPhone = UIInterfaceOrientationPortrait;
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/Frameworks",
+				);
+				MARKETING_VERSION = 1.0.0;
+				PRODUCT_BUNDLE_IDENTIFIER = com.heartwoodcustombuilders.CamberRedline;
+				SDKROOT = auto;
+				SUPPORTED_PLATFORMS = "iphoneos iphonesimulator";
+				SUPPORTS_MACCATALYST = NO;
+				SUPPORTS_MAC_DESIGNED_FOR_IPHONE_IPAD = YES;
+				SUPPORTS_XR_DESIGNED_FOR_IPHONE_IPAD = YES;
+				SWIFT_STRICT_CONCURRENCY = complete;
+				TARGETED_DEVICE_FAMILY = "1,2";
+			};
+			name = Debug;
+		};
+/* End XCBuildConfiguration section */
+
+/* Begin XCConfigurationList section */
+		03FB81D1446DD0CD384BA5A0 /* Build configuration list for PBXProject "CamberRedline" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				07D3F34749C663839BBABE2F /* Debug */,
+				16F12FB0A2B49E040E594FCE /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Debug;
+		};
+		8FCC5439A471F0FFD3E9A720 /* Build configuration list for PBXNativeTarget "CamberRedline" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				FD1A407D257817D119105698 /* Debug */,
+				4D232F895AA52E7247DD376B /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Debug;
+		};
+/* End XCConfigurationList section */
+
+/* Begin XCRemoteSwiftPackageReference section */
+		1325FF3460611FE0F2BEB17C /* XCRemoteSwiftPackageReference "supabase-swift" */ = {
+			isa = XCRemoteSwiftPackageReference;
+			repositoryURL = "https://github.com/supabase/supabase-swift.git";
+			requirement = {
+				kind = upToNextMajorVersion;
+				minimumVersion = 2.0.0;
+			};
+		};
+/* End XCRemoteSwiftPackageReference section */
+
+/* Begin XCSwiftPackageProductDependency section */
+		187F6B7C7E102040AC0AAD35 /* Supabase */ = {
+			isa = XCSwiftPackageProductDependency;
+			package = 1325FF3460611FE0F2BEB17C /* XCRemoteSwiftPackageReference "supabase-swift" */;
+			productName = Supabase;
+		};
+/* End XCSwiftPackageProductDependency section */
+	};
+	rootObject = 4E1AE00C54DB256E75EAAAF4 /* Project object */;
+}
