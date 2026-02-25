@@ -105,17 +105,36 @@ struct ContactRow: View {
         return relativeString(from: date)
     }
 
+    private static let isoFormatterFractional: ISO8601DateFormatter = {
+        let f = ISO8601DateFormatter()
+        f.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
+        return f
+    }()
+
+    private static let isoFormatterBasic: ISO8601DateFormatter = {
+        let f = ISO8601DateFormatter()
+        f.formatOptions = [.withInternetDateTime]
+        return f
+    }()
+
+    private static let postgresFormatter: DateFormatter = {
+        let f = DateFormatter()
+        f.dateFormat = "yyyy-MM-dd HH:mm:ssxx"
+        f.locale = Locale(identifier: "en_US_POSIX")
+        return f
+    }()
+
+    private static let shortDateFormatter: DateFormatter = {
+        let f = DateFormatter()
+        f.dateFormat = "MMM d"
+        return f
+    }()
+
     private func parseDate(_ string: String) -> Date? {
-        let iso = ISO8601DateFormatter()
-        iso.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
-        if let d = iso.date(from: string) { return d }
-        iso.formatOptions = [.withInternetDateTime]
-        if let d = iso.date(from: string) { return d }
+        if let d = Self.isoFormatterFractional.date(from: string) { return d }
+        if let d = Self.isoFormatterBasic.date(from: string) { return d }
         // Postgres format: "2026-02-23 18:36:12+00"
-        let pg = DateFormatter()
-        pg.dateFormat = "yyyy-MM-dd HH:mm:ssxx"
-        pg.locale = Locale(identifier: "en_US_POSIX")
-        return pg.date(from: string)
+        return Self.postgresFormatter.date(from: string)
     }
 
     private func relativeString(from date: Date) -> String {
@@ -124,8 +143,6 @@ struct ContactRow: View {
         if interval < 3_600 { return "\(Int(interval / 60))m" }
         if interval < 86_400 { return "\(Int(interval / 3_600))h" }
         if interval < 604_800 { return "\(Int(interval / 86_400))d" }
-        let fmt = DateFormatter()
-        fmt.dateFormat = "MMM d"
-        return fmt.string(from: date)
+        return Self.shortDateFormatter.string(from: date)
     }
 }

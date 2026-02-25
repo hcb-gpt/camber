@@ -44,7 +44,10 @@ final class SupabaseService {
             URLQueryItem(name: "limit", value: String(limit)),
         ]
 
-        let (data, response) = try await URLSession.shared.data(from: components.url!)
+        guard let url = components.url else {
+            throw ServiceError.apiError("Failed to construct thread URL")
+        }
+        let (data, response) = try await URLSession.shared.data(from: url)
         try validateHTTPResponse(response)
 
         let decoder = JSONDecoder()

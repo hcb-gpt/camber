@@ -7,11 +7,15 @@ struct SMSBubble: View {
         entry.direction?.lowercased() == "outbound"
     }
 
+    private static let timeFormatter: DateFormatter = {
+        let f = DateFormatter()
+        f.timeStyle = .short
+        return f
+    }()
+
     private var formattedTime: String {
         guard let date = ThreadItem.sms(entry).eventAtDate else { return "" }
-        let formatter = DateFormatter()
-        formatter.timeStyle = .short
-        return formatter.string(from: date)
+        return Self.timeFormatter.string(from: date)
     }
 
     private var bubbleColor: Color {
@@ -38,12 +42,12 @@ struct SMSBubble: View {
 
     var body: some View {
         HStack {
-            if isOutbound { Spacer(minLength: UIScreen.main.bounds.width * 0.25) }
+            if isOutbound { Spacer(minLength: 0) }
 
             VStack(alignment: isOutbound ? .trailing : .leading, spacing: 2) {
                 Text(entry.content ?? "")
                     .font(.body)
-                    .foregroundStyle(.white)
+                    .foregroundStyle(isOutbound ? .white : .primary)
                     .padding(.horizontal, 12)
                     .padding(.vertical, 8)
                     .background(bubbleColor)
@@ -54,8 +58,11 @@ struct SMSBubble: View {
                     .foregroundStyle(.secondary)
                     .padding(.horizontal, 4)
             }
+            .containerRelativeFrame(.horizontal, alignment: isOutbound ? .trailing : .leading) { width, _ in
+                width * 0.75
+            }
 
-            if !isOutbound { Spacer(minLength: UIScreen.main.bounds.width * 0.25) }
+            if !isOutbound { Spacer(minLength: 0) }
         }
     }
 }

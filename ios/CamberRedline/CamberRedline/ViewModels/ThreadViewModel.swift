@@ -53,8 +53,11 @@ final class ThreadViewModel {
         grade: GradeType,
         correctionText: String? = nil
     ) async {
-        guard let contact = currentContact else { return }
-        error = nil
+        guard let contactId = currentContact?.contactId else {
+            error = "No contact selected"
+            return
+        }
+        self.error = nil
 
         do {
             try await service.gradeClaimViaAPI(
@@ -63,7 +66,7 @@ final class ThreadViewModel {
                 correctionText: correctionText,
                 gradedBy: "ios_reviewer"
             )
-            await loadThreadInternal(contactId: contact.contactId)
+            await loadThreadInternal(contactId: contactId)
         } catch {
             self.error = error.localizedDescription
         }
@@ -79,6 +82,9 @@ final class ThreadViewModel {
         await stopClaimGradeSubscription()
 
         let channel = service.client.channel("claim-grades-\(contactId.uuidString.lowercased())")
+        gradeChannel = channel
+        subscribedContactId = contactId
+
         let inserts = channel.postgresChange(
             InsertAction.self,
             schema: "public",
@@ -94,11 +100,9 @@ final class ThreadViewModel {
             try await channel.subscribeWithError()
         } catch {
             self.error = "Realtime unavailable: \(error.localizedDescription)"
+            await stopClaimGradeSubscription()
             return
         }
-
-        subscribedContactId = contactId
-        gradeChannel = channel
 
         gradeInsertTask = Task { @MainActor [weak self] in
             guard let self else { return }
