@@ -21,18 +21,17 @@ final class SupabaseService {
 
     // MARK: - Fetch Contacts
 
+    func fetchContactsList() async throws -> [Contact] {
+        try await client
+            .from("redline_contacts")
+            .select()
+            .order("last_activity", ascending: false, nullsFirst: false)
+            .execute()
+            .value
+    }
+
     func fetchContacts() async throws -> [Contact] {
-        var components = URLComponents(url: edgeFunctionBaseURL, resolvingAgainstBaseURL: false)!
-        components.queryItems = [URLQueryItem(name: "action", value: "contacts")]
-
-        let (data, response) = try await URLSession.shared.data(from: components.url!)
-        try validateHTTPResponse(response)
-
-        let decoded = try JSONDecoder().decode(ContactsResponse.self, from: data)
-        guard decoded.ok else {
-            throw ServiceError.apiError("Contacts endpoint returned ok=false")
-        }
-        return decoded.contacts
+        try await fetchContactsList()
     }
 
     // MARK: - Fetch Thread
