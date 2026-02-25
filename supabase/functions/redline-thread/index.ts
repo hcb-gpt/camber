@@ -37,7 +37,8 @@ async function handleContacts(db: any, t0: number): Promise<Response> {
     .from("interactions")
     .select("contact_id, event_at_utc, interaction_id, human_summary")
     .not("contact_id", "is", null)
-    .not("event_at_utc", "is", null);
+    .not("event_at_utc", "is", null)
+    .limit(5000);
   if (countErr) return json({ ok: false, error_code: "counts_query_failed", error: countErr.message }, 500);
 
   const { data: smsRows, error: smsErr } = await db.from("sms_messages").select("contact_phone, direction");
@@ -790,8 +791,10 @@ Deno.serve(async (req: Request) => {
 
     const contactId = url.searchParams.get("contact_id");
     if (contactId) {
-      const limit = Math.min(Math.max(parseInt(url.searchParams.get("limit") || "50", 10), 1), 200);
-      const offset = Math.max(parseInt(url.searchParams.get("offset") || "0", 10), 0);
+      const rawLimit = parseInt(url.searchParams.get("limit") || "50", 10);
+      const limit = Math.min(Math.max(isNaN(rawLimit) ? 50 : rawLimit, 1), 200);
+      const rawOffset = parseInt(url.searchParams.get("offset") || "0", 10);
+      const offset = Math.max(isNaN(rawOffset) ? 0 : rawOffset, 0);
       return await handleThread(db, contactId, limit, offset, t0);
     }
 
