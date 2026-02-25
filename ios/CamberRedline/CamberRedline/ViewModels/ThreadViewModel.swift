@@ -45,7 +45,9 @@ final class ThreadViewModel {
                     let header = CallHeaderEntry(
                         interactionId: entry.interactionId,
                         eventAt: entry.eventAt,
+                        contactName: entry.contactName,
                         direction: entry.direction,
+                        channel: entry.channel,
                         summary: entry.summary,
                         claims: allClaims
                     )
@@ -53,7 +55,7 @@ final class ThreadViewModel {
 
                     // Use full transcript from calls_raw; fall back to span assembly
                     let transcript: String
-                    if let raw = entry.transcript, !raw.isEmpty {
+                    if let raw = entry.rawTranscript, !raw.isEmpty {
                         transcript = raw
                     } else {
                         transcript = entry.spans
@@ -220,7 +222,9 @@ final class ThreadViewModel {
                 CallHeaderEntry(
                     interactionId: header.interactionId,
                     eventAt: header.eventAt,
+                    contactName: header.contactName,
                     direction: header.direction,
+                    channel: header.channel,
                     summary: header.summary,
                     claims: updatedClaims
                 )

@@ -3,33 +3,38 @@ import SwiftUI
 struct ContactRow: View {
     let contact: Contact
 
+    // MARK: - Layout constants
+
+    private let avatarSize: CGFloat = 44
+    private let badgeFont = Font.system(size: 11, weight: .semibold)
+
+    // MARK: - Body
+
     var body: some View {
         HStack(spacing: 12) {
             initialsAvatar
 
-            VStack(alignment: .leading, spacing: 3) {
-                HStack {
+            VStack(alignment: .leading, spacing: 4) {
+
+                // Row 1: name + last-activity timestamp
+                HStack(alignment: .firstTextBaseline) {
                     Text(contact.name)
                         .font(.body)
                         .fontWeight(.semibold)
                         .foregroundStyle(.white)
+                        .lineLimit(1)
 
                     Spacer()
 
                     if let relativeTime = relativeTimeString {
                         Text(relativeTime)
                             .font(.subheadline)
-                            .foregroundStyle(.secondary)
+                            .foregroundStyle(Color(hex: 0x8E8E93))
                     }
                 }
 
+                // Row 2: direction + preview snippet
                 HStack(spacing: 4) {
-                    if let interactionIcon = interactionIcon {
-                        Image(systemName: interactionIcon)
-                            .font(.caption2)
-                            .foregroundStyle(.secondary)
-                    }
-
                     if let dir = contact.lastDirection {
                         Image(systemName: dir == "outbound" ? "arrow.up.right" : "arrow.down.left")
                             .font(.caption2)
@@ -38,22 +43,55 @@ struct ContactRow: View {
 
                     Text(previewText)
                         .font(.subheadline)
-                        .foregroundStyle(.secondary)
+                        .foregroundStyle(Color(hex: 0x8E8E93))
                         .lineLimit(1)
                 }
-            }
 
-            if contact.ungradedCount > 0 {
-                Text("\(contact.ungradedCount)")
-                    .font(.caption)
-                    .fontWeight(.semibold)
-                    .foregroundStyle(.white)
-                    .padding(.horizontal, 8)
-                    .padding(.vertical, 4)
-                    .background(.orange, in: Capsule())
+                // Row 3: call count badge, SMS count badge, ungraded badge
+                HStack(spacing: 6) {
+                    if contact.callCount > 0 {
+                        countBadge(
+                            icon: "phone.fill",
+                            count: contact.callCount,
+                            tint: Color(hex: 0x3A3A3C)
+                        )
+                    }
+
+                    if contact.smsCount > 0 {
+                        countBadge(
+                            icon: "message.fill",
+                            count: contact.smsCount,
+                            tint: Color(hex: 0x3A3A3C)
+                        )
+                    }
+
+                    if contact.ungradedCount > 0 {
+                        Text("\(contact.ungradedCount) ungraded")
+                            .font(badgeFont)
+                            .foregroundStyle(.white)
+                            .padding(.horizontal, 7)
+                            .padding(.vertical, 3)
+                            .background(.orange, in: Capsule())
+                    }
+                }
             }
         }
-        .padding(.vertical, 4)
+        .padding(.vertical, 6)
+    }
+
+    // MARK: - Count badge
+
+    private func countBadge(icon: String, count: Int, tint: Color) -> some View {
+        HStack(spacing: 3) {
+            Image(systemName: icon)
+                .font(.system(size: 10, weight: .medium))
+            Text("\(count)")
+                .font(badgeFont)
+        }
+        .foregroundStyle(Color(hex: 0x8E8E93))
+        .padding(.horizontal, 7)
+        .padding(.vertical, 3)
+        .background(tint, in: Capsule())
     }
 
     // MARK: - Initials Avatar
@@ -68,8 +106,8 @@ struct ContactRow: View {
         return Text(initials)
             .font(.system(size: 15, weight: .semibold))
             .foregroundStyle(.white)
-            .frame(width: 44, height: 44)
-            .background(Color(white: 0.25))
+            .frame(width: avatarSize, height: avatarSize)
+            .background(Color(white: 0.22))
             .clipShape(Circle())
     }
 
@@ -77,24 +115,13 @@ struct ContactRow: View {
 
     private var previewText: String {
         if let snippet = contact.lastSnippet, !snippet.isEmpty {
+            // Truncate to ~80 chars for row preview
+            if snippet.count > 80 {
+                return String(snippet.prefix(77)) + "…"
+            }
             return snippet
         }
-        let parts: [String] = [
-            contact.callCount > 0 ? "\(contact.callCount) calls" : nil,
-            contact.smsCount > 0 ? "\(contact.smsCount) messages" : nil,
-        ].compactMap { $0 }
-        return parts.joined(separator: " · ")
-    }
-
-    private var interactionIcon: String? {
-        switch contact.lastInteractionType {
-        case "sms":
-            return "message.fill"
-        case "call":
-            return "phone.fill"
-        default:
-            return nil
-        }
+        return "No recent activity"
     }
 
     // MARK: - Relative Time
@@ -133,16 +160,26 @@ struct ContactRow: View {
     private func parseDate(_ string: String) -> Date? {
         if let d = Self.isoFormatterFractional.date(from: string) { return d }
         if let d = Self.isoFormatterBasic.date(from: string) { return d }
-        // Postgres format: "2026-02-23 18:36:12+00"
         return Self.postgresFormatter.date(from: string)
     }
 
     private func relativeString(from date: Date) -> String {
         let interval = Date().timeIntervalSince(date)
-        if interval < 60 { return "now" }
-        if interval < 3_600 { return "\(Int(interval / 60))m" }
-        if interval < 86_400 { return "\(Int(interval / 3_600))h" }
-        if interval < 604_800 { return "\(Int(interval / 86_400))d" }
+        if interval < 60        { return "now" }
+        if interval < 3_600     { return "\(Int(interval / 60))m" }
+        if interval < 86_400    { return "\(Int(interval / 3_600))h" }
+        if interval < 604_800   { return "\(Int(interval / 86_400))d" }
         return Self.shortDateFormatter.string(from: date)
+    }
+}
+
+// MARK: - Color hex helper
+
+private extension Color {
+    init(hex: UInt32) {
+        let r = Double((hex >> 16) & 0xFF) / 255
+        let g = Double((hex >> 8) & 0xFF) / 255
+        let b = Double(hex & 0xFF) / 255
+        self.init(red: r, green: g, blue: b)
     }
 }

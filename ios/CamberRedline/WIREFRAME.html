@@ -1,0 +1,1586 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>CamberRedline iOS App — Visual Wireframe</title>
+<style>
+  /* ============================================================
+     COLOR TOKENS (from SwiftUI source)
+     ============================================================ */
+  :root {
+    --bg:           #000;
+    --card:         #1C1C1E;
+    --card-border:  #2C2C2E;
+    --confirm:      #30D158;
+    --reject:       #FF453A;
+    --correct:      #FF9F0A;
+    --outbound:     #007AFF;
+    --inbound-bg:   #2C2C2E;
+    --text:         #fff;
+    --text-sec:     #8E8E93;
+    --text-dim:     #636366;
+    --divider:      #38383A;
+    --avatar-bg:    #404040;
+    --badge-orange: #FF9F0A;
+    --phone-frame:  #1A1A1A;
+    --notch-bg:     #000;
+    --annotation:   #FFD60A;
+  }
+
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+
+  body {
+    background: #0A0A0A;
+    color: var(--text);
+    font-family: -apple-system, BlinkMacSystemFont, "SF Pro Text", "Helvetica Neue", sans-serif;
+    line-height: 1.5;
+    padding: 32px 24px;
+  }
+
+  /* ============================================================
+     HEADER / TITLE
+     ============================================================ */
+  .page-header {
+    text-align: center;
+    margin-bottom: 40px;
+  }
+  .page-header h1 {
+    font-size: 28px;
+    font-weight: 700;
+    letter-spacing: -0.5px;
+    margin-bottom: 4px;
+  }
+  .page-header .subtitle {
+    color: var(--text-sec);
+    font-size: 14px;
+  }
+  .page-header .meta {
+    margin-top: 12px;
+    display: flex;
+    justify-content: center;
+    gap: 16px;
+    flex-wrap: wrap;
+  }
+  .page-header .meta span {
+    background: var(--card);
+    padding: 4px 12px;
+    border-radius: 6px;
+    font-size: 12px;
+    color: var(--text-sec);
+  }
+
+  /* ============================================================
+     SECTION HEADINGS
+     ============================================================ */
+  .section-heading {
+    font-size: 20px;
+    font-weight: 700;
+    margin: 48px 0 8px 0;
+    letter-spacing: -0.3px;
+  }
+  .section-desc {
+    color: var(--text-sec);
+    font-size: 13px;
+    margin-bottom: 24px;
+    max-width: 720px;
+  }
+
+  /* ============================================================
+     PHONE FRAMES CONTAINER
+     ============================================================ */
+  .phones-row {
+    display: flex;
+    gap: 40px;
+    justify-content: center;
+    flex-wrap: wrap;
+    align-items: flex-start;
+  }
+
+  .phone-col {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 12px;
+  }
+  .phone-col .phone-label {
+    font-size: 14px;
+    font-weight: 600;
+    color: var(--text-sec);
+    text-transform: uppercase;
+    letter-spacing: 1px;
+  }
+
+  /* ============================================================
+     iPHONE FRAME
+     ============================================================ */
+  .phone-frame {
+    width: 375px;
+    height: 812px;
+    border: 3px solid #333;
+    border-radius: 44px;
+    background: var(--bg);
+    overflow: hidden;
+    position: relative;
+    box-shadow: 0 0 0 1px #222, 0 24px 48px rgba(0,0,0,0.5);
+  }
+  /* Notch */
+  .phone-frame .notch {
+    position: absolute;
+    top: 0;
+    left: 50%;
+    transform: translateX(-50%);
+    width: 160px;
+    height: 34px;
+    background: var(--notch-bg);
+    border-radius: 0 0 20px 20px;
+    z-index: 10;
+  }
+  /* Status bar */
+  .status-bar {
+    height: 54px;
+    display: flex;
+    align-items: flex-end;
+    justify-content: space-between;
+    padding: 0 28px 6px 28px;
+    font-size: 12px;
+    font-weight: 600;
+    color: var(--text);
+    position: relative;
+    z-index: 5;
+  }
+  .status-bar .time { font-size: 15px; font-weight: 700; }
+  .status-bar .icons { display: flex; gap: 4px; align-items: center; font-size: 11px; }
+
+  /* Nav bar */
+  .nav-bar {
+    height: 44px;
+    display: flex;
+    align-items: center;
+    padding: 0 16px;
+  }
+  .nav-bar .nav-title {
+    font-size: 34px;
+    font-weight: 700;
+    padding-left: 4px;
+  }
+  .nav-bar-inline {
+    height: 44px;
+    display: flex;
+    align-items: center;
+    padding: 0 16px;
+    gap: 8px;
+  }
+  .nav-bar-inline .back-btn {
+    color: var(--outbound);
+    font-size: 17px;
+    cursor: default;
+  }
+  .nav-bar-inline .inline-title {
+    font-size: 17px;
+    font-weight: 600;
+  }
+
+  /* Scrollable content */
+  .phone-content {
+    height: calc(812px - 54px - 44px - 34px);
+    overflow-y: auto;
+    padding: 0 0 24px 0;
+    scrollbar-width: thin;
+    scrollbar-color: #333 transparent;
+  }
+  .phone-content::-webkit-scrollbar { width: 4px; }
+  .phone-content::-webkit-scrollbar-track { background: transparent; }
+  .phone-content::-webkit-scrollbar-thumb { background: #333; border-radius: 2px; }
+
+  /* Home indicator */
+  .home-indicator {
+    position: absolute;
+    bottom: 8px;
+    left: 50%;
+    transform: translateX(-50%);
+    width: 134px;
+    height: 5px;
+    background: #666;
+    border-radius: 3px;
+  }
+
+  /* ============================================================
+     CONTACT LIST SCREEN
+     ============================================================ */
+  .contact-row {
+    display: flex;
+    align-items: center;
+    padding: 10px 16px;
+    gap: 12px;
+    border-bottom: 1px solid rgba(255,255,255,0.08);
+    position: relative;
+  }
+  .contact-row:hover {
+    background: rgba(255,255,255,0.03);
+  }
+  .avatar {
+    width: 44px;
+    height: 44px;
+    border-radius: 50%;
+    background: var(--avatar-bg);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 15px;
+    font-weight: 600;
+    flex-shrink: 0;
+  }
+  .contact-info {
+    flex: 1;
+    min-width: 0;
+  }
+  .contact-top {
+    display: flex;
+    justify-content: space-between;
+    align-items: baseline;
+  }
+  .contact-name {
+    font-size: 16px;
+    font-weight: 600;
+  }
+  .contact-time {
+    font-size: 14px;
+    color: var(--text-sec);
+    flex-shrink: 0;
+  }
+  .contact-preview {
+    display: flex;
+    align-items: center;
+    gap: 4px;
+    color: var(--text-sec);
+    font-size: 14px;
+    margin-top: 2px;
+    overflow: hidden;
+    white-space: nowrap;
+    text-overflow: ellipsis;
+  }
+  .contact-preview .icon {
+    font-size: 10px;
+  }
+  .contact-preview .dir-arrow {
+    font-size: 10px;
+  }
+  .dir-in { color: var(--confirm); }
+  .dir-out { color: var(--outbound); }
+  .badge {
+    background: var(--badge-orange);
+    color: var(--text);
+    font-size: 12px;
+    font-weight: 600;
+    padding: 2px 8px;
+    border-radius: 10px;
+    flex-shrink: 0;
+  }
+  .chevron {
+    color: var(--text-dim);
+    font-size: 14px;
+    flex-shrink: 0;
+  }
+
+  /* ============================================================
+     THREAD VIEW SCREEN
+     ============================================================ */
+  .date-header {
+    text-align: center;
+    padding: 12px 0 4px 0;
+    font-size: 12px;
+    font-weight: 600;
+    color: var(--text-sec);
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+  }
+
+  /* Call Summary Card */
+  .call-card {
+    background: var(--card);
+    border-radius: 14px;
+    margin: 6px 16px;
+    padding: 14px;
+    position: relative;
+    overflow: hidden;
+  }
+  .call-card .accent-bar {
+    position: absolute;
+    left: 0;
+    top: 0;
+    bottom: 0;
+    width: 3px;
+    border-radius: 2px;
+  }
+  .accent-inbound { background: var(--confirm); }
+  .accent-outbound { background: var(--outbound); }
+
+  .call-header {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    margin-bottom: 8px;
+  }
+  .call-icon {
+    font-size: 24px;
+    flex-shrink: 0;
+  }
+  .call-icon.inbound { color: var(--confirm); }
+  .call-icon.outbound { color: var(--outbound); }
+  .call-meta {
+    flex: 1;
+  }
+  .call-meta .call-title {
+    font-size: 15px;
+    font-weight: 600;
+  }
+  .call-meta .call-detail {
+    font-size: 12px;
+    color: var(--text-sec);
+  }
+  .call-dir-arrow {
+    font-size: 12px;
+    color: var(--text-sec);
+  }
+
+  .call-summary-text {
+    font-size: 14px;
+    color: var(--text-sec);
+    line-height: 1.4;
+    margin-bottom: 8px;
+  }
+
+  .call-divider {
+    height: 1px;
+    background: var(--divider);
+    margin: 8px 0;
+  }
+
+  .claims-label {
+    font-size: 11px;
+    font-weight: 600;
+    color: var(--text-sec);
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+    margin-bottom: 6px;
+  }
+
+  /* Claim Row */
+  .claim-row {
+    display: flex;
+    align-items: flex-start;
+    gap: 8px;
+    padding: 4px 0;
+  }
+  .grade-dot {
+    width: 16px;
+    height: 16px;
+    border-radius: 50%;
+    flex-shrink: 0;
+    margin-top: 2px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 9px;
+    font-weight: 700;
+  }
+  .grade-ungraded {
+    border: 2px solid var(--text-dim);
+    background: transparent;
+  }
+  .grade-confirm {
+    background: var(--confirm);
+    color: #000;
+  }
+  .grade-reject {
+    background: var(--reject);
+    color: #fff;
+  }
+  .grade-correct {
+    background: var(--correct);
+    color: #000;
+  }
+  .claim-content { flex: 1; min-width: 0; }
+  .claim-type-badge {
+    display: inline-block;
+    font-size: 10px;
+    font-weight: 600;
+    background: var(--text-dim);
+    color: var(--text);
+    padding: 1px 6px;
+    border-radius: 8px;
+    margin-bottom: 2px;
+  }
+  .claim-text {
+    font-size: 14px;
+    line-height: 1.35;
+  }
+  .claim-correction {
+    font-size: 12px;
+    color: var(--correct);
+    margin-top: 2px;
+  }
+  .claim-graded-by {
+    font-size: 11px;
+    color: var(--text-sec);
+    margin-top: 1px;
+  }
+
+  /* Transcript disclosure */
+  .transcript-toggle {
+    font-size: 12px;
+    color: var(--text-sec);
+    cursor: default;
+    padding-top: 4px;
+  }
+
+  /* SMS Bubble */
+  .sms-row {
+    display: flex;
+    margin: 4px 16px;
+  }
+  .sms-row.outbound { justify-content: flex-end; }
+  .sms-row.inbound { justify-content: flex-start; }
+
+  .sms-bubble-wrap {
+    max-width: 70%;
+    display: flex;
+    flex-direction: column;
+  }
+  .sms-bubble-wrap.align-right { align-items: flex-end; }
+  .sms-bubble-wrap.align-left { align-items: flex-start; }
+
+  .sms-bubble {
+    padding: 8px 12px;
+    font-size: 15px;
+    line-height: 1.35;
+    max-width: 100%;
+  }
+  .sms-bubble.outbound {
+    background: var(--outbound);
+    color: #fff;
+    border-radius: 18px 18px 4px 18px;
+  }
+  .sms-bubble.inbound {
+    background: var(--inbound-bg);
+    color: var(--text);
+    border-radius: 18px 18px 18px 4px;
+  }
+  .sms-time {
+    font-size: 10px;
+    color: var(--text-sec);
+    padding: 2px 4px 0 4px;
+  }
+
+  /* ============================================================
+     ANNOTATIONS
+     ============================================================ */
+  .annotation-layer {
+    position: relative;
+  }
+
+  .annot {
+    position: absolute;
+    display: flex;
+    align-items: flex-start;
+    gap: 6px;
+    pointer-events: none;
+    z-index: 20;
+  }
+  .annot-line {
+    width: 2px;
+    background: var(--annotation);
+    flex-shrink: 0;
+    border-radius: 1px;
+  }
+  .annot-text {
+    background: rgba(255, 214, 10, 0.12);
+    border: 1px solid rgba(255, 214, 10, 0.3);
+    border-radius: 6px;
+    padding: 4px 8px;
+    font-size: 11px;
+    color: var(--annotation);
+    line-height: 1.35;
+    white-space: nowrap;
+    max-width: 220px;
+    white-space: normal;
+  }
+
+  /* Inline annotations (below component) */
+  .inline-annot {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    margin: 2px 16px 4px 16px;
+    pointer-events: none;
+  }
+  .inline-annot .annot-marker {
+    width: 8px;
+    height: 8px;
+    border-radius: 50%;
+    background: var(--annotation);
+    flex-shrink: 0;
+  }
+  .inline-annot .annot-label {
+    font-size: 10px;
+    color: var(--annotation);
+    letter-spacing: 0.3px;
+  }
+
+  /* ============================================================
+     DATA FLOW DIAGRAM
+     ============================================================ */
+  .flow-diagram {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 0;
+    padding: 32px 16px;
+    flex-wrap: wrap;
+  }
+  .flow-node {
+    background: var(--card);
+    border: 1px solid var(--card-border);
+    border-radius: 12px;
+    padding: 16px 20px;
+    text-align: center;
+    min-width: 160px;
+  }
+  .flow-node .flow-icon {
+    font-size: 28px;
+    margin-bottom: 6px;
+  }
+  .flow-node .flow-title {
+    font-size: 14px;
+    font-weight: 600;
+    margin-bottom: 2px;
+  }
+  .flow-node .flow-detail {
+    font-size: 11px;
+    color: var(--text-sec);
+    line-height: 1.4;
+  }
+  .flow-node.highlight {
+    border-color: var(--outbound);
+    box-shadow: 0 0 16px rgba(0, 122, 255, 0.15);
+  }
+  .flow-arrow {
+    font-size: 20px;
+    color: var(--text-dim);
+    padding: 0 12px;
+    flex-shrink: 0;
+  }
+
+  .flow-detail-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
+    gap: 16px;
+    margin-top: 20px;
+  }
+  .flow-detail-card {
+    background: var(--card);
+    border: 1px solid var(--card-border);
+    border-radius: 10px;
+    padding: 16px;
+  }
+  .flow-detail-card h4 {
+    font-size: 13px;
+    font-weight: 600;
+    margin-bottom: 8px;
+    color: var(--outbound);
+  }
+  .flow-detail-card p, .flow-detail-card li {
+    font-size: 12px;
+    color: var(--text-sec);
+    line-height: 1.5;
+  }
+  .flow-detail-card ul {
+    padding-left: 16px;
+    margin-top: 4px;
+  }
+  .flow-detail-card code {
+    background: rgba(255,255,255,0.08);
+    padding: 1px 5px;
+    border-radius: 3px;
+    font-size: 11px;
+    font-family: "SF Mono", Menlo, monospace;
+    color: var(--correct);
+  }
+
+  /* ============================================================
+     ARCHITECTURE TABLE
+     ============================================================ */
+  .arch-table {
+    width: 100%;
+    border-collapse: collapse;
+    margin: 16px 0;
+    font-size: 13px;
+  }
+  .arch-table th {
+    text-align: left;
+    color: var(--text-sec);
+    font-weight: 600;
+    padding: 8px 12px;
+    border-bottom: 1px solid var(--divider);
+    font-size: 11px;
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+  }
+  .arch-table td {
+    padding: 8px 12px;
+    border-bottom: 1px solid rgba(255,255,255,0.04);
+    color: var(--text);
+    vertical-align: top;
+  }
+  .arch-table code {
+    background: rgba(255,255,255,0.08);
+    padding: 1px 5px;
+    border-radius: 3px;
+    font-size: 11px;
+    font-family: "SF Mono", Menlo, monospace;
+    color: var(--correct);
+  }
+  .arch-table .file-path {
+    color: var(--text-sec);
+    font-size: 11px;
+  }
+
+  /* ============================================================
+     KNOWN LIMITATIONS & IMPROVEMENTS
+     ============================================================ */
+  .info-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(380px, 1fr));
+    gap: 20px;
+    margin-top: 16px;
+  }
+  .info-card {
+    background: var(--card);
+    border: 1px solid var(--card-border);
+    border-radius: 12px;
+    padding: 20px;
+  }
+  .info-card h3 {
+    font-size: 15px;
+    font-weight: 600;
+    margin-bottom: 12px;
+    display: flex;
+    align-items: center;
+    gap: 8px;
+  }
+  .info-card h3 .tag {
+    font-size: 10px;
+    padding: 2px 8px;
+    border-radius: 4px;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+  }
+  .tag-red { background: rgba(255, 69, 58, 0.15); color: var(--reject); }
+  .tag-orange { background: rgba(255, 159, 10, 0.15); color: var(--correct); }
+  .tag-green { background: rgba(48, 209, 88, 0.15); color: var(--confirm); }
+  .tag-blue { background: rgba(0, 122, 255, 0.15); color: var(--outbound); }
+
+  .info-card ul {
+    padding-left: 0;
+    list-style: none;
+  }
+  .info-card li {
+    font-size: 13px;
+    color: var(--text-sec);
+    line-height: 1.55;
+    padding: 4px 0;
+    padding-left: 16px;
+    position: relative;
+  }
+  .info-card li::before {
+    content: "";
+    position: absolute;
+    left: 0;
+    top: 11px;
+    width: 6px;
+    height: 6px;
+    border-radius: 50%;
+  }
+  .info-card.limitations li::before { background: var(--reject); }
+  .info-card.improvements li::before { background: var(--confirm); }
+
+  /* ============================================================
+     COLOR SWATCH ROW
+     ============================================================ */
+  .swatches {
+    display: flex;
+    gap: 12px;
+    flex-wrap: wrap;
+    margin: 16px 0 32px 0;
+  }
+  .swatch {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    background: var(--card);
+    padding: 6px 12px;
+    border-radius: 8px;
+  }
+  .swatch .color-dot {
+    width: 20px;
+    height: 20px;
+    border-radius: 5px;
+    flex-shrink: 0;
+  }
+  .swatch .color-label {
+    font-size: 12px;
+    color: var(--text-sec);
+  }
+  .swatch .color-hex {
+    font-size: 11px;
+    font-family: "SF Mono", Menlo, monospace;
+    color: var(--text-dim);
+  }
+
+  /* ============================================================
+     INTERACTION LEGEND
+     ============================================================ */
+  .legend-row {
+    display: flex;
+    gap: 24px;
+    flex-wrap: wrap;
+    margin: 12px 0 24px 0;
+    padding: 12px 16px;
+    background: var(--card);
+    border-radius: 10px;
+    border: 1px solid var(--card-border);
+  }
+  .legend-item {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    font-size: 12px;
+    color: var(--text-sec);
+  }
+  .legend-icon {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    width: 24px;
+    height: 24px;
+    border-radius: 6px;
+    font-size: 11px;
+    font-weight: 700;
+    flex-shrink: 0;
+  }
+
+  /* ============================================================
+     GRADING UX DIAGRAM
+     ============================================================ */
+  .grading-diagram {
+    display: flex;
+    gap: 16px;
+    flex-wrap: wrap;
+    margin: 16px 0;
+    justify-content: center;
+  }
+  .grading-card {
+    background: var(--card);
+    border: 1px solid var(--card-border);
+    border-radius: 12px;
+    padding: 16px;
+    width: 200px;
+    text-align: center;
+  }
+  .grading-card .gesture {
+    font-size: 28px;
+    margin-bottom: 8px;
+  }
+  .grading-card .gesture-name {
+    font-size: 13px;
+    font-weight: 600;
+    margin-bottom: 4px;
+  }
+  .grading-card .gesture-desc {
+    font-size: 11px;
+    color: var(--text-sec);
+    line-height: 1.4;
+  }
+
+  /* ============================================================
+     RESPONSIVE
+     ============================================================ */
+  @media (max-width: 860px) {
+    .phones-row { flex-direction: column; align-items: center; }
+    .info-grid { grid-template-columns: 1fr; }
+  }
+</style>
+</head>
+<body>
+
+<!-- ================================================================
+     PAGE HEADER
+     ================================================================ -->
+<div class="page-header">
+  <h1>CamberRedline iOS Wireframe</h1>
+  <div class="subtitle">Per-contact threaded view + AI claim grading feedback loop</div>
+  <div class="meta">
+    <span>SwiftUI / iOS 17+</span>
+    <span>@Observable ViewModels</span>
+    <span>supabase-swift v2.x</span>
+    <span>Anon key + RLS</span>
+    <span>Realtime (claim_grades)</span>
+  </div>
+</div>
+
+<!-- ================================================================
+     COLOR TOKENS
+     ================================================================ -->
+<h2 class="section-heading">Color Tokens</h2>
+<p class="section-desc">
+  Exact SwiftUI color values extracted from source. The app forces <code>.preferredColorScheme(.dark)</code> globally.
+</p>
+<div class="swatches">
+  <div class="swatch"><div class="color-dot" style="background:#000;border:1px solid #333"></div><div><div class="color-label">Background</div><div class="color-hex">#000000</div></div></div>
+  <div class="swatch"><div class="color-dot" style="background:#1C1C1E"></div><div><div class="color-label">Card / secondarySystemBg</div><div class="color-hex">#1C1C1E</div></div></div>
+  <div class="swatch"><div class="color-dot" style="background:#2C2C2E"></div><div><div class="color-label">Inbound SMS / tertiary</div><div class="color-hex">#2C2C2E</div></div></div>
+  <div class="swatch"><div class="color-dot" style="background:#30D158"></div><div><div class="color-label">Confirm / Inbound</div><div class="color-hex">#30D158</div></div></div>
+  <div class="swatch"><div class="color-dot" style="background:#FF453A"></div><div><div class="color-label">Reject</div><div class="color-hex">#FF453A</div></div></div>
+  <div class="swatch"><div class="color-dot" style="background:#FF9F0A"></div><div><div class="color-label">Correct / Badge</div><div class="color-hex">#FF9F0A</div></div></div>
+  <div class="swatch"><div class="color-dot" style="background:#007AFF"></div><div><div class="color-label">Outbound / Accent</div><div class="color-hex">#007AFF</div></div></div>
+  <div class="swatch"><div class="color-dot" style="background:#8E8E93"></div><div><div class="color-label">Secondary Text</div><div class="color-hex">#8E8E93</div></div></div>
+  <div class="swatch"><div class="color-dot" style="background:#636366"></div><div><div class="color-label">Dim / Ungraded</div><div class="color-hex">#636366</div></div></div>
+</div>
+
+<!-- ================================================================
+     INTERACTION LEGEND
+     ================================================================ -->
+<h2 class="section-heading">Visual Legend</h2>
+<div class="legend-row">
+  <div class="legend-item">
+    <div class="legend-icon" style="background:var(--confirm); color:#000;">IN</div>
+    Inbound call accent (green bar)
+  </div>
+  <div class="legend-item">
+    <div class="legend-icon" style="background:var(--outbound); color:#fff;">OUT</div>
+    Outbound call accent (blue bar)
+  </div>
+  <div class="legend-item">
+    <div class="legend-icon" style="background:var(--outbound); color:#fff; border-radius:12px;">SMS</div>
+    Outbound SMS bubble (blue, right-aligned)
+  </div>
+  <div class="legend-item">
+    <div class="legend-icon" style="background:var(--inbound-bg); color:#fff; border-radius:12px;">SMS</div>
+    Inbound SMS bubble (gray, left-aligned)
+  </div>
+  <div class="legend-item">
+    <div class="grade-dot grade-ungraded" style="width:16px;height:16px;"></div>
+    Ungraded claim
+  </div>
+  <div class="legend-item">
+    <div class="grade-dot grade-confirm" style="width:16px;height:16px;">&#10003;</div>
+    Confirmed
+  </div>
+  <div class="legend-item">
+    <div class="grade-dot grade-reject" style="width:16px;height:16px;">&#10005;</div>
+    Rejected
+  </div>
+  <div class="legend-item">
+    <div class="grade-dot grade-correct" style="width:16px;height:16px;">&#9998;</div>
+    Corrected
+  </div>
+  <div class="legend-item">
+    <div class="badge" style="font-size:11px;">12</div>
+    Ungraded count badge
+  </div>
+</div>
+
+<!-- ================================================================
+     PHONE MOCKUPS
+     ================================================================ -->
+<h2 class="section-heading">Screen Mockups</h2>
+<p class="section-desc">
+  Two primary screens: <strong>ContactListView</strong> (NavigationStack root) and <strong>ThreadView</strong> (pushed via NavigationLink). Both use pull-to-refresh. No Realtime push for new interactions yet — refresh is manual.
+</p>
+
+<div class="phones-row">
+
+  <!-- ============================================================
+       SCREEN 1: CONTACT LIST
+       ============================================================ -->
+  <div class="phone-col">
+    <div class="phone-label">Screen 1 — Contact List</div>
+    <div class="phone-frame">
+      <div class="notch"></div>
+      <div class="status-bar">
+        <span class="time">9:41</span>
+        <span class="icons">
+          <span>&#9679;&#9679;&#9679;&#9679;&#9675;</span>
+          <span style="margin-left:4px;">WiFi</span>
+          <span style="margin-left:4px;">100%</span>
+        </span>
+      </div>
+      <div class="nav-bar">
+        <span class="nav-title">Redline</span>
+      </div>
+      <div class="phone-content">
+
+        <!-- Contact 1 — Zack Sittler -->
+        <div class="contact-row">
+          <div class="avatar">ZS</div>
+          <div class="contact-info">
+            <div class="contact-top">
+              <span class="contact-name">Zack Sittler</span>
+              <span class="contact-time">2h</span>
+            </div>
+            <div class="contact-preview">
+              <span class="icon">&#128222;</span>
+              <span class="dir-arrow dir-in">&#8601;</span>
+              <span>Tile work starts Thursday on the master bath...</span>
+            </div>
+          </div>
+          <span class="badge">23</span>
+          <span class="chevron">&#8250;</span>
+        </div>
+
+        <!-- Contact 2 — Randy Booth -->
+        <div class="contact-row">
+          <div class="avatar">RB</div>
+          <div class="contact-info">
+            <div class="contact-top">
+              <span class="contact-name">Randy Booth</span>
+              <span class="contact-time">5h</span>
+            </div>
+            <div class="contact-preview">
+              <span class="icon">&#128172;</span>
+              <span class="dir-arrow dir-out">&#8599;</span>
+              <span>I'll send the updated spec sheet tonight</span>
+            </div>
+          </div>
+          <span class="badge">8</span>
+          <span class="chevron">&#8250;</span>
+        </div>
+
+        <!-- Contact 3 — Brian Dove -->
+        <div class="contact-row">
+          <div class="avatar">BD</div>
+          <div class="contact-info">
+            <div class="contact-top">
+              <span class="contact-name">Brian Dove</span>
+              <span class="contact-time">1d</span>
+            </div>
+            <div class="contact-preview">
+              <span class="icon">&#128222;</span>
+              <span class="dir-arrow dir-out">&#8599;</span>
+              <span>Framing crew confirmed for Monday 7am</span>
+            </div>
+          </div>
+          <span class="badge">5</span>
+          <span class="chevron">&#8250;</span>
+        </div>
+
+        <!-- Contact 4 — Jeff Swinney -->
+        <div class="contact-row">
+          <div class="avatar">JS</div>
+          <div class="contact-info">
+            <div class="contact-top">
+              <span class="contact-name">Jeff Swinney</span>
+              <span class="contact-time">1d</span>
+            </div>
+            <div class="contact-preview">
+              <span class="icon">&#128222;</span>
+              <span class="dir-arrow dir-in">&#8601;</span>
+              <span>Permit issue — county wants updated drawings</span>
+            </div>
+          </div>
+          <span class="badge">3</span>
+          <span class="chevron">&#8250;</span>
+        </div>
+
+        <!-- Contact 5 — Mike Hurley -->
+        <div class="contact-row">
+          <div class="avatar">MH</div>
+          <div class="contact-info">
+            <div class="contact-top">
+              <span class="contact-name">Mike Hurley</span>
+              <span class="contact-time">2d</span>
+            </div>
+            <div class="contact-preview">
+              <span class="icon">&#128172;</span>
+              <span class="dir-arrow dir-out">&#8599;</span>
+              <span>Thanks Chad, see you at the site tomorrow</span>
+            </div>
+          </div>
+          <span class="chevron">&#8250;</span>
+        </div>
+
+        <!-- Contact 6 — Laura Skelton -->
+        <div class="contact-row">
+          <div class="avatar">LS</div>
+          <div class="contact-info">
+            <div class="contact-top">
+              <span class="contact-name">Laura Skelton</span>
+              <span class="contact-time">3d</span>
+            </div>
+            <div class="contact-preview">
+              <span class="icon">&#128222;</span>
+              <span class="dir-arrow dir-in">&#8601;</span>
+              <span>68 calls &middot; 12 messages</span>
+            </div>
+          </div>
+          <span class="badge">11</span>
+          <span class="chevron">&#8250;</span>
+        </div>
+
+        <!-- Contact 7 — Tommy Woodbery -->
+        <div class="contact-row">
+          <div class="avatar">TW</div>
+          <div class="contact-info">
+            <div class="contact-top">
+              <span class="contact-name">Tommy Woodbery</span>
+              <span class="contact-time">5d</span>
+            </div>
+            <div class="contact-preview">
+              <span class="icon">&#128222;</span>
+              <span class="dir-arrow dir-out">&#8599;</span>
+              <span>42 calls &middot; 3 messages</span>
+            </div>
+          </div>
+          <span class="chevron">&#8250;</span>
+        </div>
+
+        <!-- Contact 8 — Paul Winship -->
+        <div class="contact-row">
+          <div class="avatar">PW</div>
+          <div class="contact-info">
+            <div class="contact-top">
+              <span class="contact-name">Paul Winship</span>
+              <span class="contact-time">Feb 19</span>
+            </div>
+            <div class="contact-preview">
+              <span class="icon">&#128222;</span>
+              <span class="dir-arrow dir-in">&#8601;</span>
+              <span>31 calls</span>
+            </div>
+          </div>
+          <span class="chevron">&#8250;</span>
+        </div>
+
+      </div>
+      <div class="home-indicator"></div>
+    </div>
+
+    <!-- Annotations for Screen 1 -->
+    <div style="margin-top:16px; max-width:375px;">
+      <div style="font-size:13px; font-weight:600; color:var(--annotation); margin-bottom:8px;">Component Annotations</div>
+      <div style="display:flex; flex-direction:column; gap:6px; font-size:12px; color:var(--text-sec);">
+        <div><span style="color:var(--annotation); font-weight:600;">NavigationStack</span> — root container, .navigationTitle("Redline")</div>
+        <div><span style="color:var(--annotation); font-weight:600;">List(.plain)</span> — .refreshable (pull-to-refresh), .scrollContentBackground(.hidden)</div>
+        <div><span style="color:var(--annotation); font-weight:600;">ContactRow</span> — initials avatar (Circle, gray bg), name + time, preview snippet, direction arrow</div>
+        <div><span style="color:var(--annotation); font-weight:600;">Badge (Capsule)</span> — orange, shows ungradedCount when > 0</div>
+        <div><span style="color:var(--annotation); font-weight:600;">Direction arrows</span> — green down-left = inbound, blue up-right = outbound</div>
+        <div><span style="color:var(--annotation); font-weight:600;">Interaction icon</span> — phone.fill for calls, message.fill for SMS</div>
+        <div><span style="color:var(--annotation); font-weight:600;">Realtime</span> — subscribes to INSERT on interactions table (auto-refresh list)</div>
+        <div><span style="color:var(--annotation); font-weight:600;">Data source</span> — PostgREST SELECT from redline_contacts view, ordered by last_activity DESC</div>
+      </div>
+    </div>
+  </div>
+
+  <!-- ============================================================
+       SCREEN 2: THREAD VIEW
+       ============================================================ -->
+  <div class="phone-col">
+    <div class="phone-label">Screen 2 — Thread View</div>
+    <div class="phone-frame">
+      <div class="notch"></div>
+      <div class="status-bar">
+        <span class="time">9:41</span>
+        <span class="icons">
+          <span>&#9679;&#9679;&#9679;&#9679;&#9675;</span>
+          <span style="margin-left:4px;">WiFi</span>
+          <span style="margin-left:4px;">98%</span>
+        </span>
+      </div>
+      <div class="nav-bar-inline">
+        <span class="back-btn">&#8249; Redline</span>
+        <span class="inline-title" style="flex:1; text-align:center;">Zack Sittler</span>
+        <span style="width:80px;"></span>
+      </div>
+      <div class="phone-content">
+
+        <!-- Date header -->
+        <div class="date-header">Feb 20, 2026</div>
+
+        <!-- SMS inbound -->
+        <div class="sms-row inbound">
+          <div class="sms-bubble-wrap align-left">
+            <div class="sms-bubble inbound">Hey Chad, tile samples arrived. Want me to drop them at the Sittler site?</div>
+            <div class="sms-time">8:14 AM</div>
+          </div>
+        </div>
+
+        <!-- SMS outbound -->
+        <div class="sms-row outbound">
+          <div class="sms-bubble-wrap align-right">
+            <div class="sms-bubble outbound">Yeah leave them in the garage. I'll swing by after lunch.</div>
+            <div class="sms-time">8:22 AM</div>
+          </div>
+        </div>
+
+        <!-- Call card — Inbound -->
+        <div class="call-card">
+          <div class="accent-bar accent-inbound"></div>
+          <div class="call-header">
+            <span class="call-icon inbound">&#128222;</span>
+            <div class="call-meta">
+              <div class="call-title">Phone Call</div>
+              <div class="call-detail">10:34 AM &middot; Inbound</div>
+            </div>
+            <span class="call-dir-arrow" style="color:var(--confirm);">&#8601;</span>
+          </div>
+          <div class="call-summary-text">
+            Discussed tile layout for master bathroom. Zack confirmed he wants the herringbone pattern. Mentioned the plumber is running behind on rough-in.
+          </div>
+          <div class="call-divider"></div>
+          <div class="claims-label">Claims (3)</div>
+
+          <!-- Claim 1: confirmed -->
+          <div class="claim-row">
+            <div class="grade-dot grade-confirm">&#10003;</div>
+            <div class="claim-content">
+              <div class="claim-type-badge">commitment</div>
+              <div class="claim-text">Tile layout confirmed as herringbone pattern for master bath</div>
+              <div class="claim-graded-by">Graded by ios_reviewer</div>
+            </div>
+          </div>
+
+          <!-- Claim 2: ungraded -->
+          <div class="claim-row">
+            <div class="grade-dot grade-ungraded"></div>
+            <div class="claim-content">
+              <div class="claim-type-badge">blocker</div>
+              <div class="claim-text">Plumber running behind on rough-in, may delay tile start</div>
+            </div>
+          </div>
+
+          <!-- Claim 3: corrected -->
+          <div class="claim-row">
+            <div class="grade-dot grade-correct">&#9998;</div>
+            <div class="claim-content">
+              <div class="claim-type-badge">deadline</div>
+              <div class="claim-text">Tile work starts Wednesday</div>
+              <div class="claim-correction">&#9998; Actually starts Thursday — Zack misspoke, corrected later in call</div>
+              <div class="claim-graded-by">Graded by ios_reviewer</div>
+            </div>
+          </div>
+
+          <div class="call-divider"></div>
+          <div class="transcript-toggle">&#9660; Show Transcript</div>
+        </div>
+
+        <!-- Date header -->
+        <div class="date-header">Feb 21, 2026</div>
+
+        <!-- SMS inbound -->
+        <div class="sms-row inbound">
+          <div class="sms-bubble-wrap align-left">
+            <div class="sms-bubble inbound">Plumber says he can finish rough-in by end of day Wednesday</div>
+            <div class="sms-time">7:45 AM</div>
+          </div>
+        </div>
+
+        <!-- SMS outbound -->
+        <div class="sms-row outbound">
+          <div class="sms-bubble-wrap align-right">
+            <div class="sms-bubble outbound">Perfect. Tell him to text me when he's wrapping up.</div>
+            <div class="sms-time">7:52 AM</div>
+          </div>
+        </div>
+
+        <!-- Call card — Outbound -->
+        <div class="call-card">
+          <div class="accent-bar accent-outbound"></div>
+          <div class="call-header">
+            <span class="call-icon outbound">&#128222;</span>
+            <div class="call-meta">
+              <div class="call-title">Phone Call</div>
+              <div class="call-detail">2:15 PM &middot; Outbound</div>
+            </div>
+            <span class="call-dir-arrow" style="color:var(--outbound);">&#8599;</span>
+          </div>
+          <div class="call-summary-text">
+            Called Zack to confirm cabinet delivery date. He said the cabinetmaker pushed to next Friday. Discussed backup plan for vanity install.
+          </div>
+          <div class="call-divider"></div>
+          <div class="claims-label">Claims (2)</div>
+
+          <!-- Claim 4: rejected -->
+          <div class="claim-row">
+            <div class="grade-dot grade-reject">&#10005;</div>
+            <div class="claim-content">
+              <div class="claim-type-badge">commitment</div>
+              <div class="claim-text">Cabinets will arrive on Tuesday</div>
+              <div class="claim-graded-by">Graded by ios_reviewer</div>
+            </div>
+          </div>
+
+          <!-- Claim 5: ungraded -->
+          <div class="claim-row">
+            <div class="grade-dot grade-ungraded"></div>
+            <div class="claim-content">
+              <div class="claim-type-badge">schedule</div>
+              <div class="claim-text">Cabinetmaker pushed delivery to next Friday, need backup plan for vanity</div>
+            </div>
+          </div>
+
+          <div class="call-divider"></div>
+          <div class="transcript-toggle">&#9660; Show Transcript</div>
+        </div>
+
+        <!-- Date header -->
+        <div class="date-header">Today</div>
+
+        <!-- SMS inbound -->
+        <div class="sms-row inbound">
+          <div class="sms-bubble-wrap align-left">
+            <div class="sms-bubble inbound">Tile work starts Thursday on the master bath. Need grout color decision by EOD.</div>
+            <div class="sms-time">9:05 AM</div>
+          </div>
+        </div>
+
+      </div>
+      <div class="home-indicator"></div>
+    </div>
+
+    <!-- Annotations for Screen 2 -->
+    <div style="margin-top:16px; max-width:375px;">
+      <div style="font-size:13px; font-weight:600; color:var(--annotation); margin-bottom:8px;">Component Annotations</div>
+      <div style="display:flex; flex-direction:column; gap:6px; font-size:12px; color:var(--text-sec);">
+        <div><span style="color:var(--annotation); font-weight:600;">ScrollViewReader + LazyVStack</span> — auto-scrolls to newest item via .onChange(of: count)</div>
+        <div><span style="color:var(--annotation); font-weight:600;">Date headers</span> — inserted when day changes between items ("Today", "Yesterday", "Feb 20, 2026")</div>
+        <div><span style="color:var(--annotation); font-weight:600;">SMSBubble</span> — UnevenRoundedRectangle for tail effect. Outbound=right/blue, Inbound=left/gray</div>
+        <div><span style="color:var(--annotation); font-weight:600;">CallSummaryCard</span> — 14px padding, 14px corner radius. 3px accent bar on left edge</div>
+        <div><span style="color:var(--annotation); font-weight:600;">Accent bar</span> — green (#30D158) = inbound, blue (#007AFF) = outbound</div>
+        <div><span style="color:var(--annotation); font-weight:600;">Claims section</span> — each ClaimRow has GradeIndicator dot + type badge + text</div>
+        <div><span style="color:var(--annotation); font-weight:600;">Grading UX</span> — swipe left = Confirm (green), swipe right = Reject (red) + Correct (orange), also long-press context menu</div>
+        <div><span style="color:var(--annotation); font-weight:600;">CorrectionSheet</span> — .sheet(.presentationDetents([.height(200)])), TextField + Submit button</div>
+        <div><span style="color:var(--annotation); font-weight:600;">Transcript</span> — DisclosureGroup, shows span segments when expanded</div>
+        <div><span style="color:var(--annotation); font-weight:600;">Data source</span> — Edge function: GET /redline-thread?contact_id=UUID&limit=N</div>
+        <div><span style="color:var(--annotation); font-weight:600;">Realtime</span> — subscribes to INSERT/UPDATE on claim_grades table, merges grades in-place</div>
+      </div>
+    </div>
+  </div>
+
+</div>
+
+<!-- ================================================================
+     GRADING UX DETAIL
+     ================================================================ -->
+<h2 class="section-heading">Grading UX — Dual Interaction Model</h2>
+<p class="section-desc">
+  Claims support two grading gestures: swipe actions (fast, one-handed) and context menu (detailed, preview). The "correct" action opens a half-sheet with a text field for correction input.
+</p>
+<div class="grading-diagram">
+  <div class="grading-card">
+    <div class="gesture" style="color:var(--confirm);">&#8592;</div>
+    <div class="gesture-name">Swipe Left</div>
+    <div class="gesture-desc">Leading edge swipe<br>Confirms claim (green)<br>Full swipe = instant</div>
+  </div>
+  <div class="grading-card">
+    <div class="gesture" style="color:var(--reject);">&#8594;</div>
+    <div class="gesture-name">Swipe Right</div>
+    <div class="gesture-desc">Trailing edge swipe<br>Reject (red) or Correct (orange)<br>Two action buttons</div>
+  </div>
+  <div class="grading-card">
+    <div class="gesture">&#128400;</div>
+    <div class="gesture-name">Long Press</div>
+    <div class="gesture-desc">Context menu with preview<br>Confirm / Reject / Correct<br>System haptics auto</div>
+  </div>
+  <div class="grading-card">
+    <div class="gesture" style="color:var(--correct);">&#9998;</div>
+    <div class="gesture-name">Correction Sheet</div>
+    <div class="gesture-desc">.sheet(.height(200))<br>TextField + Submit button<br>.tint(.orange)</div>
+  </div>
+</div>
+
+<!-- ================================================================
+     DATA FLOW DIAGRAM
+     ================================================================ -->
+<h2 class="section-heading">Data Flow Architecture</h2>
+<p class="section-desc">
+  The iOS app reads contact lists via PostgREST (direct Supabase view query) and thread data via edge function. Grades are written via POST to the same edge function. Realtime subscriptions push grade changes back to the app.
+</p>
+
+<div class="flow-diagram">
+  <div class="flow-node">
+    <div class="flow-icon">&#128225;</div>
+    <div class="flow-title">Pipeline</div>
+    <div class="flow-detail">
+      zapier-call-ingest<br>
+      process-call<br>
+      segment-call<br>
+      ai-router<br>
+      journal-extract
+    </div>
+  </div>
+  <div class="flow-arrow">&#8594;</div>
+  <div class="flow-node">
+    <div class="flow-icon">&#128451;</div>
+    <div class="flow-title">Supabase (gandalf)</div>
+    <div class="flow-detail">
+      redline_contacts (view)<br>
+      redline_thread (view)<br>
+      claim_grades (table)<br>
+      interactions, journal_claims,<br>
+      sms_messages
+    </div>
+  </div>
+  <div class="flow-arrow">&#8594;</div>
+  <div class="flow-node highlight">
+    <div class="flow-icon">&#9889;</div>
+    <div class="flow-title">Edge Function</div>
+    <div class="flow-detail">
+      redline-thread<br>
+      verify_jwt=false<br>
+      GET contacts | thread<br>
+      POST grade
+    </div>
+  </div>
+  <div class="flow-arrow">&#8594;</div>
+  <div class="flow-node" style="border-color:var(--confirm);">
+    <div class="flow-icon">&#128241;</div>
+    <div class="flow-title">iOS App</div>
+    <div class="flow-detail">
+      supabase-swift v2.x<br>
+      Anon key + RLS<br>
+      Realtime (claim_grades)<br>
+      Pull-to-refresh
+    </div>
+  </div>
+</div>
+
+<div class="flow-detail-grid">
+  <div class="flow-detail-card">
+    <h4>Contact List Data Path</h4>
+    <ul>
+      <li><strong>Source:</strong> <code>redline_contacts</code> SQL view (aggregated from interactions + journal_claims + sms_messages + claim_grades)</li>
+      <li><strong>Method:</strong> PostgREST via supabase-swift: <code>client.from("redline_contacts").select().order("last_activity")</code></li>
+      <li><strong>Fields:</strong> contact_id, contact_name, contact_phone, call_count, sms_count, claim_count, ungraded_count, last_activity, last_snippet, last_direction, last_interaction_type</li>
+      <li><strong>Realtime:</strong> Subscribes to INSERT on <code>interactions</code> table; triggers full reload of contacts list</li>
+    </ul>
+  </div>
+  <div class="flow-detail-card">
+    <h4>Thread Data Path</h4>
+    <ul>
+      <li><strong>Source:</strong> Edge function <code>redline-thread</code></li>
+      <li><strong>Request:</strong> <code>GET ?contact_id=UUID&limit=100</code></li>
+      <li><strong>Response:</strong> <code>{ ok, contact: {id,name,phone}, thread: [{type,event_at,direction,...}], pagination: {total,limit,offset} }</code></li>
+      <li><strong>Thread items:</strong> Polymorphic — <code>type:"call"</code> has spans+claims, <code>type:"sms"</code> has content</li>
+      <li><strong>Sorting:</strong> Client-side by eventAt ascending (oldest first, newest at bottom)</li>
+    </ul>
+  </div>
+  <div class="flow-detail-card">
+    <h4>Grade Write Path</h4>
+    <ul>
+      <li><strong>Endpoint:</strong> <code>POST /redline-thread</code></li>
+      <li><strong>Payload:</strong> <code>{ claim_id, grade, correction_text?, graded_by: "ios_reviewer" }</code></li>
+      <li><strong>Grade values:</strong> "confirm" | "reject" | "correct"</li>
+      <li><strong>After write:</strong> Full thread reload + Realtime subscription merges grade in-place</li>
+    </ul>
+  </div>
+  <div class="flow-detail-card">
+    <h4>Realtime Subscription (claim_grades)</h4>
+    <ul>
+      <li><strong>Channel:</strong> <code>claim-grades-{contactId}</code></li>
+      <li><strong>Events:</strong> INSERT + UPDATE on <code>claim_grades</code> table</li>
+      <li><strong>Merge logic:</strong> Walks threadItems -> calls -> spans -> claims, finds matching claim_id, updates grade/correctionText/gradedBy in-place</li>
+      <li><strong>Lifecycle:</strong> Starts on thread load, stops on view disappear</li>
+    </ul>
+  </div>
+</div>
+
+<!-- ================================================================
+     FILE ARCHITECTURE TABLE
+     ================================================================ -->
+<h2 class="section-heading">File Architecture</h2>
+<p class="section-desc">
+  All files live under <code>ios/CamberRedline/CamberRedline/</code>. The app uses the @Observable macro (iOS 17+) instead of ObservableObject/Published.
+</p>
+<table class="arch-table">
+  <thead>
+    <tr>
+      <th>Layer</th>
+      <th>File</th>
+      <th>Responsibility</th>
+    </tr>
+  </thead>
+  <tbody>
+    <tr>
+      <td rowspan="1">App Entry</td>
+      <td><code>CamberRedlineApp.swift</code></td>
+      <td>@main entry. Creates ContactListViewModel + ThreadViewModel as @State. Forces .dark color scheme.</td>
+    </tr>
+    <tr>
+      <td rowspan="3">Models</td>
+      <td><code>Models/Contact.swift</code></td>
+      <td>Codable struct with CodingKeys mapping snake_case. Fields: contactId, name, phone, callCount, smsCount, claimCount, ungradedCount, lastActivity, lastSnippet, lastDirection, lastInteractionType.</td>
+    </tr>
+    <tr>
+      <td><code>Models/ThreadItem.swift</code></td>
+      <td>Enum (call/sms) + CallEntry (interactionId, eventAt, direction, summary, spans[]) + SpanEntry (spanId, spanIndex, transcriptSegment, claims[]) + ClaimEntry (claimId, claimType, claimText, grade, correctionText, gradedBy) + SMSEntry (smsId, eventAt, direction, content). ISO8601 date parsing with fractional seconds support.</td>
+    </tr>
+    <tr>
+      <td><code>Models/ClaimGrade.swift</code></td>
+      <td>GradeType enum (confirm/reject/correct) + NewGrade Encodable struct for POST payload.</td>
+    </tr>
+    <tr>
+      <td rowspan="1">Services</td>
+      <td><code>Services/SupabaseService.swift</code></td>
+      <td>Singleton (@MainActor). SupabaseClient init with anon key. fetchContactsList() via PostgREST. fetchThread() via URLSession to edge function. gradeClaimViaAPI() via POST. ThreadResponse/RawThreadItem polymorphic decoder. ServiceError enum.</td>
+    </tr>
+    <tr>
+      <td rowspan="1">ViewModels</td>
+      <td><code>ViewModels/ThreadViewModel.swift</code></td>
+      <td>@Observable. Contains ThreadViewModel (thread loading, grading, Realtime for claim_grades) + ContactListViewModel (contact loading, Realtime for interactions). RealtimeGradeRecord for in-place merge.</td>
+    </tr>
+    <tr>
+      <td rowspan="7">Views</td>
+      <td><code>Views/ContactListView.swift</code></td>
+      <td>NavigationStack + List(.plain) + .refreshable + .navigationDestination(for: Contact.self). Loading spinner overlay. Error toast at bottom.</td>
+    </tr>
+    <tr>
+      <td><code>Views/ContactRow.swift</code></td>
+      <td>HStack: initials avatar (Circle) + name/time + preview snippet + ungraded badge (Capsule). Relative time formatter (now/5m/3h/2d/Feb 19).</td>
+    </tr>
+    <tr>
+      <td><code>Views/ThreadView.swift</code></td>
+      <td>ScrollViewReader + ScrollView + LazyVStack. Date headers between items. Auto-scroll to bottom on new items. .refreshable. Starts/stops Realtime subscription on appear/disappear.</td>
+    </tr>
+    <tr>
+      <td><code>Views/CallSummaryCard.swift</code></td>
+      <td>VStack: header (phone icon + time + direction) + summary text + Claims section + DisclosureGroup transcript. 3px accent bar overlay (green=inbound, blue=outbound). RoundedRectangle(14).</td>
+    </tr>
+    <tr>
+      <td><code>Views/SMSBubble.swift</code></td>
+      <td>HStack with conditional Spacers. UnevenRoundedRectangle for tail effect (4px on message-side corner). Blue outbound, gray inbound.</td>
+    </tr>
+    <tr>
+      <td><code>Views/ClaimRow.swift</code></td>
+      <td>HStack: GradeIndicator + type badge (Capsule) + claim text + correction display + graded-by. SwipeActions (leading=confirm, trailing=reject+correct). ContextMenu. CorrectionSheet via .sheet.</td>
+    </tr>
+    <tr>
+      <td><code>Views/GradeIndicator.swift</code></td>
+      <td>16px SF Symbol icon. checkmark.circle.fill (green), xmark.circle.fill (red), pencil.circle.fill (orange), circle (gray/ungraded).</td>
+    </tr>
+  </tbody>
+</table>
+
+<!-- ================================================================
+     KNOWN LIMITATIONS
+     ================================================================ -->
+<h2 class="section-heading">Known Limitations</h2>
+
+<div class="info-grid">
+  <div class="info-card limitations">
+    <h3>Data Gaps <span class="tag tag-red">Critical</span></h3>
+    <ul>
+      <li><strong>Edge function vs. view mismatch:</strong> The edge function uses source_span_id join (only 21% of claims visible for high-volume contacts like Zack). The redline_thread SQL view uses the call_id path which returns all 663 claims. The iOS app currently hits the edge function, not the view directly.</li>
+      <li><strong>Span coverage:</strong> Only 32/168 Zack interactions have pipeline-generated spans (19%). Jan 28 - Feb 21 = processed range. Older calls have no spans/claims.</li>
+      <li><strong>Char pointers broken:</strong> 99%+ of journal_claims have misaligned char_start/char_end after transcript reprocessing. Sub-span highlighting not viable in v1.</li>
+      <li><strong>SMS: No pipeline integration.</strong> 120 raw messages displayed as-is. No claims extracted from SMS content.</li>
+    </ul>
+  </div>
+
+  <div class="info-card limitations">
+    <h3>UX Limitations <span class="tag tag-orange">Moderate</span></h3>
+    <ul>
+      <li><strong>No search or filter.</strong> Contact list is a flat scroll ordered by last_activity. No way to search by name or filter by ungraded.</li>
+      <li><strong>No pagination.</strong> Thread loads up to limit=100 items. Contacts with 168+ interactions may be truncated.</li>
+      <li><strong>Pull-to-refresh only.</strong> No Realtime push for new calls/SMS. User must manually pull to see new interactions.</li>
+      <li><strong>Single grader identity:</strong> All grades stamped as "ios_reviewer". No user auth or multi-user support.</li>
+      <li><strong>No undo for grades.</strong> Once a claim is graded, it can be re-graded (upsert) but there's no explicit undo UI.</li>
+      <li><strong>Transcript always collapsed.</strong> DisclosureGroup defaults closed. No way to expand all.</li>
+    </ul>
+  </div>
+
+  <div class="info-card limitations">
+    <h3>Security / Auth <span class="tag tag-red">Critical</span></h3>
+    <ul>
+      <li><strong>Anon key hardcoded</strong> in SupabaseService.swift. No user authentication. Relies entirely on RLS policies.</li>
+      <li><strong>Edge function verify_jwt=false.</strong> Anyone with the URL can read threads and write grades.</li>
+      <li><strong>No rate limiting</strong> on grade submissions or thread fetches.</li>
+      <li><strong>Deploy method:</strong> Xcode direct install (free Apple ID, 7-day re-sign). Not on TestFlight yet ($99/yr).</li>
+    </ul>
+  </div>
+
+  <div class="info-card limitations">
+    <h3>Architecture Debt <span class="tag tag-orange">Moderate</span></h3>
+    <ul>
+      <li><strong>Dual data paths:</strong> Contacts via PostgREST, thread via edge function. Should unify.</li>
+      <li><strong>Full thread reload after grading.</strong> The grade POST triggers a full thread re-fetch. Realtime merge exists but the reload still fires.</li>
+      <li><strong>No offline support.</strong> App requires network for all operations. No local cache or CoreData.</li>
+      <li><strong>ViewModels shared at app level.</strong> ThreadViewModel is shared across navigation, which means navigating to a different contact overwrites the previous thread state.</li>
+    </ul>
+  </div>
+</div>
+
+<!-- ================================================================
+     IMPROVEMENT SUGGESTIONS
+     ================================================================ -->
+<h2 class="section-heading">Improvement Suggestions</h2>
+
+<div class="info-grid">
+  <div class="info-card improvements">
+    <h3>Priority 1 — Data Completeness <span class="tag tag-blue">High Impact</span></h3>
+    <ul>
+      <li><strong>Switch thread source from edge function to PostgREST view.</strong> The redline_thread view returns 6x more claims (call_id join vs source_span_id). This is the single biggest improvement.</li>
+      <li><strong>Increase limit or add true pagination.</strong> Use offset/limit with "load more" button or infinite scroll to handle contacts with 100+ interactions.</li>
+      <li><strong>Backfill older interactions</strong> through the pipeline to generate spans + claims for pre-Jan 28 calls.</li>
+    </ul>
+  </div>
+
+  <div class="info-card improvements">
+    <h3>Priority 2 — UX Enhancements <span class="tag tag-green">Quick Wins</span></h3>
+    <ul>
+      <li><strong>Add search bar</strong> to ContactListView (.searchable modifier). Filter by contact name.</li>
+      <li><strong>Add "ungraded first" sort option</strong> or a filter toggle to show only contacts with ungraded claims.</li>
+      <li><strong>Batch grading:</strong> Allow multi-select on claims to confirm/reject several at once.</li>
+      <li><strong>Grade summary stats</strong> at top of thread: "23 claims: 15 confirmed, 3 rejected, 2 corrected, 3 ungraded".</li>
+      <li><strong>Haptic feedback:</strong> Add UINotificationFeedbackGenerator(.success) on grade confirm, .error on reject. Currently only contextMenu has system haptics.</li>
+    </ul>
+  </div>
+
+  <div class="info-card improvements">
+    <h3>Priority 3 — Security Hardening <span class="tag tag-red">Required for Production</span></h3>
+    <ul>
+      <li><strong>Enable verify_jwt on edge function.</strong> Add user auth (even simple PIN/passcode) before production use.</li>
+      <li><strong>Move anon key to Xcode build config</strong> or Info.plist instead of hardcoded string literal.</li>
+      <li><strong>Add grader identity:</strong> Replace hardcoded "ios_reviewer" with device name or authenticated user ID.</li>
+      <li><strong>Rate limit grade submissions</strong> at the edge function level.</li>
+    </ul>
+  </div>
+
+  <div class="info-card improvements">
+    <h3>Priority 4 — Architecture <span class="tag tag-blue">Medium-Term</span></h3>
+    <ul>
+      <li><strong>Unify data path:</strong> Move thread fetching to PostgREST (same as contacts) to eliminate the edge function dependency for reads.</li>
+      <li><strong>Per-contact ThreadViewModel:</strong> Create a new ViewModel instance per contact to preserve state when navigating between contacts.</li>
+      <li><strong>Add Realtime for new interactions</strong> in thread view (not just contact list) so new calls/SMS appear without pull-to-refresh.</li>
+      <li><strong>Offline cache:</strong> Add SwiftData or lightweight JSON cache for recently viewed threads.</li>
+      <li><strong>TestFlight deployment:</strong> Set up Apple Developer account ($99/yr) for stable distribution without 7-day re-sign.</li>
+    </ul>
+  </div>
+</div>
+
+<!-- ================================================================
+     FOOTER
+     ================================================================ -->
+<div style="margin-top:60px; padding:24px 0; border-top:1px solid var(--divider); text-align:center;">
+  <div style="font-size:12px; color:var(--text-dim);">
+    CamberRedline iOS Wireframe &middot; Generated from source at <code>ios/CamberRedline/CamberRedline/</code>
+    <br>
+    14 Swift files &middot; 2 screens &middot; 7 views &middot; 3 models &middot; 1 service &middot; 1 ViewModel file
+    <br>
+    Supabase project: gandalf (rjhdwidddtfetbwqolof) &middot; Edge function: redline-thread
+  </div>
+</div>
+
+</body>
+</html>

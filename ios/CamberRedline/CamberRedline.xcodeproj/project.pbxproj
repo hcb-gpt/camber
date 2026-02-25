@@ -25,6 +25,11 @@
 		AA1B2C3D4E5F6A7B8C9D0E1F /* TranscriptParser.swift in Sources */ = {isa = PBXBuildFile; fileRef = AB2C3D4E5F6A7B8C9D0E1F2A /* TranscriptParser.swift */; };
 		CC3D4E5F6A7B8C9D0E1F2A3B /* SpeakerTurnBubble.swift in Sources */ = {isa = PBXBuildFile; fileRef = CD4E5F6A7B8C9D0E1F2A3B4C /* SpeakerTurnBubble.swift */; };
 		EE5F6A7B8C9D0E1F2A3B4C5D /* CallHeaderCard.swift in Sources */ = {isa = PBXBuildFile; fileRef = EF6A7B8C9D0E1F2A3B4C5D6E /* CallHeaderCard.swift */; };
+		A1B2C3D4E5F60001AABBCC01 /* ReviewItem.swift in Sources */ = {isa = PBXBuildFile; fileRef = A1B2C3D4E5F60002AABBCC01 /* ReviewItem.swift */; };
+		A1B2C3D4E5F60003AABBCC02 /* ReviewProject.swift in Sources */ = {isa = PBXBuildFile; fileRef = A1B2C3D4E5F60004AABBCC02 /* ReviewProject.swift */; };
+		A1B2C3D4E5F60005AABBCC03 /* BootstrapService.swift in Sources */ = {isa = PBXBuildFile; fileRef = A1B2C3D4E5F60006AABBCC03 /* BootstrapService.swift */; };
+		A1B2C3D4E5F60007AABBCC04 /* TriageViewModel.swift in Sources */ = {isa = PBXBuildFile; fileRef = A1B2C3D4E5F60008AABBCC04 /* TriageViewModel.swift */; };
+		A1B2C3D4E5F60009AABBCC05 /* TriageView.swift in Sources */ = {isa = PBXBuildFile; fileRef = A1B2C3D4E5F6000AAABBCC05 /* TriageView.swift */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXFileReference section */
@@ -46,6 +51,11 @@
 		AB2C3D4E5F6A7B8C9D0E1F2A /* TranscriptParser.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TranscriptParser.swift; sourceTree = "<group>"; };
 		CD4E5F6A7B8C9D0E1F2A3B4C /* SpeakerTurnBubble.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SpeakerTurnBubble.swift; sourceTree = "<group>"; };
 		EF6A7B8C9D0E1F2A3B4C5D6E /* CallHeaderCard.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CallHeaderCard.swift; sourceTree = "<group>"; };
+		A1B2C3D4E5F60002AABBCC01 /* ReviewItem.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ReviewItem.swift; sourceTree = "<group>"; };
+		A1B2C3D4E5F60004AABBCC02 /* ReviewProject.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ReviewProject.swift; sourceTree = "<group>"; };
+		A1B2C3D4E5F60006AABBCC03 /* BootstrapService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BootstrapService.swift; sourceTree = "<group>"; };
+		A1B2C3D4E5F60008AABBCC04 /* TriageViewModel.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TriageViewModel.swift; sourceTree = "<group>"; };
+		A1B2C3D4E5F6000AAABBCC05 /* TriageView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TriageView.swift; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
 /* Begin PBXFrameworksBuildPhase section */
@@ -73,6 +83,7 @@
 				C0B838D3F03C0D2CDB76E802 /* SMSBubble.swift */,
 				CD4E5F6A7B8C9D0E1F2A3B4C /* SpeakerTurnBubble.swift */,
 				055EAEA048AB6BB4CA4EEE80 /* ThreadView.swift */,
+				A1B2C3D4E5F6000AAABBCC05 /* TriageView.swift */,
 			);
 			path = Views;
 			sourceTree = "<group>";
@@ -93,6 +104,7 @@
 			isa = PBXGroup;
 			children = (
 				51E44482F637661C85D155F8 /* ThreadViewModel.swift */,
+				A1B2C3D4E5F60008AABBCC04 /* TriageViewModel.swift */,
 			);
 			path = ViewModels;
 			sourceTree = "<group>";
@@ -108,6 +120,7 @@
 		99BF2C7EF9F55A8850309EB3 /* Services */ = {
 			isa = PBXGroup;
 			children = (
+				A1B2C3D4E5F60006AABBCC03 /* BootstrapService.swift */,
 				49A9C46539AA007D7645122A /* SupabaseService.swift */,
 			);
 			path = Services;
@@ -120,6 +133,8 @@
 				93F9EB787CFB3448E1EFC024 /* Contact.swift */,
 				E620CD5610E49C34C8D6DD31 /* ThreadItem.swift */,
 				AB2C3D4E5F6A7B8C9D0E1F2A /* TranscriptParser.swift */,
+				A1B2C3D4E5F60002AABBCC01 /* ReviewItem.swift */,
+				A1B2C3D4E5F60004AABBCC02 /* ReviewProject.swift */,
 			);
 			path = Models;
 			sourceTree = "<group>";
@@ -206,6 +221,11 @@
 				AA1B2C3D4E5F6A7B8C9D0E1F /* TranscriptParser.swift in Sources */,
 				CC3D4E5F6A7B8C9D0E1F2A3B /* SpeakerTurnBubble.swift in Sources */,
 				EE5F6A7B8C9D0E1F2A3B4C5D /* CallHeaderCard.swift in Sources */,
+				A1B2C3D4E5F60001AABBCC01 /* ReviewItem.swift in Sources */,
+				A1B2C3D4E5F60003AABBCC02 /* ReviewProject.swift in Sources */,
+				A1B2C3D4E5F60005AABBCC03 /* BootstrapService.swift in Sources */,
+				A1B2C3D4E5F60007AABBCC04 /* TriageViewModel.swift in Sources */,
+				A1B2C3D4E5F60009AABBCC05 /* TriageView.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};

@@ -18,7 +18,7 @@ struct GradeIndicator: View {
     }
 
     private var iconColor: Color {
-        guard let grade else { return .gray }
+        guard let grade else { return Color(.systemGray) }
         switch grade {
         case GradeType.confirm.rawValue:
             return .green
@@ -27,7 +27,8 @@ struct GradeIndicator: View {
         case GradeType.correct.rawValue:
             return .orange
         default:
-            return .gray
+            // Unrecognised grade — use adaptive gray that reads on #1C1C1E
+            return Color(.systemGray)
         }
     }
 

@@ -1,5 +1,11 @@
 import SwiftUI
 
+// MARK: - Design tokens
+private let cardBackground = Color(red: 0x1C / 255.0, green: 0x1C / 255.0, blue: 0x1E / 255.0)
+private let textPrimary    = Color.white
+private let textSecondary  = Color(red: 0x8E / 255.0, green: 0x8E / 255.0, blue: 0x93 / 255.0)
+private let cardRadius: CGFloat = 16
+
 struct CallHeaderCard: View {
     let header: CallHeaderEntry
     var viewModel: ThreadViewModel
@@ -8,71 +14,108 @@ struct CallHeaderCard: View {
         header.direction?.lowercased() == "inbound"
     }
 
+    // MARK: - Formatters
+
     nonisolated(unsafe) private static let timeFormatter: DateFormatter = {
         let f = DateFormatter()
         f.timeStyle = .short
         return f
     }()
 
+    nonisolated(unsafe) private static let dateFormatter: DateFormatter = {
+        let f = DateFormatter()
+        f.dateStyle = .medium
+        f.timeStyle = .none
+        return f
+    }()
+
+    private var eventDate: Date? {
+        ThreadItem.callHeader(header).eventAtDate
+    }
+
     private var formattedTime: String {
-        guard let date = ThreadItem.callHeader(header).eventAtDate else {
-            return ""
-        }
+        guard let date = eventDate else { return "" }
         return Self.timeFormatter.string(from: date)
     }
 
+    private var formattedDate: String {
+        guard let date = eventDate else { return "" }
+        if Calendar.current.isDateInToday(date) { return "Today" }
+        if Calendar.current.isDateInYesterday(date) { return "Yesterday" }
+        return Self.dateFormatter.string(from: date)
+    }
+
+    // MARK: - Derived content
+
+    /// First non-empty line of the human summary, falling back to "Phone Call".
+    private var callTitle: String {
+        guard let summary = header.summary, !summary.isEmpty else { return "Phone Call" }
+        let firstLine = summary
+            .components(separatedBy: .newlines)
+            .first(where: { !$0.trimmingCharacters(in: .whitespaces).isEmpty })
+            ?? "Phone Call"
+        return firstLine.trimmingCharacters(in: .whitespaces)
+    }
+
+    /// "👤 Zack ↔ {contactName}" — uses contactName when available.
+    private var participantsLabel: String {
+        if let contact = header.contactName, !contact.isEmpty {
+            return "👤 Zack ↔ \(contact)"
+        }
+        return "👤 Zack"
+    }
+
+    // MARK: - Body
+
     var body: some View {
         VStack(alignment: .leading, spacing: 10) {
-            // Header row
-            HStack(spacing: 10) {
-                Image(systemName: "phone.circle.fill")
-                    .font(.title2)
-                    .foregroundStyle(isInbound ? .green : .blue)
 
-                VStack(alignment: .leading, spacing: 2) {
-                    Text("Phone Call")
-                        .font(.subheadline)
-                        .fontWeight(.semibold)
-                        .foregroundStyle(.white)
+            // ── Top row: phone icon + "Phone Call" label + time right-aligned ──
+            HStack(spacing: 8) {
+                Image(systemName: "phone.fill")
+                    .font(.footnote)
+                    .foregroundStyle(isInbound ? Color.green : Color.blue)
 
-                    HStack(spacing: 4) {
-                        Text(formattedTime)
-                        if let direction = header.direction {
-                            Text("\u{00B7}")
-                            Text(direction.capitalized)
-                        }
-                    }
+                Text("Phone Call")
                     .font(.caption)
-                    .foregroundStyle(.secondary)
-                }
+                    .fontWeight(.semibold)
+                    .foregroundStyle(textSecondary)
 
                 Spacer()
 
-                Image(
-                    systemName: isInbound
-                        ? "arrow.down.left" : "arrow.up.right"
-                )
+                Text(formattedTime)
+                    .font(.caption)
+                    .foregroundStyle(textSecondary)
+            }
+
+            // ── Title: first line of human_summary ──
+            Text(callTitle)
+                .font(.subheadline)
+                .fontWeight(.semibold)
+                .foregroundStyle(textPrimary)
+                .lineLimit(2)
+
+            // ── Participants ──
+            Text(participantsLabel)
                 .font(.caption)
-                .foregroundStyle(.secondary)
+                .foregroundStyle(textSecondary)
+
+            // ── Date ──
+            if !formattedDate.isEmpty {
+                Text(formattedDate)
+                    .font(.caption2)
+                    .foregroundStyle(textSecondary)
             }
 
-            // Summary (truncated to 2 lines)
-            if let summary = header.summary, !summary.isEmpty {
-                Text(summary)
-                    .font(.subheadline)
-                    .foregroundStyle(Color(.systemGray))
-                    .lineLimit(2)
-            }
-
-            // Claims section
+            // ── Claims section ──
             if !header.claims.isEmpty {
                 Divider()
-                    .overlay(Color(.systemGray4))
+                    .overlay(Color.white.opacity(0.1))
 
                 Text("Claims (\(header.claims.count))")
                     .font(.caption)
                     .fontWeight(.semibold)
-                    .foregroundStyle(.secondary)
+                    .foregroundStyle(textSecondary)
                     .textCase(.uppercase)
 
                 ForEach(header.claims) { claim in
@@ -89,16 +132,12 @@ struct CallHeaderCard: View {
             }
         }
         .padding(14)
-        .background(Color(UIColor.secondarySystemBackground))
+        .background(cardBackground)
         .overlay(alignment: .leading) {
             RoundedRectangle(cornerRadius: 2)
-                .fill(
-                    isInbound
-                        ? Color(red: 0.19, green: 0.82, blue: 0.35)
-                        : Color(red: 0, green: 0.48, blue: 1.0)
-                )
+                .fill(isInbound ? Color.green : Color.blue)
                 .frame(width: 3)
         }
-        .clipShape(RoundedRectangle(cornerRadius: 14, style: .continuous))
+        .clipShape(RoundedRectangle(cornerRadius: cardRadius, style: .continuous))
     }
 }
