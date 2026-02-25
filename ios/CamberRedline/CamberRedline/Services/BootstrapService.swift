@@ -2,6 +2,7 @@ import Foundation
 
 // MARK: - BootstrapService
 
+@MainActor
 final class BootstrapService {
     static let shared = BootstrapService()
 
@@ -44,28 +45,41 @@ final class BootstrapService {
 
     // MARK: - Resolve
 
-    func resolve(queueId: String, projectId: String, userId: String = "ios-user") async throws {
+    func resolve(
+        queueId: String,
+        projectId: String,
+        userId: String = "ios-user"
+    ) async throws -> ResolveResponse {
         let body = ResolveRequest(reviewQueueId: queueId, projectId: projectId, userId: userId)
-        try await post(action: "resolve", body: body)
+        let data = try await post(action: "resolve", body: body)
+        let response = try decoder.decode(ResolveResponse.self, from: data)
+        guard response.ok else {
+            throw BootstrapServiceError.apiError(
+                response.error ?? "Resolve endpoint returned ok=false"
+            )
+        }
+        return response
     }
 
     // MARK: - Dismiss
 
     func dismiss(queueId: String, userId: String = "ios-user") async throws {
         let body = DismissRequest(reviewQueueId: queueId, userId: userId)
-        try await post(action: "dismiss", body: body)
+        let data = try await post(action: "dismiss", body: body)
+        try decodeOkResponse(data, action: "dismiss")
     }
 
     // MARK: - Undo
 
     func undo(queueId: String) async throws {
         let body = UndoRequest(reviewQueueId: queueId)
-        try await post(action: "undo", body: body)
+        let data = try await post(action: "undo", body: body)
+        try decodeOkResponse(data, action: "undo")
     }
 
     // MARK: - Helpers
 
-    private func post<T: Encodable>(action: String, body: T) async throws {
+    private func post<T: Encodable>(action: String, body: T) async throws -> Data {
         var components = URLComponents(url: baseURL, resolvingAgainstBaseURL: false)!
         components.queryItems = [URLQueryItem(name: "action", value: action)]
 
@@ -80,12 +94,17 @@ final class BootstrapService {
 
         let (data, response) = try await session.data(for: request)
         try validateHTTPResponse(response)
+        return data
+    }
 
-        if let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
-           let ok = json["ok"] as? Bool, !ok
-        {
-            let message = json["error"] as? String ?? "Unknown error from \(action)"
-            throw BootstrapServiceError.apiError(message)
+    private func decodeOkResponse(_ data: Data, action: String) throws {
+        guard let parsed = try? decoder.decode(BootstrapActionResponse.self, from: data) else {
+            return
+        }
+        guard parsed.ok else {
+            throw BootstrapServiceError.apiError(
+                parsed.error ?? "Unknown error from \(action)"
+            )
         }
     }
 
@@ -97,6 +116,27 @@ final class BootstrapService {
             throw BootstrapServiceError.httpError(statusCode: http.statusCode)
         }
     }
+}
+
+struct ResolveResponse: Decodable {
+    let ok: Bool
+    let reviewQueueId: String?
+    let chosenProjectId: String?
+    let wasAlreadyResolved: Bool?
+    let error: String?
+
+    enum CodingKeys: String, CodingKey {
+        case ok
+        case reviewQueueId = "review_queue_id"
+        case chosenProjectId = "chosen_project_id"
+        case wasAlreadyResolved = "was_already_resolved"
+        case error
+    }
+}
+
+private struct BootstrapActionResponse: Decodable {
+    let ok: Bool
+    let error: String?
 }
 
 // MARK: - Request Bodies

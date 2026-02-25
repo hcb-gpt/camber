@@ -92,20 +92,36 @@ final class TriageViewModel {
     // MARK: - Assign Project
 
     func assignProject(projectId: String) async {
+        guard !isSubmitting else { return }
         guard let item = currentItem else { return }
+        let itemId = item.id
+
         isSubmitting = true
         defer { isSubmitting = false }
-
-        lastAction = .assigned(item: item, projectId: projectId)
+        error = nil
 
         do {
-            try await service.resolve(queueId: item.id, projectId: projectId)
+            let result = try await service.resolve(queueId: itemId, projectId: projectId)
+
+            if let chosenProjectId = result.chosenProjectId,
+               chosenProjectId.lowercased() != projectId.lowercased()
+            {
+                self.error = "Selection mismatch detected. Queue reloaded."
+                await loadQueue()
+                return
+            }
+
+            if result.wasAlreadyResolved == true {
+                advance(resolvedItemId: itemId)
+                return
+            }
+
+            lastAction = .assigned(item: item, projectId: projectId)
             resolvedCount += 1
             streak += 1
-            advance()
+            advance(resolvedItemId: itemId)
         } catch {
             self.error = error.localizedDescription
-            // Revert undo record on failure.
             lastAction = nil
         }
     }
@@ -113,6 +129,7 @@ final class TriageViewModel {
     // MARK: - Skip (local reorder, no API call)
 
     func skip() {
+        guard !isSubmitting else { return }
         guard let item = currentItem else { return }
         lastAction = .skipped(item: item, fromIndex: currentIndex)
 
@@ -128,17 +145,19 @@ final class TriageViewModel {
     // MARK: - Dismiss (mark as no-project / needs no attribution)
 
     func dismiss() async {
+        guard !isSubmitting else { return }
         guard let item = currentItem else { return }
+        let itemId = item.id
+
         isSubmitting = true
         defer { isSubmitting = false }
 
-        lastAction = .dismissed(item: item)
-
         do {
-            try await service.dismiss(queueId: item.id)
+            try await service.dismiss(queueId: itemId)
+            lastAction = .dismissed(item: item)
             dismissedCount += 1
             streak = 0
-            advance()
+            advance(resolvedItemId: itemId)
         } catch {
             self.error = error.localizedDescription
             lastAction = nil
@@ -148,6 +167,7 @@ final class TriageViewModel {
     // MARK: - Undo
 
     func undo() async {
+        guard !isSubmitting else { return }
         guard let action = lastAction else { return }
         lastAction = nil
 
@@ -182,12 +202,19 @@ final class TriageViewModel {
 
     // MARK: - Private Helpers
 
-    private func advance() {
-        // After removing or moving past current item, drop it from queue.
-        if currentIndex < items.count {
-            items.remove(at: currentIndex)
+    private func advance(resolvedItemId: String) {
+        guard let itemIndex = items.firstIndex(where: { $0.id == resolvedItemId }) else {
+            return
         }
-        // currentIndex remains; next item slides into the same slot.
+
+        items.remove(at: itemIndex)
+
+        if currentIndex > itemIndex {
+            currentIndex -= 1
+        }
+        if currentIndex >= items.count {
+            currentIndex = max(items.count - 1, 0)
+        }
     }
 
     private func reinsertAtFront(_ item: ReviewItem) {
