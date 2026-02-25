@@ -1,7 +1,10 @@
 import "jsr:@supabase/functions-js/edge-runtime.d.ts";
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
 
-const FUNCTION_VERSION = "redline-thread_v2.0.0";
+const FUNCTION_VERSION = "redline-thread_v2.0.1";
+const OWNER_SMS_USER_IDS = ["+17066889158", "usr_4PCSTDQ8N161KAC4GG7AF9CR94"];
+const OUTBOUND_INFERENCE_WINDOW_MS = 30 * 60 * 1000;
+const OUTBOUND_INFERENCE_MAX_GAP_MS = 60 * 1000;
 
 function corsHeaders(): Record<string, string> {
   return {
@@ -73,6 +76,69 @@ function extractParticipants(transcript: string | null): string[] {
     if (seen.size >= 6) break;
   }
   return [...seen];
+}
+
+function parseEventMs(value: unknown): number | null {
+  const parsed = Date.parse(String(value || ""));
+  return Number.isFinite(parsed) ? parsed : null;
+}
+
+function isLikelyOwnerOutboundCandidate(row: any): boolean {
+  if (String(row?.direction || "").toLowerCase() !== "outbound") {
+    return false;
+  }
+  const senderUserId = String(row?.sender_user_id || "");
+  const contactName = String(row?.contact_name || "").trim().toLowerCase();
+  return OWNER_SMS_USER_IDS.includes(senderUserId) || contactName === "zack sittler";
+}
+
+function shouldAssignOutboundToInboundWindow(sentAt: unknown, inboundMs: number[]): boolean {
+  const sentMs = parseEventMs(sentAt);
+  if (sentMs === null || inboundMs.length === 0) {
+    return false;
+  }
+
+  let minGap = Number.POSITIVE_INFINITY;
+  for (const inbound of inboundMs) {
+    const gap = Math.abs(sentMs - inbound);
+    if (gap < minGap) minGap = gap;
+    if (minGap <= OUTBOUND_INFERENCE_MAX_GAP_MS) {
+      return true;
+    }
+  }
+  return false;
+}
+
+async function inferMissingOutboundSms(
+  db: any,
+  inboundMs: number[],
+  existingSmsIds: Set<string>,
+): Promise<any[]> {
+  if (inboundMs.length === 0) return [];
+
+  const minInboundMs = Math.min(...inboundMs);
+  const maxInboundMs = Math.max(...inboundMs);
+  const lowerBound = new Date(minInboundMs - OUTBOUND_INFERENCE_WINDOW_MS).toISOString();
+  const upperBound = new Date(maxInboundMs + OUTBOUND_INFERENCE_WINDOW_MS).toISOString();
+
+  const { data, error } = await db
+    .from("sms_messages")
+    .select("id, sent_at, content, direction, contact_name, sender_user_id")
+    .eq("direction", "outbound")
+    .in("sender_user_id", OWNER_SMS_USER_IDS)
+    .gte("sent_at", lowerBound)
+    .lte("sent_at", upperBound)
+    .order("sent_at", { ascending: false });
+
+  if (error) {
+    console.warn("outbound inference query failed:", error.message);
+    return [];
+  }
+
+  return (data || [])
+    .filter((row: any) => !!row.id && !existingSmsIds.has(row.id))
+    .filter((row: any) => isLikelyOwnerOutboundCandidate(row))
+    .filter((row: any) => shouldAssignOutboundToInboundWindow(row.sent_at, inboundMs));
 }
 
 // contacts endpoint
@@ -175,8 +241,32 @@ async function handleThread(
     smsFrom += queryPageSize;
   }
 
-  const hasAnyInbound = allSmsMessages.some((s: any) => s.direction === "inbound");
-  const smsMessages = hasAnyInbound ? allSmsMessages : [];
+  const inboundSms = allSmsMessages.filter((s: any) => String(s.direction || "").toLowerCase() === "inbound");
+  const outboundSms = allSmsMessages.filter((s: any) => String(s.direction || "").toLowerCase() === "outbound");
+  const hasAnyInbound = inboundSms.length > 0;
+  let smsMessages = hasAnyInbound ? allSmsMessages : [];
+
+  if (hasAnyInbound && outboundSms.length === 0) {
+    const inboundMs = inboundSms
+      .map((s: any) => parseEventMs(s.sent_at))
+      .filter((ms: number | null) => ms !== null) as number[];
+    if (inboundMs.length > 0) {
+      const inferredOutbound = await inferMissingOutboundSms(
+        db,
+        inboundMs,
+        new Set(smsMessages.map((s: any) => s.id)),
+      );
+      if (inferredOutbound.length > 0) {
+        smsMessages = smsMessages.concat(inferredOutbound);
+        smsMessages.sort((a: any, b: any) => {
+          const aTime = Date.parse(a.sent_at || "") || 0;
+          const bTime = Date.parse(b.sent_at || "") || 0;
+          if (aTime !== bTime) return bTime - aTime;
+          return String(b.id).localeCompare(String(a.id));
+        });
+      }
+    }
+  }
 
   const timeline = [
     ...allInteractions.map((i: any) => ({
