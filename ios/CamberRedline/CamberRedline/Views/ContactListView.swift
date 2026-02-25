@@ -66,7 +66,7 @@ struct ContactListView: View {
                     await contactListViewModel.loadContacts()
                 }
                 // Realtime subscription is optional; fail silently if auth is unavailable
-                try? await contactListViewModel.subscribeToNewInteractions()
+                await contactListViewModel.subscribeToNewInteractions()
             }
         }
         .preferredColorScheme(.dark)

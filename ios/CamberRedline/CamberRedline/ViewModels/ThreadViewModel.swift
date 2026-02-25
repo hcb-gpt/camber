@@ -143,10 +143,14 @@ final class ThreadViewModel {
         do {
             try await channel.subscribeWithError()
         } catch {
+            if shouldIgnoreRealtimeError(error) {
+                return
+            }
             self.error = "Realtime unavailable: \(error.localizedDescription)"
             await stopClaimGradeSubscription()
             return
         }
+        error = nil
 
         gradeInsertTask = Task { @MainActor [weak self] in
             guard let self else { return }
@@ -231,6 +235,15 @@ final class ThreadViewModel {
             )
         }
     }
+
+    private func shouldIgnoreRealtimeError(_ error: Error) -> Bool {
+        if error is CancellationError {
+            return true
+        }
+
+        let nsError = error as NSError
+        return nsError.domain == NSURLErrorDomain && nsError.code == NSURLErrorCancelled
+    }
 }
 
 @MainActor
@@ -269,11 +282,15 @@ final class ContactListViewModel {
         do {
             try await channel.subscribeWithError()
         } catch {
+            if shouldIgnoreRealtimeError(error) {
+                return
+            }
             self.error = "Realtime unavailable: \(error.localizedDescription)"
             return
         }
 
         interactionsChannel = channel
+        error = nil
 
         interactionsTask = Task { @MainActor [weak self] in
             guard let self else { return }
@@ -299,6 +316,15 @@ final class ContactListViewModel {
         } catch {
             self.error = error.localizedDescription
         }
+    }
+
+    private func shouldIgnoreRealtimeError(_ error: Error) -> Bool {
+        if error is CancellationError {
+            return true
+        }
+
+        let nsError = error as NSError
+        return nsError.domain == NSURLErrorDomain && nsError.code == NSURLErrorCancelled
     }
 }
 

@@ -369,7 +369,9 @@ struct TriageView: View {
                     isAISuggested: isAI,
                     isSubmitting: viewModel.isSubmitting
                 ) {
-                    Task { await viewModel.assignProject(projectId: project.id) }
+                    guard !viewModel.isSubmitting else { return }
+                    let selectedProjectId = project.id
+                    Task { await viewModel.assignProject(projectId: selectedProjectId) }
                 }
             }
         }
