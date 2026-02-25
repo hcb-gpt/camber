@@ -4,11 +4,9 @@ private extension Color {
     static let appBg = Color.black
     static let cardBg = Color(hex: "#151517")
     static let cardBorder = Color(hex: "#2A2A2E")
+    static let transcriptBg = Color(hex: "#101014")
+    static let spanBg = Color(hex: "#1B1C21")
     static let chipBg = Color(hex: "#252528")
-    static let aiBg = Color(hex: "#1B2A46")
-    static let aiBorder = Color(hex: "#4A90D9")
-    static let confidenceTrack = Color(hex: "#2C2C2E")
-    static let confidenceFill = Color(hex: "#30D158")
 }
 
 private extension Color {
@@ -26,31 +24,44 @@ private extension Color {
 
 struct TriageView: View {
     @State private var viewModel = TriageViewModel()
+    @State private var expandedCallIds: Set<String> = []
+    @State private var selectedSpan: TriageSpan?
+    @State private var selectedSpanContactName = ""
 
     var body: some View {
         NavigationStack {
             ZStack(alignment: .bottom) {
                 Color.appBg.ignoresSafeArea()
 
-                if viewModel.isLoading && viewModel.items.isEmpty {
+                if viewModel.isLoading && viewModel.calls.isEmpty {
                     ProgressView("Loading triage feed…")
                         .tint(.white)
                         .foregroundStyle(.secondary)
-                } else if viewModel.items.isEmpty {
+                } else if viewModel.calls.isEmpty {
                     emptyState
                 } else {
                     ScrollView {
                         LazyVStack(spacing: 12) {
                             summaryHeader
 
-                            ForEach(viewModel.items) { item in
-                                TriageFeedCard(
-                                    item: item,
-                                    aiGuessName: viewModel.projectName(for: item.aiGuessProjectId)
+                            ForEach(viewModel.calls) { call in
+                                TriageCallCard(
+                                    call: call,
+                                    isExpanded: expandedCallIds.contains(call.id),
+                                    projectNameForId: { projectId in
+                                        viewModel.projectName(for: projectId)
+                                    },
+                                    onToggleExpanded: {
+                                        toggleCall(call.id)
+                                    },
+                                    onLongPressSpan: { span in
+                                        selectedSpan = span
+                                        selectedSpanContactName = call.contactName
+                                    }
                                 )
                                 .onAppear {
                                     Task {
-                                        await viewModel.loadMoreIfNeeded(currentItem: item)
+                                        await viewModel.loadMoreIfNeeded(currentCall: call)
                                     }
                                 }
                             }
@@ -76,29 +87,63 @@ struct TriageView: View {
             }
             .navigationTitle("Triage")
             .task {
-                if viewModel.items.isEmpty {
+                if viewModel.calls.isEmpty {
                     await viewModel.loadInitialQueue()
                 }
             }
         }
         .preferredColorScheme(.dark)
+        .confirmationDialog(
+            dialogTitle,
+            isPresented: isSpanDialogPresented,
+            titleVisibility: .visible
+        ) {
+            if let selectedSpan {
+                if let currentProjectId = selectedSpan.projectId,
+                   let currentName = viewModel.projectName(for: currentProjectId)
+                {
+                    Button("Confirm \(currentName)") {
+                        applyProject(currentProjectId, to: selectedSpan)
+                    }
+                }
+
+                ForEach(viewModel.projectOptions(for: selectedSpan)) { project in
+                    if project.id != selectedSpan.projectId {
+                        Button("Assign \(project.name)") {
+                            applyProject(project.id, to: selectedSpan)
+                        }
+                    }
+                }
+            }
+
+            Button("Cancel", role: .cancel) {}
+        } message: {
+            if let selectedSpan {
+                Text("Long press detected on a project span for \(selectedSpanContactName).")
+            }
+        }
     }
 
     private var summaryHeader: some View {
         HStack {
-            VStack(alignment: .leading, spacing: 2) {
+            VStack(alignment: .leading, spacing: 3) {
                 Text("Morning Manifest")
                     .font(.headline)
                     .foregroundStyle(.white)
-                Text("Infinite feed · newest first")
+                Text("One card per call · tap to expand")
                     .font(.caption)
                     .foregroundStyle(.secondary)
             }
             Spacer()
-            Text("\(viewModel.items.count) / \(viewModel.totalPending)")
-                .font(.caption)
-                .fontWeight(.semibold)
-                .foregroundStyle(.secondary)
+            VStack(alignment: .trailing, spacing: 3) {
+                Text("\(viewModel.calls.count) calls")
+                    .font(.caption)
+                    .fontWeight(.semibold)
+                    .foregroundStyle(.white)
+                Text("\(viewModel.multiProjectCallCount) multi-project")
+                    .font(.caption2)
+                    .foregroundStyle(.secondary)
+            }
         }
         .padding(12)
         .background(Color.cardBg, in: RoundedRectangle(cornerRadius: 12))
@@ -120,6 +165,43 @@ struct TriageView: View {
         .foregroundStyle(.white)
     }
 
+    private var isSpanDialogPresented: Binding<Bool> {
+        Binding(
+            get: { selectedSpan != nil },
+            set: { shouldPresent in
+                if !shouldPresent {
+                    selectedSpan = nil
+                }
+            }
+        )
+    }
+
+    private var dialogTitle: String {
+        guard let selectedSpan else { return "Span Actions" }
+        if let projectId = selectedSpan.projectId,
+           let projectName = viewModel.projectName(for: projectId)
+        {
+            return "Confirm or change attribution (\(projectName))"
+        }
+        return "Confirm or change attribution"
+    }
+
+    private func applyProject(_ projectId: String, to span: TriageSpan) {
+        let selected = span
+        selectedSpan = nil
+        Task {
+            await viewModel.resolveSpan(selected, to: projectId)
+        }
+    }
+
+    private func toggleCall(_ callId: String) {
+        if expandedCallIds.contains(callId) {
+            expandedCallIds.remove(callId)
+        } else {
+            expandedCallIds.insert(callId)
+        }
+    }
+
     private func errorBanner(_ message: String) -> some View {
         Text(message)
             .font(.caption)
@@ -133,84 +215,67 @@ struct TriageView: View {
     }
 }
 
-private struct TriageFeedCard: View {
-    let item: ReviewItem
-    let aiGuessName: String?
+private struct TriageCallCard: View {
+    let call: TriageCall
+    let isExpanded: Bool
+    let projectNameForId: (String?) -> String?
+    let onToggleExpanded: () -> Void
+    let onLongPressSpan: (TriageSpan) -> Void
 
     var body: some View {
         VStack(alignment: .leading, spacing: 10) {
-            HStack(spacing: 8) {
-                Text(item.contactName ?? "Unknown Contact")
-                    .font(.subheadline)
-                    .fontWeight(.semibold)
-                    .foregroundStyle(.white)
-
-                Spacer()
-
-                Text(relativeTimestamp(for: item.sortDate))
-                    .font(.caption2)
-                    .foregroundStyle(.secondary)
-            }
-
-            Text(item.transcriptSegment)
-                .font(.caption)
-                .fontDesign(.monospaced)
-                .foregroundStyle(Color(white: 0.75))
-                .lineLimit(5)
-
-            HStack(alignment: .center, spacing: 10) {
-                VStack(alignment: .leading, spacing: 4) {
-                    Text("AI Guess")
+            HStack(alignment: .top, spacing: 8) {
+                VStack(alignment: .leading, spacing: 3) {
+                    Text(call.contactName)
+                        .font(.subheadline)
+                        .fontWeight(.semibold)
+                        .foregroundStyle(.white)
+                    Text(eventTimestamp(call.eventDate))
                         .font(.caption2)
                         .foregroundStyle(.secondary)
-                    if let aiGuessName {
-                        Text(aiGuessName)
-                            .font(.caption)
-                            .fontWeight(.semibold)
-                            .foregroundStyle(.white)
-                            .padding(.horizontal, 8)
-                            .padding(.vertical, 4)
-                            .background(Color.aiBg, in: RoundedRectangle(cornerRadius: 6))
-                            .overlay(
-                                RoundedRectangle(cornerRadius: 6)
-                                    .stroke(Color.aiBorder.opacity(0.7), lineWidth: 1)
-                            )
-                    } else {
-                        Text("No suggestion")
-                            .font(.caption)
-                            .foregroundStyle(.secondary)
-                    }
                 }
 
                 Spacer()
 
-                VStack(alignment: .trailing, spacing: 4) {
-                    Text("Confidence")
-                        .font(.caption2)
-                        .foregroundStyle(.secondary)
-                    HStack(spacing: 6) {
-                        ZStack(alignment: .leading) {
-                            RoundedRectangle(cornerRadius: 3)
-                                .fill(Color.confidenceTrack)
-                                .frame(width: 64, height: 5)
-                            RoundedRectangle(cornerRadius: 3)
-                                .fill(Color.confidenceFill)
-                                .frame(width: max(0, 64 * CGFloat(item.confidence)), height: 5)
-                        }
-                        Text("\(Int(item.confidence * 100))%")
-                            .font(.caption)
-                            .foregroundStyle(.secondary)
+                HStack(spacing: 6) {
+                    chip(text: "\(call.spans.count) spans")
+                    if call.hasMultipleProjects {
+                        chip(text: "multi-project", tint: Color(hex: "#3B82F6").opacity(0.25))
+                    }
+                    if call.isMock {
+                        chip(text: "mock", tint: Color(hex: "#FB923C").opacity(0.25))
                     }
                 }
             }
 
-            if let humanSummary = item.humanSummary, !humanSummary.isEmpty {
-                Text(humanSummary)
+            if let summary = call.humanSummary, !summary.isEmpty {
+                Text(summary)
                     .font(.caption)
                     .foregroundStyle(.secondary)
-                    .padding(.horizontal, 8)
-                    .padding(.vertical, 6)
-                    .background(Color.chipBg, in: RoundedRectangle(cornerRadius: 8))
+                    .lineLimit(3)
+            }
+
+            Button {
+                onToggleExpanded()
+            } label: {
+                HStack(spacing: 6) {
+                    Text(isExpanded ? "Hide Full Transcript" : "Show Full Transcript")
+                    Image(systemName: isExpanded ? "chevron.up" : "chevron.down")
+                }
+                .font(.caption)
+                .fontWeight(.semibold)
+                .foregroundStyle(.white)
+                .padding(.horizontal, 10)
+                .padding(.vertical, 6)
+                .background(Color.chipBg, in: RoundedRectangle(cornerRadius: 8))
+            }
+            .buttonStyle(.plain)
+
+            if isExpanded {
+                transcriptPanel
+                spansPanel
+            } else {
+                compactSpansPreview
             }
         }
         .padding(12)
@@ -221,11 +286,166 @@ private struct TriageFeedCard: View {
         )
     }
 
-    private func relativeTimestamp(for date: Date) -> String {
-        guard date != .distantPast else { return "Unknown" }
-        let formatter = RelativeDateTimeFormatter()
-        formatter.unitsStyle = .abbreviated
-        return formatter.localizedString(for: date, relativeTo: .now)
+    private var transcriptPanel: some View {
+        VStack(alignment: .leading, spacing: 6) {
+            Text("Full Transcript")
+                .font(.caption2)
+                .fontWeight(.semibold)
+                .foregroundStyle(.secondary)
+                .textCase(.uppercase)
+
+            ScrollView {
+                Text(call.fullTranscript)
+                    .font(.caption)
+                    .fontDesign(.monospaced)
+                    .foregroundStyle(Color(white: 0.80))
+                    .textSelection(.enabled)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .padding(10)
+            }
+            .frame(maxHeight: 220)
+            .background(Color.transcriptBg, in: RoundedRectangle(cornerRadius: 10))
+            .overlay(
+                RoundedRectangle(cornerRadius: 10)
+                    .stroke(Color.cardBorder.opacity(0.7), lineWidth: 1)
+            )
+        }
+    }
+
+    private var spansPanel: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            HStack {
+                Text("Project Attribution Spans")
+                    .font(.caption2)
+                    .fontWeight(.semibold)
+                    .foregroundStyle(.secondary)
+                    .textCase(.uppercase)
+                Spacer()
+                Text("Long press to confirm/change")
+                    .font(.caption2)
+                    .foregroundStyle(.secondary)
+            }
+
+            ForEach(call.spans) { span in
+                TriageSpanRow(
+                    span: span,
+                    projectName: projectNameForId(span.projectId) ?? "Unassigned",
+                    accentColor: accentColor(for: span.projectId),
+                    onLongPress: {
+                        onLongPressSpan(span)
+                    }
+                )
+            }
+        }
+    }
+
+    private var compactSpansPreview: some View {
+        VStack(alignment: .leading, spacing: 6) {
+            ForEach(call.spans.prefix(2)) { span in
+                HStack(spacing: 8) {
+                    Circle()
+                        .fill(accentColor(for: span.projectId))
+                        .frame(width: 7, height: 7)
+                    Text(projectNameForId(span.projectId) ?? "Unassigned")
+                        .font(.caption2)
+                        .foregroundStyle(.white)
+                    Spacer()
+                    Text("\(Int(span.confidence * 100))%")
+                        .font(.caption2)
+                        .foregroundStyle(.secondary)
+                }
+            }
+        }
+    }
+
+    private func chip(text: String, tint: Color = Color.chipBg) -> some View {
+        Text(text)
+            .font(.caption2)
+            .foregroundStyle(.white)
+            .padding(.horizontal, 7)
+            .padding(.vertical, 4)
+            .background(tint, in: RoundedRectangle(cornerRadius: 7))
+    }
+
+    private func eventTimestamp(_ date: Date) -> String {
+        date.formatted(date: .abbreviated, time: .shortened)
+    }
+
+    private func accentColor(for projectId: String?) -> Color {
+        guard let projectId, !projectId.isEmpty else {
+            return Color(hex: "#8E8E93")
+        }
+        let palette: [Color] = [
+            Color(hex: "#3B82F6"),
+            Color(hex: "#22C55E"),
+            Color(hex: "#F59E0B"),
+            Color(hex: "#EF4444"),
+            Color(hex: "#A855F7"),
+            Color(hex: "#06B6D4"),
+        ]
+        let seed = projectId.unicodeScalars.reduce(0) { partialResult, scalar in
+            partialResult + Int(scalar.value)
+        }
+        return palette[seed % palette.count]
+    }
+}
+
+private struct TriageSpanRow: View {
+    let span: TriageSpan
+    let projectName: String
+    let accentColor: Color
+    let onLongPress: () -> Void
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            HStack(spacing: 8) {
+                Text(projectName)
+                    .font(.caption)
+                    .fontWeight(.semibold)
+                    .foregroundStyle(.white)
+                    .padding(.horizontal, 8)
+                    .padding(.vertical, 4)
+                    .background(accentColor.opacity(0.22), in: RoundedRectangle(cornerRadius: 7))
+
+                Spacer()
+
+                Text("\(Int(span.confidence * 100))%")
+                    .font(.caption2)
+                    .foregroundStyle(.secondary)
+            }
+
+            Text(span.transcriptSegment)
+                .font(.caption)
+                .foregroundStyle(Color(white: 0.83))
+                .lineLimit(nil)
+
+            if !span.reasonCodes.isEmpty {
+                HStack(spacing: 6) {
+                    ForEach(Array(span.reasonCodes.prefix(3)), id: \.self) { reason in
+                        Text(reason)
+                            .font(.caption2)
+                            .foregroundStyle(.secondary)
+                            .padding(.horizontal, 6)
+                            .padding(.vertical, 3)
+                            .background(Color.chipBg, in: Capsule())
+                    }
+                }
+            }
+        }
+        .padding(10)
+        .background(Color.spanBg, in: RoundedRectangle(cornerRadius: 10))
+        .overlay(
+            RoundedRectangle(cornerRadius: 10)
+                .stroke(Color.cardBorder.opacity(0.8), lineWidth: 1)
+        )
+        .overlay(alignment: .leading) {
+            RoundedRectangle(cornerRadius: 2)
+                .fill(accentColor)
+                .frame(width: 3)
+                .padding(.vertical, 6)
+        }
+        .contentShape(RoundedRectangle(cornerRadius: 10))
+        .onLongPressGesture(minimumDuration: 0.35, perform: onLongPress)
     }
 }
 
