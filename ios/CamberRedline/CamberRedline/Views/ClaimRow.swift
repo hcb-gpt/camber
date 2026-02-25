@@ -48,7 +48,11 @@ struct ClaimRow: View {
                 }
             }
         }
-        .padding(.vertical, 4)
+        // Dark card background (#1C1C1E) with horizontal insets for legibility
+        .padding(.horizontal, 12)
+        .padding(.vertical, 8)
+        .background(Color(red: 0.110, green: 0.110, blue: 0.118)) // #1C1C1E
+        .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
         .contentShape(Rectangle())
         .swipeActions(edge: .leading, allowsFullSwipe: true) {
             Button {

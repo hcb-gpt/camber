@@ -3,6 +3,7 @@ import SwiftUI
 struct SMSBubble: View {
     let entry: SMSEntry
     var showTimestamp: Bool = true
+    var senderName: String? = nil
 
     private var isOutbound: Bool {
         entry.direction?.lowercased() == "outbound"
@@ -19,12 +20,16 @@ struct SMSBubble: View {
         return Self.timeFormatter.string(from: date)
     }
 
+    // #007AFF outbound (spec), #2C2C2E inbound (spec)
     private var bubbleColor: Color {
-        isOutbound ? Color(red: 0, green: 0.478, blue: 1) : Color(UIColor.tertiarySystemBackground)
+        isOutbound
+            ? Color(red: 0, green: 0.478, blue: 1)           // #007AFF
+            : Color(red: 0.173, green: 0.173, blue: 0.173)   // #2C2C2E
     }
 
     private var bubbleShape: UnevenRoundedRectangle {
         if isOutbound {
+            // tail at bottom-trailing corner
             UnevenRoundedRectangle(
                 topLeadingRadius: 18,
                 bottomLeadingRadius: 18,
@@ -32,6 +37,7 @@ struct SMSBubble: View {
                 topTrailingRadius: 18
             )
         } else {
+            // tail at bottom-leading corner
             UnevenRoundedRectangle(
                 topLeadingRadius: 18,
                 bottomLeadingRadius: 4,
@@ -46,9 +52,17 @@ struct SMSBubble: View {
             if isOutbound { Spacer(minLength: 60) }
 
             VStack(alignment: isOutbound ? .trailing : .leading, spacing: 2) {
+                // Sender name label — #8E8E93, shown above inbound bubbles only
+                if !isOutbound, let name = senderName, !name.isEmpty {
+                    Text(name)
+                        .font(.caption2)
+                        .foregroundStyle(Color(red: 0.557, green: 0.557, blue: 0.576)) // #8E8E93
+                        .padding(.horizontal, 4)
+                }
+
                 Text(entry.content ?? "")
                     .font(.body)
-                    .foregroundStyle(isOutbound ? .white : .primary)
+                    .foregroundStyle(.white)
                     .padding(.horizontal, 12)
                     .padding(.vertical, 8)
                     .background(bubbleColor)

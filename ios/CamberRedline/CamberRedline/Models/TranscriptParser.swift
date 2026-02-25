@@ -6,7 +6,8 @@ struct SpeakerTurn: Identifiable {
     let id: UUID
     let speaker: String
     let text: String
-    let isOurSide: Bool
+    /// True when this speaker is on the owner side (right-aligned blue bubble).
+    let isOwnerSide: Bool
 
     /// True when this turn's speaker matches the previous turn's speaker (for UI grouping).
     var isConsecutiveWithPrevious: Bool = false
@@ -16,87 +17,57 @@ struct SpeakerTurn: Identifiable {
 
 enum TranscriptParser {
 
-    /// Known names that represent "our side" (Zack / Chad / HCB).
-    private static let ourSideNames: Set<String> = [
-        "zack sittler", "zachary sittler", "zack", "zach",
-        "chad", "chad barlow", "hcb",
+    /// Name fragments (lowercased) that identify the owner side (Zack / Chad / HCB).
+    private static let ownerSideFragments: [String] = [
+        "zack", "zach", "chad", "hcb",
     ]
-
-    // Matches an optional `[HH:MM]` timestamp, then a speaker label, then `: `.
-    // Speaker labels: named ("Malcolm Hetzer"), generic ("SPEAKER_0"), or single word ("Zack").
-    // Anchored to start-of-line (MULTILINE flag).
-    //
-    // Groups:
-    //   1 — optional timestamp bracket, e.g. "[21:12] "
-    //   2 — speaker name
-    private static let speakerPattern: NSRegularExpression = {
-        // Matches named speakers ("Malcolm Hetzer"), generic ("SPEAKER_0"),
-        // and phone numbers ("+14048249717"). Anchored to start-of-line.
-        // Groups: 1 = optional timestamp, 2 = speaker name/number
-        let pattern = #"(?:^|\n)(\[[\d:]+\]\s*)?((?:[A-Za-z_][A-Za-z0-9_ ]*?)|(?:\+\d[\d() -]*)):\s"#
-        // swiftlint:disable:next force_try
-        return try! NSRegularExpression(pattern: pattern, options: [])
-    }()
 
     // MARK: - Public API
 
-    /// Parse a transcript string into an array of `SpeakerTurn` values.
+    /// Parse a `raw_transcript` string into an array of `SpeakerTurn` values.
+    ///
+    /// Expected format: newline-delimited lines of `"Speaker Name: utterance text"`.
+    /// Consecutive turns from the same speaker are merged into one bubble.
     ///
     /// - Parameters:
-    ///   - transcript: The raw transcript text from the database.
-    ///   - contactName: The name of the contact (used to determine left/right side).
-    /// - Returns: An array of speaker turns, with `isConsecutiveWithPrevious` set for grouping.
-    static func parse(_ transcript: String, contactName: String?) -> [SpeakerTurn] {
+    ///   - transcript: The raw transcript text returned by the edge function.
+    ///   - contactName: Unused; kept for call-site compatibility.
+    /// - Returns: Merged speaker turns with `isOwnerSide` and `isConsecutiveWithPrevious` set.
+    static func parse(_ transcript: String, contactName: String? = nil) -> [SpeakerTurn] {
         let trimmed = transcript.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmed.isEmpty else { return [] }
 
-        let nsRange = NSRange(trimmed.startIndex..., in: trimmed)
-        let matches = speakerPattern.matches(in: trimmed, options: [], range: nsRange)
-
-        // No speaker labels found — return the entire transcript as a single turn.
-        guard !matches.isEmpty else {
-            return [
-                SpeakerTurn(
-                    id: UUID(),
-                    speaker: "Unknown",
-                    text: trimmed,
-                    isOurSide: false
-                ),
-            ]
-        }
-
-        // Extract raw (speaker, textBody) pairs from regex matches.
+        // Split into lines and parse each "Speaker: text" line.
         var rawTurns: [(speaker: String, text: String)] = []
 
-        // If there is text before the first match, capture it as an "Unknown" turn.
-        let firstMatchStart = Range(matches[0].range, in: trimmed)!.lowerBound
-        if firstMatchStart > trimmed.startIndex {
-            let prefix = String(trimmed[trimmed.startIndex..<firstMatchStart])
-                .trimmingCharacters(in: .whitespacesAndNewlines)
-            if !prefix.isEmpty {
-                rawTurns.append(("Unknown", prefix))
+        for line in trimmed.components(separatedBy: "\n") {
+            let trimmedLine = line.trimmingCharacters(in: .whitespacesAndNewlines)
+            guard !trimmedLine.isEmpty else { continue }
+
+            // Find the first colon to split speaker from text.
+            if let colonIdx = trimmedLine.firstIndex(of: ":") {
+                let speaker = String(trimmedLine[trimmedLine.startIndex..<colonIdx])
+                    .trimmingCharacters(in: .whitespaces)
+                let text = String(trimmedLine[trimmedLine.index(after: colonIdx)...])
+                    .trimmingCharacters(in: .whitespaces)
+
+                // Skip lines where the speaker is empty or the text is empty.
+                guard !speaker.isEmpty, !text.isEmpty else { continue }
+                rawTurns.append((speaker, text))
+            } else {
+                // No colon on this line — append to the previous speaker's text if possible.
+                if !rawTurns.isEmpty {
+                    rawTurns[rawTurns.count - 1].text += " " + trimmedLine
+                } else {
+                    rawTurns.append(("Unknown", trimmedLine))
+                }
             }
         }
 
-        for (idx, match) in matches.enumerated() {
-            // Extract speaker name (group 2).
-            guard let speakerRange = Range(match.range(at: 2), in: trimmed) else { continue }
-            let speaker = String(trimmed[speakerRange])
-                .trimmingCharacters(in: .whitespacesAndNewlines)
-
-            // Text runs from end of the full match to the start of the next match (or end of string).
-            let matchEnd = Range(match.range, in: trimmed)!.upperBound
-            let textEnd: String.Index
-            if idx + 1 < matches.count {
-                textEnd = Range(matches[idx + 1].range, in: trimmed)!.lowerBound
-            } else {
-                textEnd = trimmed.endIndex
-            }
-
-            let body = String(trimmed[matchEnd..<textEnd])
-                .trimmingCharacters(in: .whitespacesAndNewlines)
-
-            rawTurns.append((speaker, body))
+        guard !rawTurns.isEmpty else {
+            return [
+                SpeakerTurn(id: UUID(), speaker: "Unknown", text: trimmed, isOwnerSide: false),
+            ]
         }
 
         // Merge consecutive turns from the same speaker.
@@ -109,20 +80,17 @@ enum TranscriptParser {
             }
         }
 
-        // Determine which speakers are "our side".
-        let contactLower = contactName?.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
-
-        // Build SpeakerTurn array with consecutive grouping.
+        // Build SpeakerTurn array with consecutive grouping markers.
         var result: [SpeakerTurn] = []
         for (idx, entry) in merged.enumerated() {
-            let isOur = isOurSide(speaker: entry.speaker, contactNameLower: contactLower)
+            let ownerSide = isOwnerSide(speaker: entry.speaker)
             let consecutive = idx > 0 && merged[idx - 1].speaker == entry.speaker
             result.append(
                 SpeakerTurn(
                     id: UUID(),
                     speaker: entry.speaker,
                     text: entry.text,
-                    isOurSide: isOur,
+                    isOwnerSide: ownerSide,
                     isConsecutiveWithPrevious: consecutive
                 )
             )
@@ -133,19 +101,9 @@ enum TranscriptParser {
 
     // MARK: - Private helpers
 
-    /// Decide whether a speaker name represents "our side" (HCB team).
-    ///
-    /// Only speakers explicitly in `ourSideNames` are treated as our side.
-    /// Everyone else defaults to external (left-side / gray bubbles).
-    private static func isOurSide(speaker: String, contactNameLower: String?) -> Bool {
-        let speakerLower = speaker.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
-
-        // Explicit our-side match (Zack, Chad, HCB).
-        if ourSideNames.contains(speakerLower) {
-            return true
-        }
-
-        // Everyone else is external.
-        return false
+    /// Returns true when the speaker name contains a known owner-side fragment.
+    private static func isOwnerSide(speaker: String) -> Bool {
+        let speakerLower = speaker.lowercased()
+        return ownerSideFragments.contains(where: { speakerLower.contains($0) })
     }
 }
