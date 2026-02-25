@@ -5,6 +5,8 @@ import Foundation
 enum ThreadItem: Identifiable {
     case call(CallEntry)
     case sms(SMSEntry)
+    case speakerTurn(SpeakerTurn)
+    case callHeader(CallHeaderEntry)
 
     var id: String {
         switch self {
@@ -12,6 +14,10 @@ enum ThreadItem: Identifiable {
             return "call-\(entry.interactionId)"
         case .sms(let entry):
             return "sms-\(entry.smsId.uuidString)"
+        case .speakerTurn(let turn):
+            return "turn-\(turn.id.uuidString)"
+        case .callHeader(let header):
+            return "header-\(header.interactionId)"
         }
     }
 
@@ -22,6 +28,10 @@ enum ThreadItem: Identifiable {
             raw = entry.eventAt
         case .sms(let entry):
             raw = entry.eventAt
+        case .speakerTurn:
+            return nil
+        case .callHeader(let header):
+            raw = header.eventAt
         }
         return Self.parseISO8601(raw)
     }
@@ -53,15 +63,37 @@ struct CallEntry: Codable {
     let eventAt: String
     let direction: String?
     let summary: String?
+    let transcript: String?
     let spans: [SpanEntry]
+    let claims: [ClaimEntry]?
 
     enum CodingKeys: String, CodingKey {
         case interactionId = "interaction_id"
         case eventAt = "event_at"
         case direction
         case summary
+        case transcript
         case spans
+        case claims
     }
+
+    /// All claims — prefers top-level claims (from call_id path), falls back to span claims.
+    var allClaims: [ClaimEntry] {
+        if let topLevel = claims, !topLevel.isEmpty {
+            return topLevel
+        }
+        return spans.flatMap(\.claims)
+    }
+}
+
+// MARK: - CallHeaderEntry
+
+struct CallHeaderEntry {
+    let interactionId: String
+    let eventAt: String
+    let direction: String?
+    let summary: String?
+    let claims: [ClaimEntry]
 }
 
 // MARK: - SpanEntry

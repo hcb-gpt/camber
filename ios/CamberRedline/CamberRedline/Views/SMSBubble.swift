@@ -2,6 +2,7 @@ import SwiftUI
 
 struct SMSBubble: View {
     let entry: SMSEntry
+    var showTimestamp: Bool = true
 
     private var isOutbound: Bool {
         entry.direction?.lowercased() == "outbound"
@@ -19,30 +20,30 @@ struct SMSBubble: View {
     }
 
     private var bubbleColor: Color {
-        isOutbound ? Color(red: 0, green: 0.478, blue: 1) : Color(UIColor.secondarySystemBackground)
+        isOutbound ? Color(red: 0, green: 0.478, blue: 1) : Color(UIColor.tertiarySystemBackground)
     }
 
     private var bubbleShape: UnevenRoundedRectangle {
         if isOutbound {
             UnevenRoundedRectangle(
-                topLeadingRadius: 16,
-                bottomLeadingRadius: 16,
+                topLeadingRadius: 18,
+                bottomLeadingRadius: 18,
                 bottomTrailingRadius: 4,
-                topTrailingRadius: 16
+                topTrailingRadius: 18
             )
         } else {
             UnevenRoundedRectangle(
-                topLeadingRadius: 16,
+                topLeadingRadius: 18,
                 bottomLeadingRadius: 4,
-                bottomTrailingRadius: 16,
-                topTrailingRadius: 16
+                bottomTrailingRadius: 18,
+                topTrailingRadius: 18
             )
         }
     }
 
     var body: some View {
         HStack {
-            if isOutbound { Spacer(minLength: 0) }
+            if isOutbound { Spacer(minLength: 60) }
 
             VStack(alignment: isOutbound ? .trailing : .leading, spacing: 2) {
                 Text(entry.content ?? "")
@@ -53,16 +54,15 @@ struct SMSBubble: View {
                     .background(bubbleColor)
                     .clipShape(bubbleShape)
 
-                Text(formattedTime)
-                    .font(.caption2)
-                    .foregroundStyle(.secondary)
-                    .padding(.horizontal, 4)
-            }
-            .containerRelativeFrame(.horizontal, alignment: isOutbound ? .trailing : .leading) { width, _ in
-                width * 0.75
+                if showTimestamp {
+                    Text(formattedTime)
+                        .font(.caption2)
+                        .foregroundStyle(.secondary)
+                        .padding(.horizontal, 4)
+                }
             }
 
-            if !isOutbound { Spacer(minLength: 0) }
+            if !isOutbound { Spacer(minLength: 60) }
         }
     }
 }

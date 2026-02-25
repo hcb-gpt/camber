@@ -135,7 +135,9 @@ struct RawThreadItem: Decodable {
         case eventAt = "event_at"
         case direction
         case summary
+        case transcript
         case spans
+        case claims
         case interactionId = "interaction_id"
         case content
         case smsId = "sms_id"
@@ -151,13 +153,17 @@ struct RawThreadItem: Decodable {
             let eventAt = try container.decode(String.self, forKey: .eventAt)
             let direction = try container.decodeIfPresent(String.self, forKey: .direction)
             let summary = try container.decodeIfPresent(String.self, forKey: .summary)
+            let transcript = try container.decodeIfPresent(String.self, forKey: .transcript)
             let spans = try container.decodeIfPresent([SpanEntry].self, forKey: .spans) ?? []
+            let claims = try container.decodeIfPresent([ClaimEntry].self, forKey: .claims)
             callEntry = CallEntry(
                 interactionId: interactionId,
                 eventAt: eventAt,
                 direction: direction,
                 summary: summary,
-                spans: spans
+                transcript: transcript,
+                spans: spans,
+                claims: claims
             )
             smsEntry = nil
 

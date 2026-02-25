@@ -123,6 +123,11 @@ struct CallSummaryCard: View {
         }
         .padding(14)
         .background(Color(UIColor.secondarySystemBackground))
+        .overlay(alignment: .leading) {
+            RoundedRectangle(cornerRadius: 2)
+                .fill(isInbound ? Color(red: 0.19, green: 0.82, blue: 0.35) : Color(red: 0, green: 0.48, blue: 1.0))
+                .frame(width: 3)
+        }
         .clipShape(RoundedRectangle(cornerRadius: 14, style: .continuous))
     }
 
