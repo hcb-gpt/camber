@@ -40,7 +40,7 @@ async function handleContacts(db: any, t0: number): Promise<Response> {
     .not("event_at_utc", "is", null);
   if (countErr) return json({ ok: false, error_code: "counts_query_failed", error: countErr.message }, 500);
 
-  const { data: smsRows, error: smsErr } = await db.from("sms_messages").select("contact_phone");
+  const { data: smsRows, error: smsErr } = await db.from("sms_messages").select("contact_phone, direction");
   if (smsErr) return json({ ok: false, error_code: "sms_counts_failed", error: smsErr.message }, 500);
 
   const callCountMap = new Map<
@@ -79,9 +79,20 @@ async function handleContacts(db: any, t0: number): Promise<Response> {
     latestDirectionMap = new Map((latestCallsRaw || []).map((c: any) => [c.interaction_id, c.direction]));
   }
 
+  // Compute which contact_phones have at least one inbound SMS.
+  // Only count SMS for phones that have inbound messages (exclude outbound-only contacts).
+  const phonesWithInbound = new Set<string>();
+  for (const row of smsRows || []) {
+    if (row.direction === "inbound") {
+      phonesWithInbound.add(row.contact_phone);
+    }
+  }
+
   const smsCountMap = new Map<string, number>();
   for (const row of smsRows || []) {
-    smsCountMap.set(row.contact_phone, (smsCountMap.get(row.contact_phone) || 0) + 1);
+    if (phonesWithInbound.has(row.contact_phone)) {
+      smsCountMap.set(row.contact_phone, (smsCountMap.get(row.contact_phone) || 0) + 1);
+    }
   }
 
   const result = (data || [])
@@ -199,11 +210,18 @@ async function handleThread(
 
   const gradeMap = new Map((grades || []).map((g: any) => [g.claim_id, g]));
 
-  const { data: smsMessages } = await db
+  let { data: smsMessages } = await db
     .from("sms_messages")
     .select("id, sent_at, content, direction, contact_name")
     .eq("contact_phone", contact.phone)
     .order("sent_at", { ascending: true });
+
+  // Exclude SMS for this contact if ALL messages are outbound (zero inbound).
+  // If there is ANY inbound SMS, include all (inbound + outbound).
+  const hasAnyInbound = (smsMessages || []).some((s: any) => s.direction === "inbound");
+  if (!hasAnyInbound) {
+    smsMessages = [];
+  }
 
   // ─── Assemble thread ───
   const callEntries = interactions.map((i: any) => ({
