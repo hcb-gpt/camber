@@ -46,11 +46,6 @@ struct ContactListView: View {
                 }
                 await contactListViewModel.subscribeToNewInteractions()
             }
-            .onDisappear {
-                Task {
-                    await contactListViewModel.unsubscribe()
-                }
-            }
         }
         .preferredColorScheme(.dark)
     }
