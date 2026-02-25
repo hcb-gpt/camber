@@ -134,9 +134,14 @@ final class ThreadViewModel {
         }
     }
 
+    private static let realtimeDecoder = JSONDecoder()
+
     private func mergeGrade(from action: InsertAction) {
         guard
-            let record = try? action.decodeRecord(as: RealtimeGradeRecord.self)
+            let record = try? action.decodeRecord(
+                as: RealtimeGradeRecord.self,
+                decoder: Self.realtimeDecoder
+            )
         else { return }
 
         applyGradeUpdate(record)
@@ -144,7 +149,10 @@ final class ThreadViewModel {
 
     private func mergeGrade(from action: UpdateAction) {
         guard
-            let record = try? action.decodeRecord(as: RealtimeGradeRecord.self)
+            let record = try? action.decodeRecord(
+                as: RealtimeGradeRecord.self,
+                decoder: Self.realtimeDecoder
+            )
         else { return }
 
         applyGradeUpdate(record)

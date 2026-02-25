@@ -26,13 +26,13 @@ enum ThreadItem: Identifiable {
         return Self.parseISO8601(raw)
     }
 
-    private static let isoFormatterFractional: ISO8601DateFormatter = {
+    nonisolated(unsafe) private static let isoFormatterFractional: ISO8601DateFormatter = {
         let f = ISO8601DateFormatter()
         f.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
         return f
     }()
 
-    private static let isoFormatterBasic: ISO8601DateFormatter = {
+    nonisolated(unsafe) private static let isoFormatterBasic: ISO8601DateFormatter = {
         let f = ISO8601DateFormatter()
         f.formatOptions = [.withInternetDateTime]
         return f
