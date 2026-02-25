@@ -1,7 +1,7 @@
 import "jsr:@supabase/functions-js/edge-runtime.d.ts";
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
 
-const FUNCTION_VERSION = "redline-thread_v1.0.0";
+const FUNCTION_VERSION = "redline-thread_v2.0.0";
 
 function corsHeaders(): Record<string, string> {
   return {
@@ -28,7 +28,54 @@ function groupBy<T>(arr: T[], keyFn: (item: T) => string): Map<string, T[]> {
   return map;
 }
 
-// ─── Contacts endpoint ──────────────────────────────────────────────
+// deduplicate spans by transcript content (>80% overlap = dupe)
+function overlapRatio(a: string, b: string): number {
+  if (!a || !b) return 0;
+  const shorter = a.length <= b.length ? a : b;
+  const longer = a.length <= b.length ? b : a;
+  if (longer.includes(shorter)) return 1.0;
+  const windowSize = Math.floor(shorter.length * 0.8);
+  if (windowSize < 10) return 0;
+  for (let i = 0; i <= shorter.length - windowSize; i++) {
+    const chunk = shorter.slice(i, i + windowSize);
+    if (longer.includes(chunk)) return windowSize / shorter.length;
+  }
+  return 0;
+}
+
+function deduplicateSpans(spans: any[]): any[] {
+  const unique: any[] = [];
+  for (const span of spans) {
+    const seg = (span.transcript_segment || "").trim();
+    if (!seg) {
+      unique.push(span);
+      continue;
+    }
+    const isDupe = unique.some((u) => {
+      const uSeg = (u.transcript_segment || "").trim();
+      return overlapRatio(seg, uSeg) > 0.8;
+    });
+    if (!isDupe) unique.push(span);
+  }
+  return unique;
+}
+
+// extract speaker names from transcript header lines
+const SPEAKER_LINE_RE = /^(?:\[\d+:\d+\]\s*)?([A-Za-z][A-Za-z0-9_ +().-]*?):\s.+/;
+
+function extractParticipants(transcript: string | null): string[] {
+  if (!transcript) return [];
+  const lines = transcript.split("\n").slice(0, 40);
+  const seen = new Set<string>();
+  for (const line of lines) {
+    const m = line.trim().match(SPEAKER_LINE_RE);
+    if (m) seen.add(m[1].trim());
+    if (seen.size >= 6) break;
+  }
+  return [...seen];
+}
+
+// contacts endpoint
 async function handleContacts(db: any, t0: number): Promise<Response> {
   const { data, error: err } = await db.from("contacts").select("id, name, phone");
   if (err) return json({ ok: false, error_code: "contacts_query_failed", error: err.message }, 500);
@@ -67,7 +114,6 @@ async function handleContacts(db: any, t0: number): Promise<Response> {
     }
   }
 
-  // Fetch directions for the most recent interaction per contact
   const latestInteractionIds = [...callCountMap.values()]
     .filter((v) => v.lastInteractionId)
     .map((v) => v.lastInteractionId!);
@@ -80,13 +126,9 @@ async function handleContacts(db: any, t0: number): Promise<Response> {
     latestDirectionMap = new Map((latestCallsRaw || []).map((c: any) => [c.interaction_id, c.direction]));
   }
 
-  // Compute which contact_phones have at least one inbound SMS.
-  // Only count SMS for phones that have inbound messages (exclude outbound-only contacts).
   const phonesWithInbound = new Set<string>();
   for (const row of smsRows || []) {
-    if (row.direction === "inbound") {
-      phonesWithInbound.add(row.contact_phone);
-    }
+    if (row.direction === "inbound") phonesWithInbound.add(row.contact_phone);
   }
 
   const smsCountMap = new Map<string, number>();
@@ -125,7 +167,7 @@ async function handleContacts(db: any, t0: number): Promise<Response> {
   return json({ ok: true, contacts: result, function_version: FUNCTION_VERSION, ms: Date.now() - t0 });
 }
 
-// ─── Thread endpoint ────────────────────────────────────────────────
+// thread endpoint
 async function handleThread(
   db: any,
   contactId: string,
@@ -188,7 +230,6 @@ async function handleThread(
 
   const spansPerInteraction = groupBy(spans || [], (s: any) => s.interaction_id);
 
-  // Fetch claims via call_id path (much more complete than span-only path)
   let callClaims: any[] = [];
   if (interactionIds.length > 0) {
     const { data: claimData } = await db
@@ -214,20 +255,19 @@ async function handleThread(
 
   let { data: smsMessages } = await db
     .from("sms_messages")
-    .select("id, sent_at, content, direction, contact_name")
+    .select("id, sent_at, content, direction, contact_name, sender_user_id")
     .eq("contact_phone", contact.phone)
     .order("sent_at", { ascending: true });
 
-  // Exclude SMS for this contact if ALL messages are outbound (zero inbound).
-  // If there is ANY inbound SMS, include all (inbound + outbound).
   const hasAnyInbound = (smsMessages || []).some((s: any) => s.direction === "inbound");
-  if (!hasAnyInbound) {
-    smsMessages = [];
-  }
+  if (!hasAnyInbound) smsMessages = [];
 
-  // ─── Assemble thread ───
   const callEntries = interactions.map((i: any) => {
-    // Claims from call_id path (includes all claims, not just span-linked ones)
+    const rawTranscript: string | null = transcriptMap.get(i.interaction_id) || null;
+    const rawSpans = spansPerInteraction.get(i.interaction_id) || [];
+    const dedupedSpans = deduplicateSpans(rawSpans);
+    const participants = extractParticipants(rawTranscript);
+
     const interactionClaims = (claimsPerCall.get(i.interaction_id) || []).map((c: any) => {
       const g = gradeMap.get(c.id);
       return {
@@ -246,8 +286,10 @@ async function handleThread(
       event_at: i.event_at_utc,
       direction: directionMap.get(i.interaction_id) || null,
       summary: i.human_summary,
-      transcript: transcriptMap.get(i.interaction_id) || null,
-      spans: (spansPerInteraction.get(i.interaction_id) || []).map((s: any) => ({
+      contact_name: i.contact_name || contact.name,
+      raw_transcript: rawTranscript,
+      participants,
+      spans: dedupedSpans.map((s: any) => ({
         span_id: s.id,
         span_index: s.span_index,
         transcript_segment: s.transcript_segment,
@@ -266,6 +308,7 @@ async function handleThread(
     event_at: s.sent_at,
     direction: s.direction,
     content: s.content,
+    sender_name: s.direction === "outbound" ? "Zack" : (s.contact_name || contact.name),
   }));
 
   const thread = [...callEntries, ...smsEntries].sort(
@@ -282,7 +325,7 @@ async function handleThread(
   });
 }
 
-// ─── Grade endpoint ─────────────────────────────────────────────────
+// grade endpoint
 async function handleGrade(db: any, req: Request, t0: number): Promise<Response> {
   let body: any;
   try {
@@ -328,15 +371,27 @@ async function handleGrade(db: any, req: Request, t0: number): Promise<Response>
   return json({ ok: true, grade: data, function_version: FUNCTION_VERSION, ms: Date.now() - t0 });
 }
 
-// ─── HTML UI ────────────────────────────────────────────────────────
-// All user-controlled text is escaped via escapeHtml() before DOM insertion.
-// Event handlers use data-* attributes + event delegation (no inline JS with user data).
+// PWA icon base64 strings (red R on black, 3 sizes)
+const ICON_180 =
+  "iVBORw0KGgoAAAANSUhEUgAAALQAAAC0CAYAAAA9zQYyAAAHN0lEQVR4nO3d32tk5R3H8c+ZmcxkJpmdTEhMd7Puxeq67I2CRUQsiFTx1uJCKVIvLLrYXvRG7EVB8Mc/oMVSXV2oiOKqvagWlhYRUdtSSr3o0tZa67a4m6zZZDI7M2cyk5xzeiErpTWa5JnNec73vF+Qyzl5MnnzcObMeZ4TSEoEGFFIewDAKBE0TCFomELQMIWgYQpBwxSChikEDVMIGqYQNEwhaJhC0DCFoGEKQcMUgoYpBA1TCBqmEDRMIWiYQtAwhaBhCkHDFIKGKQQNUwgaphA0TCFomELQMIWgYQpBwxSChikEDVMIGqYQNEwhaJhC0DCFoGEKQcMUgoYpBA1TCBqmEDRMIWiYQtAwhaBhCkHDFIKGKaW0B+CDQNI3JiZ0Vbm8629ILGmQJBrEsZajSAsbG/rXcKh+kuzySGwIJOX+nXtsbk7faTTSHsbnIkn/HA71hzDUW72e3gtDrRP4luQ+6IKk04cOqRwEaQ9lU8tRpJPttk60WmpFUdrD8Vrug64XCnr/6qvTHsaWdONYTy0v67lWS3Hag/FU7j8U+jsv/7/JQkE/mp3VS1deqbkSH3++SO6DzqKvV6t67cABXVOppD0U7xB0Rn2tVNLz+/frwNhY2kPxCkFn2EyxqGfn51Ut8G+8hHci4w6Wy3p4djbtYXiDoA042mjouvHxtIfhBYI2IJD04MxM2sPwAkEbcVOtpsNc9SBoS+7asyftIaSOoEcgljRMkm39XA63TU5eluNmCV83OfpNt6sfLixsO9JiEKhZKOjI+LhuqdV0V6OhuuPltwNjY9pXKuncxobTcbKMGdrR78JwRzNulCS6EEV6p9fT40tLuv3jj/X7MHQez7U5v9pB0I5GdfJwIYp07Nw5nRkOnY5zKOcfDAnaI7041lMrK07H2Jvzm5YI2jO/7nadbg2dIWj4pBfHTqcdVY8XKuwGgvaQy6qU8ZzfqJTvv95TYbzzk468/0Pz/vfDGIKGKQQNUwgaphA0TCFomELQMIWgYQpBwxSChikEDVMIGqYQNEwhaJhC0DCFoGEKQcMUgoYpBA1TCBqmEDRMIWiYQtAwhaBhCkHDFIKGKQQNUwgaphA0TCFomELQMIWgYQpBwxSChikEDVMIGqYQNEwhaJhC0DCFoGEKQcMUgoYpBA1TCBqmEDRMIWiYQtAwhaBhCkHDFIKGKQQNUwgaphA0TCFomELQMOU/hcvt+Vd481YAAAAASUVORK5CYII=";
+
+const ICON_192 =
+  "iVBORw0KGgoAAAANSUhEUgAAAMAAAADACAYAAABS3GwHAAAHp0lEQVR4nO3dT4ic9R3H8c8zf5edfWZ3JtkYs1C3CsWCQm7ioR70YhOoSm0pRGoVNNaTNw+9KD2UIkhDD7ZJwHqQCiIWPYSqQS9KaUshVPqHRoxsYsi6M7OTmdmZzD4zTw9eHJxsdn1+w/Pn+37d99kvO/vmeZ55fs/zeJJCAUbl4h4AiBMBwDQCgGkEANMIAKYRAEwjAJhGADCNAGAaAcA0AoBpBADTCACmEQBMIwCYRgAwjQBgGgHANAKAaQQA0wgAphEATCMAmEYAMI0AYBoBwDQCgGkEANMIAKYRAEwjAJhGADCNAGAaAcA0AoBpBADTCACmEQBMIwCYRgAwjQBgGgHANAKAaQQA0wgAphEATCMAmEYAMI0AYBoBwLRC3AMk1a2lko76vpYLBXkxzTAKQ/XDUP3xWOtBoMtBoPPDoS5tb8c0UfZ4ksK4h0iabxWLOrO6qrIX17/+zjZHI/2t39f7vZ7e7XbVGo3iHim1CGCKJ2o1Pbu8HPcYuzIMQ53pdHSq1dJ/rl2Le5zU4Rxgin2F9BwZljxPD1SreuuWW/TCwYOq5fNxj5QqBDBFMg98dpaT9FC1qjOrq7qnUol7nNQggIzZn8/r1MqKHllainuUVCCADMpLeu7AAf2sVot7lMQjgAz7xfKy7vf9uMdINALIMF/Sr266SSvFYtyjJBYBZJyfy+mXBw7IPUaCAACShAAAhAQAAISEAACSEgAAkJAAAICEBAAAJCQAACAhAQAACQkAAEhIAABAQgIAABISAACQkAAAgIQEAAAkJAAAICEBAAAJCQAASEgAAEBCAgAAEhIAAJCQAACAhAQAACQkAAEhIAABAQgIAABISAACQkAAAgIQEAAAkJAAAICEBAAAJCQAASEgAAEBCAgAAEhIAAJCQAACAhAQAACQkAAEhIAABAQgIAABISAACQkAAAgIQEAAAkJAAAICEBAAAJCQAASEgAAEBCAgAAEhIAAJCQAACAhAQAACQkAAEhIAABAQgIAABISAACQkAAAgIQEAAAkJAAAICEBAAAJCQAASEgAAEBCAgAAEhIAAJCQAACAhAQAACQkAAEhIAABAQgIAABISAACQkAAAgIQEAAAkJAAAICEBAAAJCQAASEgAAEBCAgAAEhIAAJCQAACAhAQAACQkAAEhIAABAQgIAABISAACQkAAAgIQEAAAkJAAAICEBAAAJCQAASEgAAEBCAgAAEhIAAJCQAACAhAQAACQkAAEhIAABAQgIAABISAACQkAAAgIQEAAAkJAAAICEBAAAJCQAASEgAAEBCAgAAEhIAAJCQAACAhAQAACQkAAEhIAABAQgIAABISAACQkAAAgIQEAAAkJAAAICEBAAAJCQAASEgAAEBCAgAAEhIAAJCQAACAhAQAACQkAAEhIAABAQgIAABISAACQkAAAgIQEAAAkJAAAICEBAAAJCQAASEgAAEBCAgAAEhIAAJCQAACAhAQAACQkAAEhIAABAQgIAABISAACQkAAAgIQEAAAkJAAAICEBAAAJCQ==";
+
+const ICON_512 =
+  "iVBORw0KGgoAAAANSUhEUgAAAgAAAAIACAYAAAD0eNT6AAAXbUlEQVR4nO3de4yld13H8e+ZM2dmzs7s7Ozvfda2DoEAobTgqCJAgwq9qCRSsFIoBaVuTHwhuEKibap8lapS1EaldakqggNyTMBCKQWKrFwELimVSeQkmGJhJQ12cNhdh7t3zs7O3C9nTg9eHJxsdn1+w/Pn+37d99kvO/vmeZ55fs/zeJJCAUbl4h4AiBMBwDQCgGkEANMIAKYRAEwjAJhGADCNAGAaAcA0AoBpBADTCACmEQBMIwCYRgAwjQBgGgHANAKAaQQA0wgAphEATCMAmEYAMI0AYBoBwDQCgGkEANMIAKYRAEwjAJhGADCNAGAaAcA0AoBpBADTCACmEQBMIwCYRgAwjQBgGgHANAKAaQQA0wgAphEATCMAmEYAMI0AYBoBwLRC3AMk1a2lko76vpYLBXkxzTAKQ/XDUP3xWOtBoMtBoPPDoS5tb8c0UfZ4ksK4h0iabxWLOrO6qrIX17/+zjZHI/2t39f7vZ7e7XbVGo3iHim1CGCKJ2o1Pbu8HPcYuzIMQ53pdHSq1dJ/rl2Le5zU4Rxgin2F9BwZljxPD1SreuuWW/TCwYOq5fNxj5QqBDBFMg98dpaT9FC1qjOrq7qnUol7nNQggIzZn8/r1MqKHllainuUVCCADMpLeu7AAf2sVot7lMQjgAz7xfKy7vf9uMdINALIMF/Sr266SSvFYtyjJBYBZJyfy+mXBw7IPUaCAACShAAAhAQAAISEAACSEgAAkJAAAICEBAAAJCQAACAhAQAACQkAAEhIAABAQgIAABISAACQkAAAgIQEAAAkJAAAICEBAAAJCQAASEgAAEBCAgAAEhIAAJCQAACAhAQAACQkAAEhIAABAQgIAABISAACQkAAAgIQEAAAkJAAAICEBAAAJCQAASEgAAEBCAgAAEhIAAJCQAACAhAQAACQkAAEhIAABAQgIAABISAACQkAAAgIQEAAAkJAAAICEBAAAJCQAASEgAAEBCAgAAEhIAAJCQAACAhAQAACQkAAEhIAABAQgIAABISAACQkAAAgIQEAAAkJAAAICEBAAAJCQAASEgAAEBCAgAAEhIAAJCQAACAhAQAACQkAAEhIAABAQgIAABISAACQkAAAgIQEAAAkJAAAICEBAAAJCQAASEgAAEBCAgAAEhIAAJCQAACAhAQAACQkAAEhIAABAQgIAABISAACQkAAAgIQEAAAkJAAAICEBAAAJCQAASEgAAEBCAgAAEhIAAJCQAACAhAQAACQkAAEhIAABAQgIAABISAACQkAAAgIQEAAAkJAAAICEBAAAJCQAASEgAAEBCAgAAEhIAAJCQAACAhAQAACQkAAEhIAABAQgIAABISAACQkAAAgIQEAAAkJAAAICEBAAAJCQAASEgAAEBCAgAAEhIAAJCQAACAhAQAACQkAAEhIAABAQgIAABISAACQkAAAgIQEAAAkJAAAICEBAAAJCQAASEgAAEBCAgAAEhIAAJCQAACAhAQAACQkAAEhIAABAQgIAABISAACQkAAAgIQEAAAkJAAAICEBAAAJCQAASEgAAEBCAgAAEhIAAJCQAACAhAQAACQkAAEhIAABAQgIAABISAACQkAAAgIQEAAAkJAAAICEBAAAJCQAASEgAAEBCAgAAEhIAAJCQAACAhAQAACQkAAEhIAABAQgIAABISAACQkAAAgIQEAAAkJAAAICEBAAAJCQAASEgAAEBCAgAAEhIAAJCQAACAhAQAACQkAAEhIAABAQgIAABISAACQkAAAgIQEAAAkJAAAICEBAAAJCQAASEgAAEBCAgAAEhIAAJCQAACAhAQAACQkAAEhIAABAQgIAABISAACQkAAAgIQEAAAkJAAAICEBAAAJCQAASEgAAEBCAgAAEhIAAJCQAACAhAQAACQkAAEhIAABAQgIAABISAACQkAAAgIQEAAAkJAAAICEBAAAJCQAASEgAAEBCAgAAEhIAAJCQAACAhAQAACQkAAEhIAABAQgIAABISAACQkAAAgIQEAAAkJAAAICEBAAAJCQAASEgAAEBCAgAAEhIAAJCQAACAhAQAACQkAAEhIAABAQgIAABISAACQkAAAgIQEAAAkJAAAICEBAAAJCQAASEgAAEBCAgAAEhIAAJCQAACAhAQAACQkAAEhIAABAQgIAABISAACQkAAAgIQEAAAkJAAAICEBAAAJCQAASEgAAEBCAgAAEhIAAJCQAACAhAQAACQkAAEhIAABAQgIAABISAACQkAAAgIQEAAAkJAAAICEBAAAJCQAASEgAAEBCAgAAEhIAAJCQAACAhAQAACQkAAEhIAABAQgIAABISAACQkAAAgIQEAAAkJAAAICEBAAAJCQAASEgAAEBCAgAAEhIAAJCQAACAhAQAACQkAAEhIAABAQgIAABISAACQkAAAgIQEAAAkJAAAICEBAAAJCQ==";
+
+// HTML UI — all user content goes through textContent (XSS safe). Static innerHTML only for spinners/empty states.
 const HTML = `<!DOCTYPE html>
 <html lang="en">
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-status-bar-style" content="black">
+  <meta name="apple-mobile-web-app-title" content="Redline">
   <title>Redline</title>
+  <link rel="apple-touch-icon" sizes="180x180" href="data:image/png;base64,${ICON_180}">
   <style>
     * { margin: 0; padding: 0; box-sizing: border-box; }
     body {
@@ -344,6 +399,7 @@ const HTML = `<!DOCTYPE html>
       font-family: -apple-system, BlinkMacSystemFont, "SF Pro Text", "Helvetica Neue", sans-serif;
       font-size: 16px; -webkit-font-smoothing: antialiased;
       min-height: 100dvh;
+      padding-bottom: env(safe-area-inset-bottom, 0px);
     }
     #top-bar {
       position: sticky; top: 0; z-index: 10;
@@ -352,162 +408,415 @@ const HTML = `<!DOCTYPE html>
       padding: 12px 16px; border-bottom: 0.5px solid #38383A;
       display: flex; align-items: center; gap: 12px;
     }
-    #top-bar h1 { font-size: 17px; font-weight: 600; flex: 1; }
-    #contact-select {
-      background: #2C2C2E; color: #fff; border: none; border-radius: 8px;
-      padding: 8px 12px; font-size: 15px; max-width: 200px;
+    #top-bar h1 { font-size: 17px; font-weight: 600; white-space: nowrap; }
+    .search-container { position: relative; flex: 1; max-width: 320px; }
+    .search-input {
+      width: 100%; background: #2C2C2E; color: #fff; border: none; border-radius: 10px;
+      padding: 8px 36px 8px 12px; font-size: 15px; outline: none; min-height: 44px;
     }
+    .search-input::placeholder { color: #8E8E93; }
+    .search-input:focus { box-shadow: 0 0 0 2px #007AFF; }
+    .search-clear {
+      position: absolute; right: 8px; top: 50%; transform: translateY(-50%);
+      background: none; border: none; color: #8E8E93; font-size: 18px;
+      cursor: pointer; padding: 4px; min-width: 32px; min-height: 32px;
+      display: flex; align-items: center; justify-content: center;
+    }
+    .search-dropdown {
+      position: absolute; top: calc(100% + 4px); left: 0; right: 0; max-height: 320px;
+      overflow-y: auto; background: #1C1C1E; border-radius: 12px;
+      z-index: 20; display: none; -webkit-overflow-scrolling: touch;
+      box-shadow: 0 8px 32px rgba(0,0,0,0.6); border: 0.5px solid #38383A;
+    }
+    .search-dropdown.open { display: block; }
+    .search-item {
+      padding: 12px 14px; cursor: pointer; font-size: 15px;
+      border-bottom: 0.5px solid #2C2C2E; min-height: 48px;
+      display: flex; align-items: center; justify-content: space-between;
+    }
+    .search-item:last-child { border-bottom: none; }
+    .search-item:active, .search-item.selected { background: #2C2C2E; }
+    .search-item-name { flex: 1; font-weight: 500; }
+    .search-item-meta { color: #8E8E93; font-size: 13px; margin-left: 10px; flex-shrink: 0; }
+    #contact-header { display: none; padding: 12px 16px 4px; max-width: 800px; margin: 0 auto; }
+    #contact-header-name { font-size: 20px; font-weight: 700; }
+    #contact-header-meta { font-size: 13px; color: #8E8E93; margin-top: 2px; }
     #thread-container { max-width: 800px; margin: 0 auto; padding: 8px 16px 120px; }
-    .time-label { text-align: center; color: #8E8E93; font-size: 12px; font-weight: 500; padding: 20px 0 6px; }
-    .call-card { background: #1C1C1E; border-radius: 16px; padding: 14px 16px; margin: 10px 0; }
-    .call-header { display: flex; align-items: center; gap: 10px; }
+    .date-separator {
+      text-align: center; color: #8E8E93; font-size: 12px; font-weight: 500;
+      padding: 18px 0 6px; letter-spacing: 0.2px;
+    }
+    .call-card { background: #1C1C1E; border-radius: 16px; padding: 14px 16px; margin: 8px 0; }
+    .call-card-header { display: flex; align-items: center; gap: 10px; margin-bottom: 10px; }
     .call-icon {
       width: 36px; height: 36px; border-radius: 50%; background: #30D158;
-      display: flex; align-items: center; justify-content: center; font-size: 18px; flex-shrink: 0;
+      display: flex; align-items: center; justify-content: center; font-size: 16px; flex-shrink: 0;
     }
     .call-icon.outbound { background: #007AFF; }
-    .call-meta { flex: 1; }
-    .call-meta .title { font-size: 15px; font-weight: 600; }
-    .call-meta .subtitle { font-size: 13px; color: #8E8E93; margin-top: 2px; }
-    .call-summary { color: #EBEBF5; font-size: 14px; line-height: 1.5; margin: 10px 0; padding: 0 2px; }
+    .call-icon.unknown { background: #636366; }
+    .call-card-top { flex: 1; }
+    .call-card-type-row { display: flex; align-items: center; justify-content: space-between; }
+    .call-card-type { font-size: 13px; color: #8E8E93; font-weight: 500; }
+    .call-card-time { font-size: 13px; color: #8E8E93; }
+    .call-card-title { font-size: 16px; font-weight: 600; margin-bottom: 4px; line-height: 1.3; }
+    .call-card-participants { font-size: 13px; color: #8E8E93; margin-bottom: 8px; }
+    .call-card-summary { font-size: 14px; color: #EBEBF5; line-height: 1.5; margin-bottom: 10px; }
+    .read-convo-btn {
+      display: inline-flex; align-items: center; gap: 6px;
+      background: #2C2C2E; color: #007AFF; border: none; border-radius: 20px;
+      padding: 8px 16px; font-size: 14px; font-weight: 500; cursor: pointer;
+      margin-bottom: 10px; min-height: 36px; -webkit-tap-highlight-color: transparent;
+    }
+    .read-convo-btn:active { opacity: 0.7; }
+    .transcript-area { display: none; margin-bottom: 10px; }
+    .transcript-area.open { display: block; }
+    .speaker-group { margin: 6px 0; }
+    .speaker-name-label { font-size: 11px; color: #8E8E93; padding: 0 6px; margin-bottom: 3px; }
+    .speaker-name-label.our-side { text-align: right; }
+    .speaker-row { display: flex; margin: 2px 0; }
+    .speaker-row.our-side { justify-content: flex-end; }
+    .speaker-row.their-side { justify-content: flex-start; }
+    .speaker-bubble { max-width: 80%; padding: 10px 14px; font-size: 15px; line-height: 1.4; word-wrap: break-word; }
+    .speaker-row.our-side .speaker-bubble {
+      background: #007AFF; border-radius: 18px; border-bottom-right-radius: 4px; color: #fff;
+    }
+    .speaker-row.their-side .speaker-bubble {
+      background: #2C2C2E; border-radius: 18px; border-bottom-left-radius: 4px; color: #fff;
+    }
     .claims-section { margin-top: 10px; }
-    .claims-header { font-size: 13px; font-weight: 600; color: #8E8E93; text-transform: uppercase; letter-spacing: 0.5px; margin-bottom: 6px; }
+    .claims-header {
+      font-size: 12px; font-weight: 600; color: #8E8E93; text-transform: uppercase;
+      letter-spacing: 0.6px; margin-bottom: 6px;
+    }
     .claim-item {
       padding: 10px 12px; margin: 4px 0; border-radius: 10px; background: #2C2C2E;
-      font-size: 14px; line-height: 1.4; cursor: pointer; position: relative;
-      transition: background 0.15s; display: flex; align-items: flex-start; gap: 8px;
+      font-size: 14px; line-height: 1.4; cursor: pointer;
+      display: flex; align-items: flex-start; gap: 8px; min-height: 44px;
+      -webkit-tap-highlight-color: transparent;
     }
     .claim-item:active { background: #3A3A3C; }
-    .claim-bullet { flex-shrink: 0; width: 6px; height: 6px; border-radius: 50%; background: #8E8E93; margin-top: 7px; }
-    .claim-text { flex: 1; }
-    .claim-badge { flex-shrink: 0; font-size: 14px; margin-left: 4px; }
+    .claim-bullet { flex-shrink: 0; width: 7px; height: 7px; border-radius: 50%; background: #636366; margin-top: 5px; }
     .claim-item.graded-confirm .claim-bullet { background: #30D158; }
     .claim-item.graded-reject .claim-bullet { background: #FF453A; }
     .claim-item.graded-correct .claim-bullet { background: #FF9F0A; }
+    .claim-text-wrap { flex: 1; }
     .claim-type-tag {
       display: inline-block; font-size: 11px; font-weight: 600; color: #8E8E93;
-      background: #3A3A3C; padding: 2px 6px; border-radius: 4px; margin-right: 6px;
+      background: #3A3A3C; padding: 2px 6px; border-radius: 4px; margin-right: 5px;
     }
-    .transcript-toggle { display: inline-block; margin-top: 10px; font-size: 13px; color: #007AFF; cursor: pointer; padding: 6px 0; }
-    .transcript-toggle:active { opacity: 0.6; }
-    .transcript-content {
-      display: none; margin-top: 8px; padding: 12px; background: #2C2C2E; border-radius: 10px;
-      font-size: 13px; color: #EBEBF599; line-height: 1.6; white-space: pre-wrap; max-height: 400px; overflow-y: auto;
-    }
-    .transcript-content.open { display: block; }
-    .sms-row { display: flex; margin: 6px 0; }
+    .claim-badge { flex-shrink: 0; font-size: 15px; margin-left: 4px; }
+    .sms-group { margin: 6px 0; }
+    .sms-sender-label { font-size: 11px; color: #8E8E93; padding: 0 6px; margin-bottom: 3px; }
+    .sms-sender-label.outbound { text-align: right; }
+    .sms-row { display: flex; margin: 2px 0; }
     .sms-row.inbound { justify-content: flex-start; }
     .sms-row.outbound { justify-content: flex-end; }
-    .sms-bubble { max-width: 75%; padding: 10px 14px; border-radius: 18px; font-size: 15px; line-height: 1.4; }
-    .sms-row.inbound .sms-bubble { background: #2C2C2E; border-bottom-left-radius: 4px; }
-    .sms-row.outbound .sms-bubble { background: #007AFF; border-bottom-right-radius: 4px; }
-    .sms-time { font-size: 11px; color: #8E8E93; margin-top: 2px; padding: 0 4px; }
-    .sms-row.outbound .sms-time { text-align: right; }
-    #grade-overlay {
-      display: none; position: fixed; inset: 0; background: rgba(0,0,0,0.6);
-      backdrop-filter: blur(4px); z-index: 100; justify-content: center; align-items: flex-end; padding: 0 16px 32px;
-    }
-    #grade-overlay.open { display: flex; }
-    #grade-sheet { background: #2C2C2E; border-radius: 14px; padding: 20px; width: 100%; max-width: 360px; }
-    #grade-sheet h3 { font-size: 15px; font-weight: 600; margin-bottom: 4px; }
-    #grade-claim-preview { font-size: 13px; color: #8E8E93; margin-bottom: 16px; line-height: 1.4; max-height: 80px; overflow-y: auto; }
-    .grade-btn {
-      display: block; width: 100%; padding: 14px; margin: 6px 0; border: none; border-radius: 12px;
-      font-size: 16px; font-weight: 600; cursor: pointer; text-align: center;
-    }
-    .grade-btn:active { opacity: 0.7; }
-    .grade-btn.confirm { background: #30D158; color: #000; }
-    .grade-btn.reject { background: #FF453A; color: #fff; }
-    .grade-btn.correct-btn { background: #FF9F0A; color: #000; }
-    .grade-btn.cancel { background: #3A3A3C; color: #fff; margin-top: 12px; }
-    #correction-area { display: none; margin-top: 10px; }
-    #correction-area textarea {
-      width: 100%; min-height: 80px; padding: 10px; background: #1C1C1E; color: #fff;
-      border: 1px solid #48484A; border-radius: 10px; font-size: 15px; resize: vertical;
-    }
-    #correction-area .grade-btn { margin-top: 8px; }
-    .loading { text-align: center; padding: 40px; color: #8E8E93; font-size: 15px; }
-    .spinner {
-      display: inline-block; width: 24px; height: 24px;
-      border: 2px solid #3A3A3C; border-top-color: #007AFF;
-      border-radius: 50%; animation: spin 0.8s linear infinite;
-    }
-    @keyframes spin { to { transform: rotate(360deg); } }
-    .stats-bar { display: flex; gap: 16px; padding: 8px 0 4px; font-size: 13px; color: #8E8E93; flex-wrap: wrap; }
-    .stat-item { display: flex; align-items: center; gap: 4px; }
+    .sms-bubble { max-width: 75%; padding: 10px 14px; font-size: 15px; line-height: 1.4; word-wrap: break-word; }
+    .sms-row.inbound .sms-bubble { background: #2C2C2E; border-radius: 18px; border-bottom-left-radius: 4px; }
+    .sms-row.outbound .sms-bubble { background: #007AFF; border-radius: 18px; border-bottom-right-radius: 4px; }
+    .stats-bar { display: flex; gap: 14px; padding: 4px 0 10px; font-size: 13px; color: #8E8E93; flex-wrap: wrap; }
+    .stat-item { display: flex; align-items: center; gap: 5px; }
     .stat-dot { width: 8px; height: 8px; border-radius: 50%; }
     .stat-dot.green { background: #30D158; }
     .stat-dot.red { background: #FF453A; }
     .stat-dot.yellow { background: #FF9F0A; }
     .stat-dot.gray { background: #8E8E93; }
+    #grade-overlay {
+      display: none; position: fixed; inset: 0; background: rgba(0,0,0,0.65);
+      backdrop-filter: blur(4px); -webkit-backdrop-filter: blur(4px);
+      z-index: 100; justify-content: center; align-items: flex-end;
+      padding: 0 16px calc(32px + env(safe-area-inset-bottom, 0px));
+    }
+    #grade-overlay.open { display: flex; }
+    #grade-sheet { background: #2C2C2E; border-radius: 16px; padding: 20px; width: 100%; max-width: 380px; }
+    #grade-sheet h3 { font-size: 16px; font-weight: 600; margin-bottom: 6px; }
+    #grade-claim-preview {
+      font-size: 13px; color: #8E8E93; margin-bottom: 18px; line-height: 1.5;
+      max-height: 90px; overflow-y: auto;
+    }
+    .grade-btn {
+      display: block; width: 100%; padding: 14px; margin: 6px 0; border: none;
+      border-radius: 12px; font-size: 16px; font-weight: 600; cursor: pointer;
+      text-align: center; min-height: 50px;
+    }
+    .grade-btn:active { opacity: 0.7; }
+    .grade-btn.confirm { background: #30D158; color: #000; }
+    .grade-btn.reject { background: #FF453A; color: #fff; }
+    .grade-btn.correct-btn { background: #FF9F0A; color: #000; }
+    .grade-btn.cancel { background: #3A3A3C; color: #fff; margin-top: 14px; }
+    #correction-area { display: none; margin-top: 12px; }
+    #correction-area textarea {
+      width: 100%; min-height: 80px; padding: 10px; background: #1C1C1E; color: #fff;
+      border: 1px solid #48484A; border-radius: 10px; font-size: 15px; resize: vertical;
+    }
+    #correction-area .grade-btn { margin-top: 8px; }
+    .loading { text-align: center; padding: 48px; color: #8E8E93; font-size: 15px; }
+    .spinner {
+      display: inline-block; width: 26px; height: 26px;
+      border: 2px solid #3A3A3C; border-top-color: #007AFF;
+      border-radius: 50%; animation: spin 0.8s linear infinite;
+    }
+    @keyframes spin { to { transform: rotate(360deg); } }
+    .empty-state { text-align: center; padding: 60px 20px; color: #636366; font-size: 15px; }
+    @media (max-width: 600px) {
+      .search-container { max-width: none; }
+      #top-bar { flex-wrap: wrap; }
+      #top-bar h1 { flex: 0 0 auto; }
+    }
   </style>
 </head>
 <body>
   <div id="top-bar">
     <h1>Redline</h1>
-    <select id="contact-select"><option value="">Loading...</option></select>
+    <div class="search-container">
+      <input type="text" class="search-input" id="contact-search"
+        placeholder="Search contacts..." autocomplete="off" spellcheck="false" />
+      <button class="search-clear" id="contact-clear" aria-label="Clear"></button>
+      <div class="search-dropdown" id="contact-dropdown"></div>
+    </div>
+  </div>
+  <div id="contact-header">
+    <div id="contact-header-name"></div>
+    <div id="contact-header-meta"></div>
   </div>
   <div id="thread-container">
-    <div class="loading"><div class="spinner"></div><div style="margin-top:12px">Loading contacts...</div></div>
+    <div class="loading"><div class="spinner"></div><div style="margin-top:14px">Loading contacts\u2026</div></div>
   </div>
-
   <div id="grade-overlay">
     <div id="grade-sheet">
       <h3>Grade Claim</h3>
       <div id="grade-claim-preview"></div>
-      <button class="grade-btn confirm" data-action="grade-confirm">Confirm</button>
-      <button class="grade-btn reject" data-action="grade-reject">Reject</button>
-      <button class="grade-btn correct-btn" data-action="grade-show-correct">Correct</button>
+      <button class="grade-btn confirm" data-action="grade-confirm">\u2705 Confirm</button>
+      <button class="grade-btn reject" data-action="grade-reject">\u274C Reject</button>
+      <button class="grade-btn correct-btn" data-action="grade-show-correct">\u270F\uFE0F Correct</button>
       <div id="correction-area">
-        <textarea id="correction-text" placeholder="Enter correction..."></textarea>
+        <textarea id="correction-text" placeholder="Enter correction\u2026"></textarea>
         <button class="grade-btn confirm" data-action="grade-submit-correct">Submit Correction</button>
       </div>
       <button class="grade-btn cancel" data-action="grade-cancel">Cancel</button>
     </div>
   </div>
-
   <script>
-    (function() {
+    (function () {
       "use strict";
       var BASE_URL = window.location.origin + window.location.pathname;
       var currentClaimId = null;
+      var allContacts = [];
+      var selectedContactId = null;
 
-      function escapeHtml(text) {
-        if (!text) return "";
-        var div = document.createElement("div");
-        div.textContent = text;
-        return div.innerHTML;
+      function escText(t) {
+        var d = document.createElement("div");
+        d.textContent = t || "";
+        return d.innerHTML;
       }
 
-      // ── Contacts ──
+      var OUR_NAMES = ["zack sittler","zachary sittler","zack","zach","chad","chad barlow","hcb"];
+      function isOurSide(name) {
+        if (!name) return false;
+        var l = name.toLowerCase().trim();
+        for (var i = 0; i < OUR_NAMES.length; i++) {
+          if (l === OUR_NAMES[i]) return true;
+        }
+        return l.indexOf("zack") === 0 || l.indexOf("zachary") === 0;
+      }
+
+      var SPEAKER_RE = /^(?:\\[\\d+:\\d+\\]\\s*)?([A-Za-z][A-Za-z0-9_ +().-]*?):\\s(.+)/;
+      function parseTranscriptTurns(text) {
+        if (!text) return [];
+        var lines = text.split("\\n");
+        var turns = [];
+        for (var i = 0; i < lines.length; i++) {
+          var line = lines[i].trim();
+          if (!line) continue;
+          var m = line.match(SPEAKER_RE);
+          if (m) {
+            var sp = m[1].trim();
+            var ct = m[2].trim();
+            if (turns.length > 0 && turns[turns.length - 1].speaker === sp) {
+              turns[turns.length - 1].text += " " + ct;
+            } else {
+              turns.push({ speaker: sp, text: ct, ourSide: isOurSide(sp) });
+            }
+          } else if (turns.length > 0) {
+            turns[turns.length - 1].text += " " + line;
+          } else {
+            turns.push({ speaker: "Unknown", text: line, ourSide: false });
+          }
+        }
+        return turns;
+      }
+
+      function buildTranscriptBubbles(item) {
+        var transcript = item.raw_transcript || "";
+        if (!transcript && item.spans && item.spans.length > 0) {
+          transcript = item.spans.map(function (s) { return s.transcript_segment || ""; }).join("\\n");
+        }
+        if (!transcript.trim()) return null;
+        var container = document.createElement("div");
+        container.className = "transcript-area";
+        var turns = parseTranscriptTurns(transcript);
+        if (turns.length === 0) return null;
+        var prevSpeaker = null;
+        var groupEl = null;
+        for (var i = 0; i < turns.length; i++) {
+          var turn = turns[i];
+          var side = turn.ourSide ? "our-side" : "their-side";
+          if (turn.speaker !== prevSpeaker) {
+            groupEl = document.createElement("div");
+            groupEl.className = "speaker-group";
+            var lbl = document.createElement("div");
+            lbl.className = "speaker-name-label" + (turn.ourSide ? " our-side" : "");
+            lbl.textContent = turn.speaker;
+            groupEl.appendChild(lbl);
+            container.appendChild(groupEl);
+          }
+          var row = document.createElement("div");
+          row.className = "speaker-row " + side;
+          var bub = document.createElement("div");
+          bub.className = "speaker-bubble";
+          bub.textContent = turn.text;
+          row.appendChild(bub);
+          groupEl.appendChild(row);
+          prevSpeaker = turn.speaker;
+        }
+        return container;
+      }
+
+      function formatDateSep(date) {
+        var now = new Date();
+        var today = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+        var yesterday = new Date(today.getTime() - 86400000);
+        var d = new Date(date.getFullYear(), date.getMonth(), date.getDate());
+        var diff = today.getTime() - d.getTime();
+        var timeStr = date.toLocaleTimeString("en-US", { hour: "numeric", minute: "2-digit" });
+        if (d.getTime() === today.getTime()) return "Today " + timeStr;
+        if (d.getTime() === yesterday.getTime()) return "Yesterday " + timeStr;
+        if (diff < 7 * 86400000) return date.toLocaleDateString("en-US", { weekday: "long" }) + " at " + timeStr;
+        return date.toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" }) + " " + timeStr;
+      }
+
+      function formatTime(ds) {
+        return new Date(ds).toLocaleTimeString("en-US", { hour: "numeric", minute: "2-digit" });
+      }
+
+      var searchInput = document.getElementById("contact-search");
+      var searchClear = document.getElementById("contact-clear");
+      var searchDropdown = document.getElementById("contact-dropdown");
+
+      function renderDropdown(filter) {
+        while (searchDropdown.firstChild) searchDropdown.removeChild(searchDropdown.firstChild);
+        var query = (filter || "").toLowerCase().trim();
+        var matches = allContacts.filter(function (c) {
+          return !query || c.name.toLowerCase().indexOf(query) !== -1;
+        }).slice(0, 60);
+        if (matches.length === 0) {
+          var empty = document.createElement("div");
+          empty.className = "search-item";
+          empty.style.color = "#636366";
+          empty.textContent = "No contacts found";
+          searchDropdown.appendChild(empty);
+        } else {
+          matches.forEach(function (c) {
+            var item = document.createElement("div");
+            item.className = "search-item";
+            item.setAttribute("data-contact-id", c.contact_id);
+            var ns = document.createElement("span");
+            ns.className = "search-item-name";
+            ns.textContent = c.name;
+            var ms = document.createElement("span");
+            ms.className = "search-item-meta";
+            var parts = [];
+            if (c.call_count > 0) parts.push(c.call_count + " calls");
+            if (c.sms_count > 0) parts.push(c.sms_count + " sms");
+            ms.textContent = parts.join(" \u00b7 ");
+            item.appendChild(ns);
+            item.appendChild(ms);
+            searchDropdown.appendChild(item);
+          });
+        }
+        searchDropdown.classList.add("open");
+      }
+
+      function selectContact(contactId, contactName) {
+        selectedContactId = contactId;
+        searchInput.value = contactName;
+        searchClear.textContent = "\u00d7";
+        searchDropdown.classList.remove("open");
+        loadThread(contactId);
+      }
+
+      function clearContactSearch() {
+        selectedContactId = null;
+        searchInput.value = "";
+        searchClear.textContent = "";
+        searchDropdown.classList.remove("open");
+        document.getElementById("contact-header").style.display = "none";
+      }
+
+      searchInput.addEventListener("focus", function () { renderDropdown(searchInput.value); });
+      searchInput.addEventListener("input", function () {
+        selectedContactId = null;
+        searchClear.textContent = searchInput.value ? "\u00d7" : "";
+        renderDropdown(searchInput.value);
+      });
+      searchClear.addEventListener("click", function (e) {
+        e.stopPropagation();
+        clearContactSearch();
+        searchInput.focus();
+      });
+      searchDropdown.addEventListener("click", function (e) {
+        var item = e.target.closest(".search-item");
+        if (item && item.dataset.contactId) {
+          var nameEl = item.querySelector(".search-item-name");
+          selectContact(item.dataset.contactId, nameEl ? nameEl.textContent : "");
+        }
+      });
+      document.addEventListener("click", function (e) {
+        if (!e.target.closest(".search-container")) searchDropdown.classList.remove("open");
+      });
+
       async function loadContacts() {
         try {
           var res = await fetch(BASE_URL + "?action=contacts");
           var data = await res.json();
           if (!data.ok) throw new Error(data.error || "Failed to load contacts");
-          var select = document.getElementById("contact-select");
-          select.innerHTML = "";
-          data.contacts.forEach(function(c) {
-            var opt = document.createElement("option");
-            opt.value = c.contact_id;
-            opt.textContent = c.name + " (" + c.call_count + " calls)";
-            select.appendChild(opt);
-          });
+          allContacts = data.contacts;
           var defaultId = new URLSearchParams(window.location.search).get("contact_id");
-          if (!defaultId && data.contacts.length > 0) defaultId = data.contacts[0].contact_id;
+          if (!defaultId && allContacts.length > 0) defaultId = allContacts[0].contact_id;
           if (defaultId) {
-            select.value = defaultId;
-            loadThread(defaultId);
+            var match = allContacts.find(function (c) { return c.contact_id === defaultId; });
+            if (match) {
+              selectContact(match.contact_id, match.name);
+            } else if (allContacts.length > 0) {
+              selectContact(allContacts[0].contact_id, allContacts[0].name);
+            }
+          } else {
+            var tc = document.getElementById("thread-container");
+            tc.textContent = "";
+            var es = document.createElement("div");
+            es.className = "empty-state";
+            es.textContent = "Select a contact to view their thread";
+            tc.appendChild(es);
           }
         } catch (e) {
-          document.getElementById("thread-container").textContent = "Error: " + e.message;
+          var tc2 = document.getElementById("thread-container");
+          tc2.textContent = "Error: " + e.message;
         }
       }
 
-      // ── Thread ──
       async function loadThread(contactId) {
         var container = document.getElementById("thread-container");
-        container.innerHTML = '<div class="loading"><div class="spinner"></div><div style="margin-top:12px">Loading thread...</div></div>';
+        container.textContent = "";
+        var loadDiv = document.createElement("div");
+        loadDiv.className = "loading";
+        var spinDiv = document.createElement("div");
+        spinDiv.className = "spinner";
+        var msgDiv = document.createElement("div");
+        msgDiv.style.marginTop = "14px";
+        msgDiv.textContent = "Loading thread\u2026";
+        loadDiv.appendChild(spinDiv);
+        loadDiv.appendChild(msgDiv);
+        container.appendChild(loadDiv);
         try {
           var res = await fetch(BASE_URL + "?contact_id=" + encodeURIComponent(contactId) + "&limit=100");
           var data = await res.json();
@@ -520,182 +829,191 @@ const HTML = `<!DOCTYPE html>
       }
 
       function renderThread(data, container) {
-        container.innerHTML = "";
+        container.textContent = "";
+        var hdr = document.getElementById("contact-header");
+        document.getElementById("contact-header-name").textContent = data.contact.name;
+        document.getElementById("contact-header-meta").textContent =
+          data.pagination.total + " calls \u00b7 " + (data.contact.phone || "");
+        hdr.style.display = "block";
+
         if (!data.thread || data.thread.length === 0) {
-          container.textContent = "No messages found";
+          var es = document.createElement("div");
+          es.className = "empty-state";
+          es.textContent = "No messages found";
+          container.appendChild(es);
           return;
         }
 
         var gradeStats = { confirm: 0, reject: 0, correct: 0, ungraded: 0 };
-        data.thread.forEach(function(item) {
+        data.thread.forEach(function (item) {
           if (item.type !== "call") return;
-          (item.claims || []).forEach(function(claim) {
-            if (claim.grade) gradeStats[claim.grade] = (gradeStats[claim.grade] || 0) + 1;
+          (item.claims || []).forEach(function (c) {
+            if (c.grade) gradeStats[c.grade] = (gradeStats[c.grade] || 0) + 1;
             else gradeStats.ungraded++;
           });
         });
-
-        // Stats bar
         var totalClaims = gradeStats.confirm + gradeStats.reject + gradeStats.correct + gradeStats.ungraded;
         if (totalClaims > 0) {
           var statsDiv = document.createElement("div");
           statsDiv.className = "stats-bar";
-          statsDiv.innerHTML =
-            '<div class="stat-item"><span class="stat-dot green"></span>' + gradeStats.confirm + ' confirmed</div>' +
-            '<div class="stat-item"><span class="stat-dot red"></span>' + gradeStats.reject + ' rejected</div>' +
-            '<div class="stat-item"><span class="stat-dot yellow"></span>' + gradeStats.correct + ' corrected</div>' +
-            '<div class="stat-item"><span class="stat-dot gray"></span>' + gradeStats.ungraded + ' ungraded</div>';
+          [
+            { cls: "green", count: gradeStats.confirm, label: " confirmed" },
+            { cls: "red", count: gradeStats.reject, label: " rejected" },
+            { cls: "yellow", count: gradeStats.correct, label: " corrected" },
+            { cls: "gray", count: gradeStats.ungraded, label: " ungraded" },
+          ].forEach(function (s) {
+            if (s.count === 0) return;
+            var si = document.createElement("div");
+            si.className = "stat-item";
+            var dot = document.createElement("span");
+            dot.className = "stat-dot " + s.cls;
+            si.appendChild(dot);
+            si.appendChild(document.createTextNode(s.count + s.label));
+            statsDiv.appendChild(si);
+          });
           container.appendChild(statsDiv);
         }
 
-        var infoDiv = document.createElement("div");
-        infoDiv.style.cssText = "font-size:13px;color:#8E8E93;padding:4px 0 8px";
-        infoDiv.textContent = data.contact.name + " \\u00b7 " + data.pagination.total + " calls";
-        container.appendChild(infoDiv);
-
-        var lastDate = "";
-        data.thread.forEach(function(item) {
+        var lastDateKey = "";
+        data.thread.forEach(function (item) {
           var eventDate = new Date(item.event_at);
-          var dateStr = eventDate.toLocaleDateString("en-US", { weekday: "short", month: "short", day: "numeric" });
-          if (dateStr !== lastDate) {
-            var label = document.createElement("div");
-            label.className = "time-label";
-            label.textContent = dateStr;
-            container.appendChild(label);
-            lastDate = dateStr;
+          var dateKey = eventDate.toDateString();
+          if (dateKey !== lastDateKey) {
+            var sep = document.createElement("div");
+            sep.className = "date-separator";
+            sep.textContent = formatDateSep(eventDate);
+            container.appendChild(sep);
+            lastDateKey = dateKey;
           }
-          if (item.type === "call") container.appendChild(buildCallCard(item));
-          else if (item.type === "sms") container.appendChild(buildSmsBubble(item));
+          if (item.type === "call") container.appendChild(buildCallCard(item, data.contact));
+          else if (item.type === "sms") container.appendChild(buildSmsItem(item));
         });
 
         window.scrollTo(0, document.body.scrollHeight);
       }
 
-      function buildCallCard(item) {
+      function buildCallCard(item, contact) {
         var card = document.createElement("div");
         card.className = "call-card";
 
-        var time = new Date(item.event_at).toLocaleTimeString("en-US", { hour: "numeric", minute: "2-digit" });
+        var hdr = document.createElement("div");
+        hdr.className = "call-card-header";
         var dir = item.direction || "unknown";
+        var iconEl = document.createElement("div");
+        iconEl.className = "call-icon" + (dir === "outbound" ? " outbound" : dir === "unknown" ? " unknown" : "");
+        iconEl.textContent = "\uD83D\uDCDE";
+        hdr.appendChild(iconEl);
 
-        // Header
-        var header = document.createElement("div");
-        header.className = "call-header";
-        var icon = document.createElement("div");
-        icon.className = dir === "outbound" ? "call-icon outbound" : "call-icon";
-        icon.textContent = dir === "outbound" ? "\\u2197" : "\\u2199";
-        var meta = document.createElement("div");
-        meta.className = "call-meta";
-        var titleEl = document.createElement("div");
-        titleEl.className = "title";
-        titleEl.textContent = "Phone Call";
-        var subtitle = document.createElement("div");
-        subtitle.className = "subtitle";
-        subtitle.textContent = time + " \\u00b7 " + dir;
-        meta.appendChild(titleEl);
-        meta.appendChild(subtitle);
-        header.appendChild(icon);
-        header.appendChild(meta);
-        card.appendChild(header);
+        var topInfo = document.createElement("div");
+        topInfo.className = "call-card-top";
+        var typeRow = document.createElement("div");
+        typeRow.className = "call-card-type-row";
+        var typeLabel = document.createElement("span");
+        typeLabel.className = "call-card-type";
+        typeLabel.textContent = "Phone Call";
+        var timeLabel = document.createElement("span");
+        timeLabel.className = "call-card-time";
+        timeLabel.textContent = formatTime(item.event_at);
+        typeRow.appendChild(typeLabel);
+        typeRow.appendChild(timeLabel);
+        topInfo.appendChild(typeRow);
+        hdr.appendChild(topInfo);
+        card.appendChild(hdr);
 
-        // Summary
         if (item.summary) {
-          var summary = document.createElement("div");
-          summary.className = "call-summary";
-          summary.textContent = item.summary;
-          card.appendChild(summary);
+          var titleEl = document.createElement("div");
+          titleEl.className = "call-card-title";
+          var firstLine = item.summary.split("\\n")[0].trim();
+          titleEl.textContent = firstLine.length > 80 ? firstLine.slice(0, 80) + "\u2026" : firstLine;
+          card.appendChild(titleEl);
         }
 
-        // Claims (from top-level call_id path, with span fallback)
-        var allClaims = (item.claims || []);
-        if (allClaims.length === 0) {
-          (item.spans || []).forEach(function(span) {
-            (span.claims || []).forEach(function(claim) { allClaims.push(claim); });
-          });
+        var contactName = item.contact_name || (contact && contact.name) || "Contact";
+        var partEl = document.createElement("div");
+        partEl.className = "call-card-participants";
+        partEl.textContent = "\uD83D\uDC64 Zack \u2194 " + contactName;
+        card.appendChild(partEl);
+
+        if (item.summary) {
+          var sumEl = document.createElement("div");
+          sumEl.className = "call-card-summary";
+          var full = item.summary;
+          sumEl.textContent = full.length > 200 ? full.slice(0, 200) + "\u2026" : full;
+          card.appendChild(sumEl);
         }
 
-        if (allClaims.length > 0) {
+        var hasTranscript = (item.raw_transcript && item.raw_transcript.trim().length > 0) ||
+          (item.spans || []).some(function (s) { return s.transcript_segment; });
+
+        if (hasTranscript) {
+          var btn = document.createElement("button");
+          btn.className = "read-convo-btn";
+          btn.setAttribute("data-action", "toggle-transcript");
+          btn.textContent = "\uD83D\uDCAC Read Conversation";
+          card.appendChild(btn);
+          var bubblesContainer = buildTranscriptBubbles(item);
+          if (bubblesContainer) card.appendChild(bubblesContainer);
+        }
+
+        var claims = item.claims || [];
+        if (claims.length > 0) {
           var section = document.createElement("div");
           section.className = "claims-section";
-          var hdr = document.createElement("div");
-          hdr.className = "claims-header";
-          hdr.textContent = "Claims (" + allClaims.length + ")";
-          section.appendChild(hdr);
-
-          allClaims.forEach(function(claim) {
+          var claimsHdr = document.createElement("div");
+          claimsHdr.className = "claims-header";
+          claimsHdr.textContent = "Claims (" + claims.length + ")";
+          section.appendChild(claimsHdr);
+          claims.forEach(function (claim) {
             var el = document.createElement("div");
             el.className = "claim-item" + (claim.grade ? " graded-" + claim.grade : "");
             el.setAttribute("data-claim-id", claim.claim_id);
             el.setAttribute("data-claim-text", claim.claim_text || "");
-
             var bullet = document.createElement("div");
             bullet.className = "claim-bullet";
             el.appendChild(bullet);
-
-            var textEl = document.createElement("div");
-            textEl.className = "claim-text";
+            var tw = document.createElement("div");
+            tw.className = "claim-text-wrap";
             if (claim.claim_type) {
               var tag = document.createElement("span");
               tag.className = "claim-type-tag";
               tag.textContent = claim.claim_type;
-              textEl.appendChild(tag);
+              tw.appendChild(tag);
             }
-            textEl.appendChild(document.createTextNode(claim.claim_text || ""));
-            el.appendChild(textEl);
-
+            tw.appendChild(document.createTextNode(claim.claim_text || ""));
+            el.appendChild(tw);
             if (claim.grade) {
               var badge = document.createElement("span");
               badge.className = "claim-badge";
-              badge.textContent = claim.grade === "confirm" ? "\\u2705" : claim.grade === "reject" ? "\\u274C" : "\\u270F\\uFE0F";
+              badge.textContent =
+                claim.grade === "confirm" ? "\u2705" : claim.grade === "reject" ? "\u274C" : "\u270F\uFE0F";
               el.appendChild(badge);
             }
-
             section.appendChild(el);
           });
           card.appendChild(section);
         }
 
-        // Transcript toggle
-        var hasTranscript = (item.spans || []).some(function(s) { return s.transcript_segment; });
-        if (hasTranscript) {
-          var toggle = document.createElement("span");
-          toggle.className = "transcript-toggle";
-          toggle.textContent = "Show Transcript";
-          toggle.setAttribute("data-action", "toggle-transcript");
-          card.appendChild(toggle);
-
-          var tcontent = document.createElement("div");
-          tcontent.className = "transcript-content";
-          (item.spans || []).forEach(function(span) {
-            if (span.transcript_segment) {
-              tcontent.appendChild(document.createTextNode(span.transcript_segment + "\\n\\n"));
-            }
-          });
-          card.appendChild(tcontent);
-        }
-
         return card;
       }
 
-      function buildSmsBubble(item) {
+      function buildSmsItem(item) {
         var dir = item.direction || "inbound";
-        var time = new Date(item.event_at).toLocaleTimeString("en-US", { hour: "numeric", minute: "2-digit" });
+        var group = document.createElement("div");
+        group.className = "sms-group";
+        var senderLabel = document.createElement("div");
+        senderLabel.className = "sms-sender-label" + (dir === "outbound" ? " outbound" : "");
+        senderLabel.textContent = item.sender_name || (dir === "outbound" ? "Zack" : "Contact");
+        group.appendChild(senderLabel);
         var row = document.createElement("div");
         row.className = "sms-row " + dir;
-        var wrapper = document.createElement("div");
         var bubble = document.createElement("div");
         bubble.className = "sms-bubble";
         bubble.textContent = item.content || "";
-        var timeEl = document.createElement("div");
-        timeEl.className = "sms-time";
-        timeEl.textContent = time;
-        wrapper.appendChild(bubble);
-        wrapper.appendChild(timeEl);
-        row.appendChild(wrapper);
-        return row;
+        row.appendChild(bubble);
+        group.appendChild(row);
+        return group;
       }
 
-      // ── Grading (event delegation) ──
       function openGradeSheet(claimId, claimText) {
         currentClaimId = claimId;
         document.getElementById("grade-claim-preview").textContent = claimText;
@@ -720,66 +1038,51 @@ const HTML = `<!DOCTYPE html>
           var res = await fetch(BASE_URL, {
             method: "POST",
             headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({
-              claim_id: currentClaimId,
-              grade: grade,
-              correction_text: correctionText,
-              graded_by: "chad"
-            })
+            body: JSON.stringify({ claim_id: currentClaimId, grade: grade, correction_text: correctionText, graded_by: "chad" }),
           });
           var data = await res.json();
           if (!data.ok) throw new Error(data.error || "Failed to save grade");
           closeGradeSheet();
-          var contactId = document.getElementById("contact-select").value;
-          if (contactId) loadThread(contactId);
+          if (selectedContactId) loadThread(selectedContactId);
         } catch (e) {
           alert("Grade failed: " + e.message);
         }
       }
 
-      // ── Event delegation ──
-      document.addEventListener("click", function(e) {
+      document.addEventListener("click", function (e) {
+        if (e.target.closest(".search-container")) return;
         var claimItem = e.target.closest(".claim-item");
-        if (claimItem) {
-          openGradeSheet(claimItem.dataset.claimId, claimItem.dataset.claimText);
-          return;
-        }
-
-        var action = e.target.dataset.action;
+        if (claimItem) { openGradeSheet(claimItem.dataset.claimId, claimItem.dataset.claimText); return; }
+        var actionEl = e.target.closest("[data-action]");
+        var action = actionEl ? actionEl.dataset.action : null;
         if (action === "toggle-transcript") {
-          var content = e.target.nextElementSibling;
-          if (content) {
-            content.classList.toggle("open");
-            e.target.textContent = content.classList.contains("open") ? "Hide Transcript" : "Show Transcript";
+          var area = actionEl.nextElementSibling;
+          if (area && area.classList.contains("transcript-area")) {
+            area.classList.toggle("open");
+            actionEl.textContent = area.classList.contains("open")
+              ? "\uD83D\uDCAC Hide Conversation"
+              : "\uD83D\uDCAC Read Conversation";
           }
           return;
         }
         if (action === "grade-confirm") { submitGrade("confirm"); return; }
         if (action === "grade-reject") { submitGrade("reject"); return; }
-        if (action === "grade-show-correct") {
-          document.getElementById("correction-area").style.display = "block";
-          return;
-        }
+        if (action === "grade-show-correct") { document.getElementById("correction-area").style.display = "block"; return; }
         if (action === "grade-submit-correct") { submitGrade("correct"); return; }
         if (action === "grade-cancel") { closeGradeSheet(); return; }
       });
 
-      document.getElementById("grade-overlay").addEventListener("click", function(e) {
+      document.getElementById("grade-overlay").addEventListener("click", function (e) {
         if (e.target === this) closeGradeSheet();
       });
 
-      document.getElementById("contact-select").addEventListener("change", function() {
-        if (this.value) loadThread(this.value);
-      });
-
-      // ── Init ──
       loadContacts();
     })();
   </script>
 </body>
 </html>`;
 
-// ─── Main router ────────────────────────────────────────────────────
+// Main router
 Deno.serve(async (req: Request) => {
   if (req.method === "OPTIONS") {
     return new Response(null, { status: 204, headers: corsHeaders() });
