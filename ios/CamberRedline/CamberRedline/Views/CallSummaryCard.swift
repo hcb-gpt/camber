@@ -74,11 +74,13 @@ struct CallSummaryCard: View {
 
                 ForEach(allClaims) { claim in
                     ClaimRow(claim: claim) { grade, correctionText in
-                        viewModel.gradeClaim(
-                            claimId: claim.claimId,
-                            grade: grade,
-                            correctionText: correctionText
-                        )
+                        Task {
+                            await viewModel.gradeClaim(
+                                claimId: claim.claimId,
+                                grade: grade,
+                                correctionText: correctionText
+                            )
+                        }
                     }
                 }
             }

@@ -3,6 +3,7 @@ import Supabase
 
 // MARK: - SupabaseService
 
+@MainActor
 final class SupabaseService {
     static let shared = SupabaseService()
 

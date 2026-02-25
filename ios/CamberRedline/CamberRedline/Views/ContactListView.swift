@@ -15,7 +15,7 @@ struct ContactListView: View {
             }
             .listStyle(.plain)
             .refreshable {
-                contactListViewModel.loadContacts()
+                await contactListViewModel.loadContacts()
                 try? await Task.sleep(for: .milliseconds(300))
             }
             .navigationTitle("Redline")
@@ -42,14 +42,14 @@ struct ContactListView: View {
             }
             .task {
                 if contactListViewModel.contacts.isEmpty {
-                    contactListViewModel.loadContacts()
+                    await contactListViewModel.loadContacts()
                 }
-            }
-            .onAppear {
-                contactListViewModel.subscribeToNewInteractions()
+                await contactListViewModel.subscribeToNewInteractions()
             }
             .onDisappear {
-                contactListViewModel.unsubscribe()
+                Task {
+                    await contactListViewModel.unsubscribe()
+                }
             }
         }
         .preferredColorScheme(.dark)
