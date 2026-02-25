@@ -22,6 +22,9 @@
 		D7B89133BD2CD72F5991596D /* ThreadViewModel.swift in Sources */ = {isa = PBXBuildFile; fileRef = 51E44482F637661C85D155F8 /* ThreadViewModel.swift */; };
 		D9002DC58A8E1B0580E9CEAF /* ClaimGrade.swift in Sources */ = {isa = PBXBuildFile; fileRef = E49C0E479C5BF9BBBEA78C7F /* ClaimGrade.swift */; };
 		F74E8AAE36B43E7F30B8CE53 /* CamberRedlineApp.swift in Sources */ = {isa = PBXBuildFile; fileRef = FF5BA52015DDCF6F215FA113 /* CamberRedlineApp.swift */; };
+		AA1B2C3D4E5F6A7B8C9D0E1F /* TranscriptParser.swift in Sources */ = {isa = PBXBuildFile; fileRef = AB2C3D4E5F6A7B8C9D0E1F2A /* TranscriptParser.swift */; };
+		CC3D4E5F6A7B8C9D0E1F2A3B /* SpeakerTurnBubble.swift in Sources */ = {isa = PBXBuildFile; fileRef = CD4E5F6A7B8C9D0E1F2A3B4C /* SpeakerTurnBubble.swift */; };
+		EE5F6A7B8C9D0E1F2A3B4C5D /* CallHeaderCard.swift in Sources */ = {isa = PBXBuildFile; fileRef = EF6A7B8C9D0E1F2A3B4C5D6E /* CallHeaderCard.swift */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXFileReference section */
@@ -40,6 +43,9 @@
 		E620CD5610E49C34C8D6DD31 /* ThreadItem.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ThreadItem.swift; sourceTree = "<group>"; };
 		EF9A6045C507E720138741A1 /* ContactListView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ContactListView.swift; sourceTree = "<group>"; };
 		FF5BA52015DDCF6F215FA113 /* CamberRedlineApp.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CamberRedlineApp.swift; sourceTree = "<group>"; };
+		AB2C3D4E5F6A7B8C9D0E1F2A /* TranscriptParser.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TranscriptParser.swift; sourceTree = "<group>"; };
+		CD4E5F6A7B8C9D0E1F2A3B4C /* SpeakerTurnBubble.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SpeakerTurnBubble.swift; sourceTree = "<group>"; };
+		EF6A7B8C9D0E1F2A3B4C5D6E /* CallHeaderCard.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CallHeaderCard.swift; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
 /* Begin PBXFrameworksBuildPhase section */
@@ -57,6 +63,7 @@
 		46E176F410BCCCB75B44DF99 /* Views */ = {
 			isa = PBXGroup;
 			children = (
+				EF6A7B8C9D0E1F2A3B4C5D6E /* CallHeaderCard.swift */,
 				C92779B3641C0D2DE6615612 /* CallSummaryCard.swift */,
 				B70C4EA922BE454A904F95BB /* ClaimRow.swift */,
 				EF9A6045C507E720138741A1 /* ContactListView.swift */,
@@ -64,6 +71,7 @@
 				A3F820DB38BA1EDB02EAE746 /* CorrectionSheet.swift */,
 				595848F3F46DFB87B0C65D55 /* GradeIndicator.swift */,
 				C0B838D3F03C0D2CDB76E802 /* SMSBubble.swift */,
+				CD4E5F6A7B8C9D0E1F2A3B4C /* SpeakerTurnBubble.swift */,
 				055EAEA048AB6BB4CA4EEE80 /* ThreadView.swift */,
 			);
 			path = Views;
@@ -111,6 +119,7 @@
 				E49C0E479C5BF9BBBEA78C7F /* ClaimGrade.swift */,
 				93F9EB787CFB3448E1EFC024 /* Contact.swift */,
 				E620CD5610E49C34C8D6DD31 /* ThreadItem.swift */,
+				AB2C3D4E5F6A7B8C9D0E1F2A /* TranscriptParser.swift */,
 			);
 			path = Models;
 			sourceTree = "<group>";
@@ -194,6 +203,9 @@
 				9729A9C737A2F3FB6C1A448C /* ThreadItem.swift in Sources */,
 				13531F3AAFCDFA21ECFB9E65 /* ThreadView.swift in Sources */,
 				D7B89133BD2CD72F5991596D /* ThreadViewModel.swift in Sources */,
+				AA1B2C3D4E5F6A7B8C9D0E1F /* TranscriptParser.swift in Sources */,
+				CC3D4E5F6A7B8C9D0E1F2A3B /* SpeakerTurnBubble.swift in Sources */,
+				EE5F6A7B8C9D0E1F2A3B4C5D /* CallHeaderCard.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
