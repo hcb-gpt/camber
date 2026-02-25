@@ -24,6 +24,12 @@ struct ContactRow: View {
                 }
 
                 HStack(spacing: 4) {
+                    if let interactionIcon = interactionIcon {
+                        Image(systemName: interactionIcon)
+                            .font(.caption2)
+                            .foregroundStyle(.secondary)
+                    }
+
                     if let dir = contact.lastDirection {
                         Image(systemName: dir == "outbound" ? "arrow.up.right" : "arrow.down.left")
                             .font(.caption2)
@@ -37,9 +43,15 @@ struct ContactRow: View {
                 }
             }
 
-            Image(systemName: "phone.fill")
-                .font(.body)
-                .foregroundStyle(Color(white: 0.35))
+            if contact.ungradedCount > 0 {
+                Text("\(contact.ungradedCount)")
+                    .font(.caption)
+                    .fontWeight(.semibold)
+                    .foregroundStyle(.white)
+                    .padding(.horizontal, 8)
+                    .padding(.vertical, 4)
+                    .background(.orange, in: Capsule())
+            }
         }
         .padding(.vertical, 4)
     }
@@ -64,14 +76,25 @@ struct ContactRow: View {
     // MARK: - Preview Text
 
     private var previewText: String {
-        if let summary = contact.lastSummary, !summary.isEmpty {
-            return summary
+        if let snippet = contact.lastSnippet, !snippet.isEmpty {
+            return snippet
         }
         let parts: [String] = [
             contact.callCount > 0 ? "\(contact.callCount) calls" : nil,
             contact.smsCount > 0 ? "\(contact.smsCount) messages" : nil,
         ].compactMap { $0 }
         return parts.joined(separator: " · ")
+    }
+
+    private var interactionIcon: String? {
+        switch contact.lastInteractionType {
+        case "sms":
+            return "message.fill"
+        case "call":
+            return "phone.fill"
+        default:
+            return nil
+        }
     }
 
     // MARK: - Relative Time

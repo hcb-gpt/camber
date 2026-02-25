@@ -1,20 +1,12 @@
 import SwiftUI
 
 struct ContactListView: View {
-    var viewModel: ThreadViewModel
-    @State private var searchText = ""
-
-    private var filteredContacts: [Contact] {
-        if searchText.isEmpty { return viewModel.contacts }
-        return viewModel.contacts.filter {
-            $0.name.localizedCaseInsensitiveContains(searchText)
-                || $0.phone.contains(searchText)
-        }
-    }
+    var contactListViewModel: ContactListViewModel
+    var threadViewModel: ThreadViewModel
 
     var body: some View {
         NavigationStack {
-            List(filteredContacts) { contact in
+            List(contactListViewModel.contacts) { contact in
                 NavigationLink(value: contact) {
                     ContactRow(contact: contact)
                 }
@@ -22,18 +14,42 @@ struct ContactListView: View {
                 .listRowSeparatorTint(Color(white: 0.2))
             }
             .listStyle(.plain)
-            .searchable(text: $searchText, prompt: "Search or Ask Redline")
+            .refreshable {
+                contactListViewModel.loadContacts()
+                try? await Task.sleep(for: .milliseconds(300))
+            }
             .navigationTitle("Redline")
             .navigationDestination(for: Contact.self) { contact in
-                ThreadView(viewModel: viewModel, contact: contact)
+                ThreadView(viewModel: threadViewModel, contact: contact)
             }
             .background(Color.black)
             .scrollContentBackground(.hidden)
             .overlay {
-                if viewModel.isLoading && viewModel.contacts.isEmpty {
+                if contactListViewModel.isLoading && contactListViewModel.contacts.isEmpty {
                     ProgressView()
                         .tint(.white)
                 }
+            }
+            .overlay(alignment: .bottom) {
+                if let error = contactListViewModel.error {
+                    Text(error)
+                        .font(.caption)
+                        .foregroundStyle(.red)
+                        .padding(8)
+                        .background(.ultraThinMaterial, in: RoundedRectangle(cornerRadius: 8))
+                        .padding()
+                }
+            }
+            .task {
+                if contactListViewModel.contacts.isEmpty {
+                    contactListViewModel.loadContacts()
+                }
+            }
+            .onAppear {
+                contactListViewModel.subscribeToNewInteractions()
+            }
+            .onDisappear {
+                contactListViewModel.unsubscribe()
             }
         }
         .preferredColorScheme(.dark)

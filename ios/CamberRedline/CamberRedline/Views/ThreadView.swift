@@ -50,6 +50,10 @@ struct ThreadView: View {
         .onAppear {
             viewModel.currentContact = contact
             viewModel.loadThread(contactId: contact.contactId)
+            viewModel.startClaimGradeSubscription(contactId: contact.contactId)
+        }
+        .onDisappear {
+            viewModel.stopClaimGradeSubscription()
         }
     }
 
