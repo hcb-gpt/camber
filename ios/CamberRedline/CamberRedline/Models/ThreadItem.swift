@@ -144,6 +144,7 @@ struct CallHeaderEntry {
     let channel: String?
     let summary: String?
     let claims: [ClaimEntry]
+    let spans: [SpanEntry]
 }
 
 // MARK: - SpanEntry

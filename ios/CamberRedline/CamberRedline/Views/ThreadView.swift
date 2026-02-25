@@ -423,6 +423,14 @@ private struct CallCard: View {
                                 .font(.caption)
                                 .fontWeight(.medium)
                             Spacer()
+                            if header.spans.count > 1 {
+                                Text("\(header.spans.count) spans")
+                                    .font(.caption2)
+                                    .foregroundStyle(Color(red: 0.18, green: 0.64, blue: 0.25))
+                                Text("\u{00B7}")
+                                    .font(.caption2)
+                                    .foregroundStyle(Color(.systemGray2))
+                            }
                             Text("\(turns.count) turns")
                                 .font(.caption2)
                                 .foregroundStyle(Color(.systemGray2))
@@ -432,6 +440,22 @@ private struct CallCard: View {
                         .foregroundStyle(.secondary)
                     }
                     .buttonStyle(.plain)
+                }
+            }
+
+            // --- Spans section ---
+            if header.spans.count > 1, transcriptExpanded {
+                Divider()
+                    .overlay(Color(.systemGray4))
+
+                Text("Project Spans (\(header.spans.count))")
+                    .font(.caption)
+                    .fontWeight(.semibold)
+                    .foregroundStyle(.secondary)
+                    .textCase(.uppercase)
+
+                ForEach(Array(header.spans.sorted { $0.spanIndex < $1.spanIndex }.enumerated()), id: \.element.id) { idx, span in
+                    SpanBlock(span: span, colorIndex: idx)
                 }
             }
 
@@ -482,6 +506,69 @@ private struct CallCard: View {
     private func turnBottomSpacing(at index: Int) -> CGFloat {
         guard index + 1 < turns.count else { return 0 }
         return turns[index].isOwnerSide == turns[index + 1].isOwnerSide ? 2 : 8
+    }
+}
+
+// MARK: - Span Block
+
+/// Color-coded span block showing a project attribution segment.
+/// Uses dummy project names until the API returns real attributions.
+private struct SpanBlock: View {
+    let span: SpanEntry
+    let colorIndex: Int
+
+    private static let spanColors: [Color] = [
+        Color(red: 0.18, green: 0.64, blue: 0.25),
+        Color(red: 0.29, green: 0.56, blue: 0.89),
+        Color(red: 0.90, green: 0.62, blue: 0.22),
+        Color(red: 0.73, green: 0.33, blue: 0.83),
+        Color(red: 0.89, green: 0.32, blue: 0.32),
+    ]
+
+    private static let dummyProjects = [
+        "Hurley Residence", "Woodbery Residence", "Winship Residence",
+        "Skelton Residence", "Sittler Madison",
+    ]
+
+    private var color: Color {
+        Self.spanColors[colorIndex % Self.spanColors.count]
+    }
+
+    private var projectName: String {
+        Self.dummyProjects[colorIndex % Self.dummyProjects.count]
+    }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 4) {
+            HStack(spacing: 6) {
+                Circle()
+                    .fill(color)
+                    .frame(width: 8, height: 8)
+                Text(projectName)
+                    .font(.caption)
+                    .fontWeight(.semibold)
+                    .foregroundStyle(color)
+                Spacer()
+                Text("Span \(span.spanIndex + 1)")
+                    .font(.caption2)
+                    .foregroundStyle(Color(.systemGray2))
+            }
+
+            if let segment = span.transcriptSegment, !segment.isEmpty {
+                Text(segment)
+                    .font(.caption)
+                    .foregroundStyle(Color(.systemGray))
+                    .lineLimit(3)
+            }
+        }
+        .padding(10)
+        .background(color.opacity(0.1))
+        .overlay(alignment: .leading) {
+            Rectangle()
+                .fill(color)
+                .frame(width: 3)
+        }
+        .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
     }
 }
 

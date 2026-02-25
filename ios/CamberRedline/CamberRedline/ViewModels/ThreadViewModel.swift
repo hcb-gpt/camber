@@ -90,7 +90,8 @@ final class ThreadViewModel {
                     direction: entry.direction,
                     channel: entry.channel,
                     summary: entry.summary,
-                    claims: allClaims
+                    claims: allClaims,
+                    spans: entry.spans
                 )
                 items.append(.callHeader(header))
 
@@ -265,7 +266,8 @@ final class ThreadViewModel {
                     direction: header.direction,
                     channel: header.channel,
                     summary: header.summary,
-                    claims: updatedClaims
+                    claims: updatedClaims,
+                    spans: header.spans
                 )
             )
         }
