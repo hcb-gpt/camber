@@ -26,11 +26,6 @@ final class ThreadViewModel {
             do {
                 let fetched = try await service.fetchContacts()
                 contacts = fetched
-                // Auto-select the first contact and load its thread
-                if let first = fetched.first {
-                    currentContact = first
-                    await loadThreadInternal(contactId: first.contactId)
-                }
                 isLoading = false
             } catch {
                 self.error = error.localizedDescription

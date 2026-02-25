@@ -7,6 +7,8 @@ struct Contact: Codable, Identifiable, Hashable {
     let callCount: Int
     let smsCount: Int
     let lastActivity: String?
+    let lastSummary: String?
+    let lastDirection: String?
 
     var id: UUID { contactId }
 
@@ -17,5 +19,7 @@ struct Contact: Codable, Identifiable, Hashable {
         case callCount = "call_count"
         case smsCount = "sms_count"
         case lastActivity = "last_activity"
+        case lastSummary = "last_summary"
+        case lastDirection = "last_direction"
     }
 }

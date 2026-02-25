@@ -8,11 +8,13 @@
 
 /* Begin PBXBuildFile section */
 		09304E51DC232ACF9D604391 /* CallSummaryCard.swift in Sources */ = {isa = PBXBuildFile; fileRef = C92779B3641C0D2DE6615612 /* CallSummaryCard.swift */; };
+		1092BB6FCB219E4B99B16EDF /* ContactListView.swift in Sources */ = {isa = PBXBuildFile; fileRef = EF9A6045C507E720138741A1 /* ContactListView.swift */; };
 		13531F3AAFCDFA21ECFB9E65 /* ThreadView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 055EAEA048AB6BB4CA4EEE80 /* ThreadView.swift */; };
 		193B96A4F6E1BC3B7A0B3B61 /* GradeIndicator.swift in Sources */ = {isa = PBXBuildFile; fileRef = 595848F3F46DFB87B0C65D55 /* GradeIndicator.swift */; };
 		1C7C72BCA9A6EDFBC2A43B96 /* CorrectionSheet.swift in Sources */ = {isa = PBXBuildFile; fileRef = A3F820DB38BA1EDB02EAE746 /* CorrectionSheet.swift */; };
 		2B69E6BF52B2A2AB640CBC77 /* Contact.swift in Sources */ = {isa = PBXBuildFile; fileRef = 93F9EB787CFB3448E1EFC024 /* Contact.swift */; };
 		547C08130F2822252B3296F9 /* ClaimRow.swift in Sources */ = {isa = PBXBuildFile; fileRef = B70C4EA922BE454A904F95BB /* ClaimRow.swift */; };
+		6810EA3F634A84FCB75E2AB9 /* ContactRow.swift in Sources */ = {isa = PBXBuildFile; fileRef = 64CAF4EB749EF62EB74ED822 /* ContactRow.swift */; };
 		87C400F4F3874303B94EB83B /* SMSBubble.swift in Sources */ = {isa = PBXBuildFile; fileRef = C0B838D3F03C0D2CDB76E802 /* SMSBubble.swift */; };
 		9729A9C737A2F3FB6C1A448C /* ThreadItem.swift in Sources */ = {isa = PBXBuildFile; fileRef = E620CD5610E49C34C8D6DD31 /* ThreadItem.swift */; };
 		986CB6A00F10B14F7508F67B /* Supabase in Frameworks */ = {isa = PBXBuildFile; productRef = 187F6B7C7E102040AC0AAD35 /* Supabase */; };
@@ -28,6 +30,7 @@
 		49A9C46539AA007D7645122A /* SupabaseService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SupabaseService.swift; sourceTree = "<group>"; };
 		51E44482F637661C85D155F8 /* ThreadViewModel.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ThreadViewModel.swift; sourceTree = "<group>"; };
 		595848F3F46DFB87B0C65D55 /* GradeIndicator.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = GradeIndicator.swift; sourceTree = "<group>"; };
+		64CAF4EB749EF62EB74ED822 /* ContactRow.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ContactRow.swift; sourceTree = "<group>"; };
 		93F9EB787CFB3448E1EFC024 /* Contact.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Contact.swift; sourceTree = "<group>"; };
 		A3F820DB38BA1EDB02EAE746 /* CorrectionSheet.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CorrectionSheet.swift; sourceTree = "<group>"; };
 		B70C4EA922BE454A904F95BB /* ClaimRow.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ClaimRow.swift; sourceTree = "<group>"; };
@@ -35,6 +38,7 @@
 		C92779B3641C0D2DE6615612 /* CallSummaryCard.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CallSummaryCard.swift; sourceTree = "<group>"; };
 		E49C0E479C5BF9BBBEA78C7F /* ClaimGrade.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ClaimGrade.swift; sourceTree = "<group>"; };
 		E620CD5610E49C34C8D6DD31 /* ThreadItem.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ThreadItem.swift; sourceTree = "<group>"; };
+		EF9A6045C507E720138741A1 /* ContactListView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ContactListView.swift; sourceTree = "<group>"; };
 		FF5BA52015DDCF6F215FA113 /* CamberRedlineApp.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CamberRedlineApp.swift; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
@@ -55,6 +59,8 @@
 			children = (
 				C92779B3641C0D2DE6615612 /* CallSummaryCard.swift */,
 				B70C4EA922BE454A904F95BB /* ClaimRow.swift */,
+				EF9A6045C507E720138741A1 /* ContactListView.swift */,
+				64CAF4EB749EF62EB74ED822 /* ContactRow.swift */,
 				A3F820DB38BA1EDB02EAE746 /* CorrectionSheet.swift */,
 				595848F3F46DFB87B0C65D55 /* GradeIndicator.swift */,
 				C0B838D3F03C0D2CDB76E802 /* SMSBubble.swift */,
@@ -185,6 +191,8 @@
 				D9002DC58A8E1B0580E9CEAF /* ClaimGrade.swift in Sources */,
 				547C08130F2822252B3296F9 /* ClaimRow.swift in Sources */,
 				2B69E6BF52B2A2AB640CBC77 /* Contact.swift in Sources */,
+				1092BB6FCB219E4B99B16EDF /* ContactListView.swift in Sources */,
+				6810EA3F634A84FCB75E2AB9 /* ContactRow.swift in Sources */,
 				1C7C72BCA9A6EDFBC2A43B96 /* CorrectionSheet.swift in Sources */,
 				193B96A4F6E1BC3B7A0B3B61 /* GradeIndicator.swift in Sources */,
 				87C400F4F3874303B94EB83B /* SMSBubble.swift in Sources */,

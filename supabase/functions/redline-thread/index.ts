@@ -35,7 +35,7 @@ async function handleContacts(db: any, t0: number): Promise<Response> {
 
   const { data: counts, error: countErr } = await db
     .from("interactions")
-    .select("contact_id, event_at_utc")
+    .select("contact_id, event_at_utc, interaction_id, human_summary")
     .not("contact_id", "is", null)
     .not("event_at_utc", "is", null);
   if (countErr) return json({ ok: false, error_code: "counts_query_failed", error: countErr.message }, 500);
@@ -43,15 +43,40 @@ async function handleContacts(db: any, t0: number): Promise<Response> {
   const { data: smsRows, error: smsErr } = await db.from("sms_messages").select("contact_phone");
   if (smsErr) return json({ ok: false, error_code: "sms_counts_failed", error: smsErr.message }, 500);
 
-  const callCountMap = new Map<string, { count: number; last: string }>();
+  const callCountMap = new Map<
+    string,
+    { count: number; last: string; lastInteractionId: string | null; lastSummary: string | null }
+  >();
   for (const row of counts || []) {
     const existing = callCountMap.get(row.contact_id);
     if (!existing) {
-      callCountMap.set(row.contact_id, { count: 1, last: row.event_at_utc });
+      callCountMap.set(row.contact_id, {
+        count: 1,
+        last: row.event_at_utc,
+        lastInteractionId: row.interaction_id,
+        lastSummary: row.human_summary,
+      });
     } else {
       existing.count++;
-      if (row.event_at_utc > existing.last) existing.last = row.event_at_utc;
+      if (row.event_at_utc > existing.last) {
+        existing.last = row.event_at_utc;
+        existing.lastInteractionId = row.interaction_id;
+        existing.lastSummary = row.human_summary;
+      }
     }
+  }
+
+  // Fetch directions for the most recent interaction per contact
+  const latestInteractionIds = [...callCountMap.values()]
+    .filter((v) => v.lastInteractionId)
+    .map((v) => v.lastInteractionId!);
+  let latestDirectionMap = new Map<string, string>();
+  if (latestInteractionIds.length > 0) {
+    const { data: latestCallsRaw } = await db
+      .from("calls_raw")
+      .select("interaction_id, direction")
+      .in("interaction_id", latestInteractionIds);
+    latestDirectionMap = new Map((latestCallsRaw || []).map((c: any) => [c.interaction_id, c.direction]));
   }
 
   const smsCountMap = new Map<string, number>();
@@ -61,7 +86,12 @@ async function handleContacts(db: any, t0: number): Promise<Response> {
 
   const result = (data || [])
     .map((c: any) => {
-      const stats = callCountMap.get(c.id) || { count: 0, last: null };
+      const stats = callCountMap.get(c.id) || {
+        count: 0,
+        last: null,
+        lastInteractionId: null,
+        lastSummary: null,
+      };
       return {
         contact_id: c.id,
         name: c.name,
@@ -69,6 +99,8 @@ async function handleContacts(db: any, t0: number): Promise<Response> {
         call_count: stats.count,
         sms_count: smsCountMap.get(c.phone) || 0,
         last_activity: stats.last,
+        last_summary: stats.lastSummary || null,
+        last_direction: stats.lastInteractionId ? (latestDirectionMap.get(stats.lastInteractionId) || null) : null,
       };
     })
     .filter((c: any) => c.call_count > 0 || c.sms_count > 0)
