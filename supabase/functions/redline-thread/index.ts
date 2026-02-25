@@ -77,94 +77,40 @@ function extractParticipants(transcript: string | null): string[] {
 
 // contacts endpoint
 async function handleContacts(db: any, t0: number): Promise<Response> {
-  const { data, error: err } = await db.from("contacts").select("id, name, phone");
-  if (err) return json({ ok: false, error_code: "contacts_query_failed", error: err.message }, 500);
+  const { data, error } = await db
+    .from("redline_contacts")
+    .select(
+      "contact_id, contact_name, contact_phone, call_count, sms_count, claim_count, ungraded_count, last_activity, last_snippet, last_direction, last_interaction_type",
+    )
+    .order("last_activity", { ascending: false, nullsFirst: false });
 
-  const { data: counts, error: countErr } = await db
-    .from("interactions")
-    .select("contact_id, event_at_utc, interaction_id, human_summary")
-    .not("contact_id", "is", null)
-    .not("event_at_utc", "is", null)
-    .limit(5000);
-  if (countErr) return json({ ok: false, error_code: "counts_query_failed", error: countErr.message }, 500);
-
-  const { data: smsRows, error: smsErr } = await db.from("sms_messages").select("contact_phone, direction");
-  if (smsErr) return json({ ok: false, error_code: "sms_counts_failed", error: smsErr.message }, 500);
-
-  const callCountMap = new Map<
-    string,
-    { count: number; last: string; lastInteractionId: string | null; lastSummary: string | null }
-  >();
-  for (const row of counts || []) {
-    const existing = callCountMap.get(row.contact_id);
-    if (!existing) {
-      callCountMap.set(row.contact_id, {
-        count: 1,
-        last: row.event_at_utc,
-        lastInteractionId: row.interaction_id,
-        lastSummary: row.human_summary,
-      });
-    } else {
-      existing.count++;
-      if (row.event_at_utc > existing.last) {
-        existing.last = row.event_at_utc;
-        existing.lastInteractionId = row.interaction_id;
-        existing.lastSummary = row.human_summary;
-      }
-    }
+  if (error) {
+    return json({ ok: false, error_code: "contacts_query_failed", error: error.message }, 500);
   }
 
-  const latestInteractionIds = [...callCountMap.values()]
-    .filter((v) => v.lastInteractionId)
-    .map((v) => v.lastInteractionId!);
-  let latestDirectionMap = new Map<string, string>();
-  if (latestInteractionIds.length > 0) {
-    const { data: latestCallsRaw } = await db
-      .from("calls_raw")
-      .select("interaction_id, direction")
-      .in("interaction_id", latestInteractionIds);
-    latestDirectionMap = new Map((latestCallsRaw || []).map((c: any) => [c.interaction_id, c.direction]));
-  }
-
-  const phonesWithInbound = new Set<string>();
-  for (const row of smsRows || []) {
-    if (row.direction === "inbound") phonesWithInbound.add(row.contact_phone);
-  }
-
-  const smsCountMap = new Map<string, number>();
-  for (const row of smsRows || []) {
-    if (phonesWithInbound.has(row.contact_phone)) {
-      smsCountMap.set(row.contact_phone, (smsCountMap.get(row.contact_phone) || 0) + 1);
-    }
-  }
-
-  const result = (data || [])
-    .map((c: any) => {
-      const stats = callCountMap.get(c.id) || {
-        count: 0,
-        last: null,
-        lastInteractionId: null,
-        lastSummary: null,
-      };
-      return {
-        contact_id: c.id,
-        name: c.name,
-        phone: c.phone,
-        call_count: stats.count,
-        sms_count: smsCountMap.get(c.phone) || 0,
-        last_activity: stats.last,
-        last_summary: stats.lastSummary || null,
-        last_direction: stats.lastInteractionId ? (latestDirectionMap.get(stats.lastInteractionId) || null) : null,
-      };
-    })
-    .filter((c: any) => c.call_count > 0 || c.sms_count > 0)
+  const contacts = (data || [])
+    .map((row: any) => ({
+      contact_id: row.contact_id,
+      name: row.contact_name,
+      phone: row.contact_phone,
+      call_count: Number(row.call_count ?? 0),
+      sms_count: Number(row.sms_count ?? 0),
+      claim_count: Number(row.claim_count ?? 0),
+      ungraded_count: Number(row.ungraded_count ?? 0),
+      last_activity: row.last_activity || null,
+      last_summary: row.last_snippet || null,
+      last_direction: row.last_direction || null,
+      last_interaction_type: row.last_interaction_type || null,
+    }))
+    .filter((row: any) => row.call_count > 0 || row.sms_count > 0)
     .sort((a: any, b: any) => {
-      if (!a.last_activity) return 1;
-      if (!b.last_activity) return -1;
-      return b.last_activity.localeCompare(a.last_activity);
+      const aTime = Date.parse(a.last_activity || "") || 0;
+      const bTime = Date.parse(b.last_activity || "") || 0;
+      if (aTime !== bTime) return bTime - aTime;
+      return String(a.name || "").localeCompare(String(b.name || ""));
     });
 
-  return json({ ok: true, contacts: result, function_version: FUNCTION_VERSION, ms: Date.now() - t0 });
+  return json({ ok: true, contacts, function_version: FUNCTION_VERSION, ms: Date.now() - t0 });
 }
 
 // thread endpoint
@@ -185,57 +131,145 @@ async function handleThread(
     return json({ ok: false, error_code: "contact_not_found", error: contactErr?.message || "not found" }, 404);
   }
 
-  const { count: totalCount } = await db
-    .from("interactions")
-    .select("id", { count: "exact", head: true })
-    .eq("contact_id", contactId)
-    .not("event_at_utc", "is", null);
+  let allInteractions: any[] = [];
+  let interactionsFrom = 0;
+  const queryPageSize = 1000;
+  while (true) {
+    const interactionsTo = interactionsFrom + queryPageSize - 1;
+    const { data: page, error: intErr } = await db
+      .from("interactions")
+      .select("id, interaction_id, event_at_utc, human_summary, contact_name")
+      .eq("contact_id", contactId)
+      .not("event_at_utc", "is", null)
+      .order("event_at_utc", { ascending: false })
+      .range(interactionsFrom, interactionsTo);
 
-  const { data: interactions, error: intErr } = await db
-    .from("interactions")
-    .select("id, interaction_id, event_at_utc, human_summary, contact_name")
-    .eq("contact_id", contactId)
-    .not("event_at_utc", "is", null)
-    .order("event_at_utc", { ascending: true })
-    .range(offset, offset + limit - 1);
+    if (intErr) {
+      return json({ ok: false, error_code: "interactions_query_failed", error: intErr.message }, 500);
+    }
 
-  if (intErr) return json({ ok: false, error_code: "interactions_query_failed", error: intErr.message }, 500);
-  if (!interactions || interactions.length === 0) {
+    if (!page || page.length === 0) break;
+    allInteractions = allInteractions.concat(page);
+    if (page.length < queryPageSize) break;
+    interactionsFrom += queryPageSize;
+  }
+
+  let allSmsMessages: any[] = [];
+  let smsFrom = 0;
+  while (true) {
+    const smsTo = smsFrom + queryPageSize - 1;
+    const { data: page, error: smsErr } = await db
+      .from("sms_messages")
+      .select("id, sent_at, content, direction, contact_name, sender_user_id")
+      .eq("contact_phone", contact.phone)
+      .order("sent_at", { ascending: false })
+      .range(smsFrom, smsTo);
+
+    if (smsErr) {
+      return json({ ok: false, error_code: "sms_query_failed", error: smsErr.message }, 500);
+    }
+
+    if (!page || page.length === 0) break;
+    allSmsMessages = allSmsMessages.concat(page);
+    if (page.length < queryPageSize) break;
+    smsFrom += queryPageSize;
+  }
+
+  const hasAnyInbound = allSmsMessages.some((s: any) => s.direction === "inbound");
+  const smsMessages = hasAnyInbound ? allSmsMessages : [];
+
+  const timeline = [
+    ...allInteractions.map((i: any) => ({
+      kind: "call",
+      key: i.interaction_id,
+      event_at: i.event_at_utc,
+    })),
+    ...smsMessages
+      .filter((s: any) => !!s.sent_at)
+      .map((s: any) => ({
+        kind: "sms",
+        key: s.id,
+        event_at: s.sent_at,
+      })),
+  ].sort((a: any, b: any) => {
+    const aTime = Date.parse(a.event_at || "") || 0;
+    const bTime = Date.parse(b.event_at || "") || 0;
+    if (aTime !== bTime) return bTime - aTime;
+    return String(b.key).localeCompare(String(a.key));
+  });
+
+  const totalCount = timeline.length;
+  const pagedTimeline = timeline.slice(offset, offset + limit);
+
+  if (pagedTimeline.length === 0) {
     return json({
       ok: true,
       contact: { id: contact.id, name: contact.name, phone: contact.phone },
       thread: [],
-      pagination: { limit, offset, total: totalCount || 0 },
+      pagination: { limit, offset, total: totalCount },
       function_version: FUNCTION_VERSION,
       ms: Date.now() - t0,
     });
   }
 
-  const interactionIds = interactions.map((i: any) => i.interaction_id);
+  const pagedCallIds = new Set(
+    pagedTimeline
+      .filter((entry: any) => entry.kind === "call")
+      .map((entry: any) => entry.key),
+  );
+  const pagedSmsIds = new Set(
+    pagedTimeline
+      .filter((entry: any) => entry.kind === "sms")
+      .map((entry: any) => entry.key),
+  );
 
-  const { data: callsRaw } = await db
-    .from("calls_raw")
-    .select("interaction_id, direction, transcript")
-    .in("interaction_id", interactionIds);
+  const interactions = allInteractions.filter((i: any) => pagedCallIds.has(i.interaction_id));
+  const interactionIds = interactions.map((i: any) => i.interaction_id);
+  const pagedSmsMessages = smsMessages.filter((s: any) => pagedSmsIds.has(s.id));
+
+  let callsRaw: any[] = [];
+  if (interactionIds.length > 0) {
+    const { data, error } = await db
+      .from("calls_raw")
+      .select("interaction_id, direction, transcript")
+      .in("interaction_id", interactionIds);
+
+    if (error) {
+      return json({ ok: false, error_code: "calls_raw_query_failed", error: error.message }, 500);
+    }
+    callsRaw = data || [];
+  }
 
   const directionMap = new Map((callsRaw || []).map((c: any) => [c.interaction_id, c.direction]));
   const transcriptMap = new Map((callsRaw || []).map((c: any) => [c.interaction_id, c.transcript]));
 
-  const { data: spans } = await db
-    .from("conversation_spans")
-    .select("id, interaction_id, span_index, transcript_segment, word_count")
-    .in("interaction_id", interactionIds)
-    .eq("is_superseded", false)
-    .order("span_index", { ascending: true });
+  let spans: any[] = [];
+  if (interactionIds.length > 0) {
+    const { data, error } = await db
+      .from("conversation_spans")
+      .select("id, interaction_id, span_index, transcript_segment, word_count")
+      .in("interaction_id", interactionIds)
+      .eq("is_superseded", false)
+      .order("span_index", { ascending: true });
+
+    if (error) {
+      return json({ ok: false, error_code: "spans_query_failed", error: error.message }, 500);
+    }
+    spans = data || [];
+  }
 
   const spansPerInteraction = groupBy(spans || [], (s: any) => s.interaction_id);
 
   let callClaims: any[] = [];
   if (interactionIds.length > 0) {
-    const { data: claimData } = await db
+    const { data: claimData, error: claimsErr } = await db
       .from("journal_claims")
       .select("id, call_id, source_span_id, claim_type, claim_text, speaker_label")
       .in("call_id", interactionIds);
+
+    if (claimsErr) {
+      return json({ ok: false, error_code: "claims_query_failed", error: claimsErr.message }, 500);
+    }
     callClaims = claimData || [];
   }
 
@@ -244,23 +278,18 @@ async function handleThread(
 
   let grades: any[] = [];
   if (allClaimIds.length > 0) {
-    const { data: gradeData } = await db
+    const { data: gradeData, error: gradesErr } = await db
       .from("claim_grades")
       .select("claim_id, grade, correction_text, graded_by")
       .in("claim_id", allClaimIds);
+
+    if (gradesErr) {
+      return json({ ok: false, error_code: "grades_query_failed", error: gradesErr.message }, 500);
+    }
     grades = gradeData || [];
   }
 
   const gradeMap = new Map((grades || []).map((g: any) => [g.claim_id, g]));
-
-  let { data: smsMessages } = await db
-    .from("sms_messages")
-    .select("id, sent_at, content, direction, contact_name, sender_user_id")
-    .eq("contact_phone", contact.phone)
-    .order("sent_at", { ascending: true });
-
-  const hasAnyInbound = (smsMessages || []).some((s: any) => s.direction === "inbound");
-  if (!hasAnyInbound) smsMessages = [];
 
   const callEntries = interactions.map((i: any) => {
     const rawTranscript: string | null = transcriptMap.get(i.interaction_id) || null;
@@ -302,7 +331,7 @@ async function handleThread(
     };
   });
 
-  const smsEntries = (smsMessages || []).map((s: any) => ({
+  const smsEntries = pagedSmsMessages.map((s: any) => ({
     type: "sms",
     sms_id: s.id,
     event_at: s.sent_at,
@@ -319,7 +348,7 @@ async function handleThread(
     ok: true,
     contact: { id: contact.id, name: contact.name, phone: contact.phone },
     thread,
-    pagination: { limit, offset, total: totalCount || 0 },
+    pagination: { limit, offset, total: totalCount },
     function_version: FUNCTION_VERSION,
     ms: Date.now() - t0,
   });
