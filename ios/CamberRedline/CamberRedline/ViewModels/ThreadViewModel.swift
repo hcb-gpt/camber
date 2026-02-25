@@ -34,13 +34,55 @@ final class ThreadViewModel {
     private func loadThreadInternal(contactId: UUID) async {
         do {
             let response = try await service.fetchThread(contactId: contactId)
-            let items = response.thread.compactMap { $0.toThreadItem() }
-            threadItems = items.sorted { lhs, rhs in
-                guard let ld = lhs.eventAtDate, let rd = rhs.eventAtDate else {
-                    return false
+            var items: [ThreadItem] = []
+
+            for raw in response.thread {
+                guard let item = raw.toThreadItem() else { continue }
+                switch item {
+                case .call(let entry):
+                    // Create compact call header with all claims aggregated
+                    let allClaims = entry.allClaims
+                    let header = CallHeaderEntry(
+                        interactionId: entry.interactionId,
+                        eventAt: entry.eventAt,
+                        direction: entry.direction,
+                        summary: entry.summary,
+                        claims: allClaims
+                    )
+                    items.append(.callHeader(header))
+
+                    // Use full transcript from calls_raw; fall back to span assembly
+                    let transcript: String
+                    if let raw = entry.transcript, !raw.isEmpty {
+                        transcript = raw
+                    } else {
+                        transcript = entry.spans
+                            .sorted { $0.spanIndex < $1.spanIndex }
+                            .compactMap(\.transcriptSegment)
+                            .joined(separator: "\n")
+                    }
+
+                    if !transcript.isEmpty {
+                        let contactName = response.contact.name
+                        let turns = TranscriptParser.parse(
+                            transcript, contactName: contactName
+                        )
+                        for turn in turns {
+                            items.append(.speakerTurn(turn))
+                        }
+                    }
+
+                case .sms(let entry):
+                    items.append(.sms(entry))
+
+                default:
+                    items.append(item)
                 }
-                return ld < rd
             }
+
+            // Don't re-sort. API returns chronological order.
+            // Flattening preserves: callHeader -> speakerTurns -> next item
+            threadItems = items
         } catch {
             self.error = error.localizedDescription
         }
@@ -160,36 +202,27 @@ final class ThreadViewModel {
 
     private func applyGradeUpdate(_ record: RealtimeGradeRecord) {
         threadItems = threadItems.map { item in
-            guard case .call(let entry) = item else { return item }
+            guard case .callHeader(let header) = item else { return item }
 
-            let updatedSpans = entry.spans.map { span in
-                let updatedClaims = span.claims.map { claim in
-                    guard claim.claimId == record.claimId else { return claim }
-                    return ClaimEntry(
-                        claimId: claim.claimId,
-                        claimType: claim.claimType,
-                        claimText: claim.claimText,
-                        grade: record.grade ?? claim.grade,
-                        correctionText: record.correctionText ?? claim.correctionText,
-                        gradedBy: record.gradedBy ?? claim.gradedBy
-                    )
-                }
-
-                return SpanEntry(
-                    spanId: span.spanId,
-                    spanIndex: span.spanIndex,
-                    transcriptSegment: span.transcriptSegment,
-                    claims: updatedClaims
+            let updatedClaims = header.claims.map { claim in
+                guard claim.claimId == record.claimId else { return claim }
+                return ClaimEntry(
+                    claimId: claim.claimId,
+                    claimType: claim.claimType,
+                    claimText: claim.claimText,
+                    grade: record.grade ?? claim.grade,
+                    correctionText: record.correctionText ?? claim.correctionText,
+                    gradedBy: record.gradedBy ?? claim.gradedBy
                 )
             }
 
-            return .call(
-                CallEntry(
-                    interactionId: entry.interactionId,
-                    eventAt: entry.eventAt,
-                    direction: entry.direction,
-                    summary: entry.summary,
-                    spans: updatedSpans
+            return .callHeader(
+                CallHeaderEntry(
+                    interactionId: header.interactionId,
+                    eventAt: header.eventAt,
+                    direction: header.direction,
+                    summary: header.summary,
+                    claims: updatedClaims
                 )
             )
         }

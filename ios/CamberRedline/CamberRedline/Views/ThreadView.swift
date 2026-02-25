@@ -6,17 +6,29 @@ struct ThreadView: View {
 
     var body: some View {
         ScrollView {
-            LazyVStack(spacing: 12) {
+            LazyVStack(spacing: 0) {
                 ForEach(Array(viewModel.threadItems.enumerated()), id: \.element.id) { index, item in
                     if shouldShowDateHeader(at: index) {
                         dateHeader(for: item)
+                    }
+
+                    if index > 0 && !shouldShowDateHeader(at: index) {
+                        Spacer()
+                            .frame(height: itemSpacing(
+                                previous: viewModel.threadItems[index - 1],
+                                current: item
+                            ))
                     }
 
                     switch item {
                     case .call(let entry):
                         CallSummaryCard(entry: entry, viewModel: viewModel)
                     case .sms(let entry):
-                        SMSBubble(entry: entry)
+                        SMSBubble(entry: entry, showTimestamp: shouldShowTimestamp(at: index))
+                    case .speakerTurn(let turn):
+                        SpeakerTurnBubble(turn: turn, showSpeakerLabel: shouldShowSpeakerLabel(at: index))
+                    case .callHeader(let header):
+                        CallHeaderCard(header: header, viewModel: viewModel)
                     }
                 }
             }
@@ -57,6 +69,46 @@ struct ThreadView: View {
                 await viewModel.stopClaimGradeSubscription()
             }
         }
+    }
+
+    // MARK: - Item Spacing
+
+    private func itemSpacing(previous: ThreadItem, current: ThreadItem) -> CGFloat {
+        switch (previous, current) {
+        case (.sms(let prev), .sms(let curr)):
+            return prev.direction == curr.direction ? 2 : 8
+        case (.speakerTurn(let prev), .speakerTurn(let curr)):
+            return prev.isOurSide == curr.isOurSide ? 2 : 8
+        case (.callHeader, .speakerTurn):
+            return 8
+        case (.speakerTurn, .sms), (.sms, .speakerTurn):
+            return 12
+        case (.speakerTurn, .callHeader), (.sms, .callHeader):
+            return 16
+        case (.callHeader, .sms), (.callHeader, .callHeader):
+            return 16
+        case (.call, _), (_, .call):
+            return 12  // legacy fallback
+        default:
+            return 8
+        }
+    }
+
+    // MARK: - Speaker Label Grouping
+
+    private func shouldShowSpeakerLabel(at index: Int) -> Bool {
+        guard case .speakerTurn(let current) = viewModel.threadItems[index] else { return true }
+        guard index > 0, case .speakerTurn(let previous) = viewModel.threadItems[index - 1] else { return true }
+        return current.isOurSide != previous.isOurSide
+    }
+
+    // MARK: - Timestamp Grouping for SMS
+
+    private func shouldShowTimestamp(at index: Int) -> Bool {
+        guard case .sms(let current) = viewModel.threadItems[index] else { return true }
+        guard index + 1 < viewModel.threadItems.count,
+              case .sms(let next) = viewModel.threadItems[index + 1] else { return true }
+        return current.direction != next.direction
     }
 
     // MARK: - Date Headers

@@ -173,10 +173,11 @@ async function handleThread(
 
   const { data: callsRaw } = await db
     .from("calls_raw")
-    .select("interaction_id, direction")
+    .select("interaction_id, direction, transcript")
     .in("interaction_id", interactionIds);
 
   const directionMap = new Map((callsRaw || []).map((c: any) => [c.interaction_id, c.direction]));
+  const transcriptMap = new Map((callsRaw || []).map((c: any) => [c.interaction_id, c.transcript]));
 
   const { data: spans } = await db
     .from("conversation_spans")
@@ -185,27 +186,27 @@ async function handleThread(
     .eq("is_superseded", false)
     .order("span_index", { ascending: true });
 
-  const spanIds = (spans || []).map((s: any) => s.id);
   const spansPerInteraction = groupBy(spans || [], (s: any) => s.interaction_id);
 
-  let claims: any[] = [];
-  if (spanIds.length > 0) {
+  // Fetch claims via call_id path (much more complete than span-only path)
+  let callClaims: any[] = [];
+  if (interactionIds.length > 0) {
     const { data: claimData } = await db
       .from("journal_claims")
-      .select("id, source_span_id, claim_type, claim_text, speaker_label")
-      .in("source_span_id", spanIds);
-    claims = claimData || [];
+      .select("id, call_id, source_span_id, claim_type, claim_text, speaker_label")
+      .in("call_id", interactionIds);
+    callClaims = claimData || [];
   }
 
-  const claimIds = claims.map((c: any) => c.id);
-  const claimsPerSpan = groupBy(claims, (c: any) => c.source_span_id);
+  const allClaimIds = callClaims.map((c: any) => c.id);
+  const claimsPerCall = groupBy(callClaims, (c: any) => c.call_id);
 
   let grades: any[] = [];
-  if (claimIds.length > 0) {
+  if (allClaimIds.length > 0) {
     const { data: gradeData } = await db
       .from("claim_grades")
       .select("claim_id, grade, correction_text, graded_by")
-      .in("claim_id", claimIds);
+      .in("claim_id", allClaimIds);
     grades = gradeData || [];
   }
 
@@ -225,30 +226,39 @@ async function handleThread(
   }
 
   // ─── Assemble thread ───
-  const callEntries = interactions.map((i: any) => ({
-    type: "call",
-    interaction_id: i.interaction_id,
-    event_at: i.event_at_utc,
-    direction: directionMap.get(i.interaction_id) || null,
-    summary: i.human_summary,
-    spans: (spansPerInteraction.get(i.interaction_id) || []).map((s: any) => ({
-      span_id: s.id,
-      span_index: s.span_index,
-      transcript_segment: s.transcript_segment,
-      word_count: s.word_count,
-      claims: (claimsPerSpan.get(s.id) || []).map((c: any) => {
-        const g = gradeMap.get(c.id);
-        return {
-          claim_id: c.id,
-          claim_type: c.claim_type,
-          claim_text: c.claim_text,
-          grade: g?.grade || null,
-          correction_text: g?.correction_text || null,
-          graded_by: g?.graded_by || null,
-        };
-      }),
-    })),
-  }));
+  const callEntries = interactions.map((i: any) => {
+    // Claims from call_id path (includes all claims, not just span-linked ones)
+    const interactionClaims = (claimsPerCall.get(i.interaction_id) || []).map((c: any) => {
+      const g = gradeMap.get(c.id);
+      return {
+        claim_id: c.id,
+        claim_type: c.claim_type,
+        claim_text: c.claim_text,
+        grade: g?.grade || null,
+        correction_text: g?.correction_text || null,
+        graded_by: g?.graded_by || null,
+      };
+    });
+
+    return {
+      type: "call",
+      interaction_id: i.interaction_id,
+      event_at: i.event_at_utc,
+      direction: directionMap.get(i.interaction_id) || null,
+      summary: i.human_summary,
+      transcript: transcriptMap.get(i.interaction_id) || null,
+      spans: (spansPerInteraction.get(i.interaction_id) || []).map((s: any) => ({
+        span_id: s.id,
+        span_index: s.span_index,
+        transcript_segment: s.transcript_segment,
+        word_count: s.word_count,
+        claims: interactionClaims.filter((c: any) =>
+          callClaims.find((cc: any) => cc.id === c.claim_id && cc.source_span_id === s.id)
+        ),
+      })),
+      claims: interactionClaims,
+    };
+  });
 
   const smsEntries = (smsMessages || []).map((s: any) => ({
     type: "sms",
@@ -519,11 +529,9 @@ const HTML = `<!DOCTYPE html>
         var gradeStats = { confirm: 0, reject: 0, correct: 0, ungraded: 0 };
         data.thread.forEach(function(item) {
           if (item.type !== "call") return;
-          (item.spans || []).forEach(function(span) {
-            (span.claims || []).forEach(function(claim) {
-              if (claim.grade) gradeStats[claim.grade] = (gradeStats[claim.grade] || 0) + 1;
-              else gradeStats.ungraded++;
-            });
+          (item.claims || []).forEach(function(claim) {
+            if (claim.grade) gradeStats[claim.grade] = (gradeStats[claim.grade] || 0) + 1;
+            else gradeStats.ungraded++;
           });
         });
 
@@ -598,11 +606,13 @@ const HTML = `<!DOCTYPE html>
           card.appendChild(summary);
         }
 
-        // Claims (flattened across spans)
-        var allClaims = [];
-        (item.spans || []).forEach(function(span) {
-          (span.claims || []).forEach(function(claim) { allClaims.push(claim); });
-        });
+        // Claims (from top-level call_id path, with span fallback)
+        var allClaims = (item.claims || []);
+        if (allClaims.length === 0) {
+          (item.spans || []).forEach(function(span) {
+            (span.claims || []).forEach(function(claim) { allClaims.push(claim); });
+          });
+        }
 
         if (allClaims.length > 0) {
           var section = document.createElement("div");
