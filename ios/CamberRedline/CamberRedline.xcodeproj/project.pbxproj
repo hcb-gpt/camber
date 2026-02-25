@@ -3,7 +3,7 @@
 	archiveVersion = 1;
 	classes = {
 	};
-	objectVersion = 77;
+	objectVersion = 63;
 	objects = {
 
 /* Begin PBXBuildFile section */
@@ -26,7 +26,7 @@
 
 /* Begin PBXFileReference section */
 		055EAEA048AB6BB4CA4EEE80 /* ThreadView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ThreadView.swift; sourceTree = "<group>"; };
-		34CB7D73C1D3046EEE6ECAAE /* CamberRedline.app */ = {isa = PBXFileReference; includeInIndex = 0; lastKnownFileType = wrapper.application; path = CamberRedline.app; sourceTree = BUILT_PRODUCTS_DIR; };
+		34CB7D73C1D3046EEE6ECAAE /* CamberRedline.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = CamberRedline.app; sourceTree = BUILT_PRODUCTS_DIR; };
 		49A9C46539AA007D7645122A /* SupabaseService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SupabaseService.swift; sourceTree = "<group>"; };
 		51E44482F637661C85D155F8 /* ThreadViewModel.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ThreadViewModel.swift; sourceTree = "<group>"; };
 		595848F3F46DFB87B0C65D55 /* GradeIndicator.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = GradeIndicator.swift; sourceTree = "<group>"; };
@@ -153,11 +153,6 @@
 			attributes = {
 				BuildIndependentTargetsInParallel = YES;
 				LastUpgradeCheck = 1600;
-				TargetAttributes = {
-					B6293C378A63EBC6B48CFBE2 = {
-						DevelopmentTeam = "";
-					};
-				};
 			};
 			buildConfigurationList = 03FB81D1446DD0CD384BA5A0 /* Build configuration list for PBXProject "CamberRedline" */;
 			compatibilityVersion = "Xcode 14.0";
@@ -172,7 +167,6 @@
 			packageReferences = (
 				1325FF3460611FE0F2BEB17C /* XCRemoteSwiftPackageReference "supabase-swift" */,
 			);
-			preferredProjectObjectVersion = 77;
 			projectDirPath = "";
 			projectRoot = "";
 			targets = (
@@ -331,11 +325,12 @@
 				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
 				CODE_SIGN_IDENTITY = "iPhone Developer";
 				CURRENT_PROJECT_VERSION = 1;
-				DEVELOPMENT_TEAM = "";
+				DEVELOPMENT_TEAM = ABL25FWB6A;
 				GENERATE_INFOPLIST_FILE = YES;
-				INFOPLIST_KEY_UILaunchScreen_Generation = YES;
-				INFOPLIST_KEY_UISupportedInterfaceOrientations_iPhone = UIInterfaceOrientationPortrait;
-				LD_RUNPATH_SEARCH_PATHS = (
+					INFOPLIST_KEY_UILaunchScreen_Generation = YES;
+					INFOPLIST_KEY_UISupportedInterfaceOrientations_iPhone = UIInterfaceOrientationPortrait;
+					INFOPLIST_KEY_UISupportedInterfaceOrientations_iPad = "UIInterfaceOrientationPortrait UIInterfaceOrientationPortraitUpsideDown UIInterfaceOrientationLandscapeLeft UIInterfaceOrientationLandscapeRight";
+					LD_RUNPATH_SEARCH_PATHS = (
 					"$(inherited)",
 					"@executable_path/Frameworks",
 				);
@@ -357,11 +352,12 @@
 				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
 				CODE_SIGN_IDENTITY = "iPhone Developer";
 				CURRENT_PROJECT_VERSION = 1;
-				DEVELOPMENT_TEAM = "";
+				DEVELOPMENT_TEAM = ABL25FWB6A;
 				GENERATE_INFOPLIST_FILE = YES;
-				INFOPLIST_KEY_UILaunchScreen_Generation = YES;
-				INFOPLIST_KEY_UISupportedInterfaceOrientations_iPhone = UIInterfaceOrientationPortrait;
-				LD_RUNPATH_SEARCH_PATHS = (
+					INFOPLIST_KEY_UILaunchScreen_Generation = YES;
+					INFOPLIST_KEY_UISupportedInterfaceOrientations_iPhone = UIInterfaceOrientationPortrait;
+					INFOPLIST_KEY_UISupportedInterfaceOrientations_iPad = "UIInterfaceOrientationPortrait UIInterfaceOrientationPortraitUpsideDown UIInterfaceOrientationLandscapeLeft UIInterfaceOrientationLandscapeRight";
+					LD_RUNPATH_SEARCH_PATHS = (
 					"$(inherited)",
 					"@executable_path/Frameworks",
 				);

@@ -25,7 +25,7 @@ struct ThreadView: View {
         }
         .defaultScrollAnchor(.bottom)
         .refreshable {
-            viewModel.loadThread(contactId: contact.contactId)
+            await viewModel.loadThread(contactId: contact.contactId)
             try? await Task.sleep(for: .milliseconds(500))
         }
         .background(Color.black)
@@ -47,13 +47,15 @@ struct ThreadView: View {
                     .padding()
             }
         }
-        .onAppear {
+        .task(id: contact.contactId) {
             viewModel.currentContact = contact
-            viewModel.loadThread(contactId: contact.contactId)
-            viewModel.startClaimGradeSubscription(contactId: contact.contactId)
+            await viewModel.loadThread(contactId: contact.contactId)
+            await viewModel.startClaimGradeSubscription(contactId: contact.contactId)
         }
         .onDisappear {
-            viewModel.stopClaimGradeSubscription()
+            Task {
+                await viewModel.stopClaimGradeSubscription()
+            }
         }
     }
 

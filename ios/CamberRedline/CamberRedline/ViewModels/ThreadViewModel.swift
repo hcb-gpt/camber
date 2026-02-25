@@ -2,6 +2,7 @@ import Foundation
 import Observation
 import Supabase
 
+@MainActor
 @Observable
 final class ThreadViewModel {
 
@@ -22,14 +23,12 @@ final class ThreadViewModel {
 
     // MARK: - Load Thread
 
-    func loadThread(contactId: UUID) {
+    func loadThread(contactId: UUID) async {
         isLoading = true
         error = nil
+        defer { isLoading = false }
 
-        Task { @MainActor in
-            await loadThreadInternal(contactId: contactId)
-            isLoading = false
-        }
+        await loadThreadInternal(contactId: contactId)
     }
 
     private func loadThreadInternal(contactId: UUID) async {
@@ -53,34 +52,31 @@ final class ThreadViewModel {
         claimId: UUID,
         grade: GradeType,
         correctionText: String? = nil
-    ) {
+    ) async {
         guard let contact = currentContact else { return }
         error = nil
 
-        Task { @MainActor in
-            do {
-                try await service.gradeClaimViaAPI(
-                    claimId: claimId,
-                    grade: grade.rawValue,
-                    correctionText: correctionText,
-                    gradedBy: "ios_reviewer"
-                )
-                // Reload the thread to reflect the updated grade
-                await loadThreadInternal(contactId: contact.contactId)
-            } catch {
-                self.error = error.localizedDescription
-            }
+        do {
+            try await service.gradeClaimViaAPI(
+                claimId: claimId,
+                grade: grade.rawValue,
+                correctionText: correctionText,
+                gradedBy: "ios_reviewer"
+            )
+            await loadThreadInternal(contactId: contact.contactId)
+        } catch {
+            self.error = error.localizedDescription
         }
     }
 
     // MARK: - Realtime (claim_grades)
 
-    func startClaimGradeSubscription(contactId: UUID) {
+    func startClaimGradeSubscription(contactId: UUID) async {
         if subscribedContactId == contactId, gradeChannel != nil {
             return
         }
 
-        stopClaimGradeSubscription()
+        await stopClaimGradeSubscription()
 
         let channel = service.client.channel("claim-grades-\(contactId.uuidString.lowercased())")
         let inserts = channel.postgresChange(
@@ -94,36 +90,32 @@ final class ThreadViewModel {
             table: "claim_grades"
         )
 
-        Task { @MainActor [weak self] in
+        do {
+            try await channel.subscribeWithError()
+        } catch {
+            self.error = "Realtime unavailable: \(error.localizedDescription)"
+            return
+        }
+
+        subscribedContactId = contactId
+        gradeChannel = channel
+
+        gradeInsertTask = Task { @MainActor [weak self] in
             guard let self else { return }
-
-            do {
-                try await channel.subscribeWithError()
-            } catch {
-                self.error = "Realtime unavailable: \(error.localizedDescription)"
-                return
+            for await insert in inserts {
+                self.mergeGrade(from: insert)
             }
+        }
 
-            self.subscribedContactId = contactId
-            self.gradeChannel = channel
-
-            self.gradeInsertTask = Task { @MainActor [weak self] in
-                guard let self else { return }
-                for await insert in inserts {
-                    self.mergeGrade(from: insert)
-                }
-            }
-
-            self.gradeUpdateTask = Task { @MainActor [weak self] in
-                guard let self else { return }
-                for await update in updates {
-                    self.mergeGrade(from: update)
-                }
+        gradeUpdateTask = Task { @MainActor [weak self] in
+            guard let self else { return }
+            for await update in updates {
+                self.mergeGrade(from: update)
             }
         }
     }
 
-    func stopClaimGradeSubscription() {
+    func stopClaimGradeSubscription() async {
         gradeInsertTask?.cancel()
         gradeInsertTask = nil
 
@@ -134,14 +126,8 @@ final class ThreadViewModel {
 
         if let channel = gradeChannel {
             gradeChannel = nil
-            Task {
-                await service.client.removeChannel(channel)
-            }
+            await service.client.removeChannel(channel)
         }
-    }
-
-    deinit {
-        stopClaimGradeSubscription()
     }
 
     private func mergeGrade(from action: InsertAction) {
@@ -204,6 +190,7 @@ final class ThreadViewModel {
     }
 }
 
+@MainActor
 @Observable
 final class ContactListViewModel {
     var contacts: [Contact] = []
@@ -214,22 +201,19 @@ final class ContactListViewModel {
     private var interactionsChannel: RealtimeChannelV2?
     private var interactionsTask: Task<Void, Never>?
 
-    func loadContacts() {
-        Task { @MainActor in
-            isLoading = true
-            error = nil
+    func loadContacts() async {
+        isLoading = true
+        error = nil
+        defer { isLoading = false }
 
-            do {
-                contacts = try await service.fetchContactsList()
-            } catch {
-                self.error = error.localizedDescription
-            }
-
-            isLoading = false
+        do {
+            contacts = try await service.fetchContactsList()
+        } catch {
+            self.error = error.localizedDescription
         }
     }
 
-    func subscribeToNewInteractions() {
+    func subscribeToNewInteractions() async {
         guard interactionsChannel == nil else { return }
 
         let channel = service.client.channel("new-interactions")
@@ -239,41 +223,33 @@ final class ContactListViewModel {
             table: "interactions"
         )
 
+        do {
+            try await channel.subscribeWithError()
+        } catch {
+            self.error = "Realtime unavailable: \(error.localizedDescription)"
+            return
+        }
+
+        interactionsChannel = channel
+
         interactionsTask = Task { @MainActor [weak self] in
             guard let self else { return }
-
-            do {
-                try await channel.subscribeWithError()
-            } catch {
-                self.error = "Realtime unavailable: \(error.localizedDescription)"
-                return
-            }
-
-            self.interactionsChannel = channel
-
             for await _ in inserts {
                 await self.reloadContactsFromRealtime()
             }
         }
     }
 
-    func unsubscribe() {
+    func unsubscribe() async {
         interactionsTask?.cancel()
         interactionsTask = nil
 
         if let channel = interactionsChannel {
             interactionsChannel = nil
-            Task {
-                await service.client.removeChannel(channel)
-            }
+            await service.client.removeChannel(channel)
         }
     }
 
-    deinit {
-        unsubscribe()
-    }
-
-    @MainActor
     private func reloadContactsFromRealtime() async {
         do {
             contacts = try await service.fetchContactsList()
