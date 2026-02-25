@@ -6,7 +6,7 @@ struct CamberRedlineApp: App {
 
     var body: some Scene {
         WindowGroup {
-            ThreadView(viewModel: viewModel)
+            ContactListView(viewModel: viewModel)
                 .preferredColorScheme(.dark)
                 .onAppear {
                     viewModel.loadContacts()
