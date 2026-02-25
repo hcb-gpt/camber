@@ -10,11 +10,15 @@ struct CallSummaryCard: View {
         entry.direction?.lowercased() == "inbound"
     }
 
+    private static let timeFormatter: DateFormatter = {
+        let f = DateFormatter()
+        f.timeStyle = .short
+        return f
+    }()
+
     private var formattedTime: String {
         guard let date = ThreadItem.call(entry).eventAtDate else { return "" }
-        let formatter = DateFormatter()
-        formatter.timeStyle = .short
-        return formatter.string(from: date)
+        return Self.timeFormatter.string(from: date)
     }
 
     private var allClaims: [ClaimEntry] {

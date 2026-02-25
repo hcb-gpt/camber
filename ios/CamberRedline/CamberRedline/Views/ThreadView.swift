@@ -61,6 +61,13 @@ struct ThreadView: View {
 
     // MARK: - Date Headers
 
+    private static let dateHeaderFormatter: DateFormatter = {
+        let f = DateFormatter()
+        f.dateStyle = .medium
+        f.timeStyle = .none
+        return f
+    }()
+
     private func shouldShowDateHeader(at index: Int) -> Bool {
         guard let currentDate = viewModel.threadItems[index].eventAtDate else { return false }
         if index == 0 { return true }
@@ -83,10 +90,7 @@ struct ThreadView: View {
         } else if Calendar.current.isDateInYesterday(date) {
             return "Yesterday"
         } else {
-            let formatter = DateFormatter()
-            formatter.dateStyle = .medium
-            formatter.timeStyle = .none
-            return formatter.string(from: date)
+            return Self.dateHeaderFormatter.string(from: date)
         }
     }
 }
