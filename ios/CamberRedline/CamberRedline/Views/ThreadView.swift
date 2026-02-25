@@ -61,7 +61,7 @@ struct ThreadView: View {
 
     // MARK: - Date Headers
 
-    private static let dateHeaderFormatter: DateFormatter = {
+    nonisolated(unsafe) private static let dateHeaderFormatter: DateFormatter = {
         let f = DateFormatter()
         f.dateStyle = .medium
         f.timeStyle = .none

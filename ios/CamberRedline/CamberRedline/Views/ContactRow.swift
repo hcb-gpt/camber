@@ -105,26 +105,26 @@ struct ContactRow: View {
         return relativeString(from: date)
     }
 
-    private static let isoFormatterFractional: ISO8601DateFormatter = {
+    nonisolated(unsafe) private static let isoFormatterFractional: ISO8601DateFormatter = {
         let f = ISO8601DateFormatter()
         f.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
         return f
     }()
 
-    private static let isoFormatterBasic: ISO8601DateFormatter = {
+    nonisolated(unsafe) private static let isoFormatterBasic: ISO8601DateFormatter = {
         let f = ISO8601DateFormatter()
         f.formatOptions = [.withInternetDateTime]
         return f
     }()
 
-    private static let postgresFormatter: DateFormatter = {
+    nonisolated(unsafe) private static let postgresFormatter: DateFormatter = {
         let f = DateFormatter()
         f.dateFormat = "yyyy-MM-dd HH:mm:ssxx"
         f.locale = Locale(identifier: "en_US_POSIX")
         return f
     }()
 
-    private static let shortDateFormatter: DateFormatter = {
+    nonisolated(unsafe) private static let shortDateFormatter: DateFormatter = {
         let f = DateFormatter()
         f.dateFormat = "MMM d"
         return f

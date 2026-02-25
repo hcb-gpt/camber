@@ -10,7 +10,7 @@ struct CallSummaryCard: View {
         entry.direction?.lowercased() == "inbound"
     }
 
-    private static let timeFormatter: DateFormatter = {
+    nonisolated(unsafe) private static let timeFormatter: DateFormatter = {
         let f = DateFormatter()
         f.timeStyle = .short
         return f
