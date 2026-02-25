@@ -487,15 +487,6 @@ private struct SMSRow: View {
     }
 
     var body: some View {
-        VStack(alignment: isOutbound ? .trailing : .leading, spacing: 2) {
-            // Sender name label above the bubble
-            Text(senderName)
-                .font(.caption2)
-                .foregroundStyle(Color(.systemGray))
-                .frame(maxWidth: .infinity, alignment: isOutbound ? .trailing : .leading)
-                .padding(.horizontal, 4)
-
-            SMSBubble(entry: entry, showTimestamp: true, senderName: senderName)
-        }
+        SMSBubble(entry: entry, showTimestamp: true, senderName: senderName)
     }
 }
