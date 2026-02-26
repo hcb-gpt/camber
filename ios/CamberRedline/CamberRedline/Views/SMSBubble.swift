@@ -2,45 +2,64 @@ import SwiftUI
 
 struct SMSBubble: View {
     let entry: SMSEntry
+    var showTimestamp: Bool = true
+    var senderName: String? = nil
 
     private var isOutbound: Bool {
         entry.direction?.lowercased() == "outbound"
     }
 
+    nonisolated(unsafe) private static let timeFormatter: DateFormatter = {
+        let f = DateFormatter()
+        f.timeStyle = .short
+        return f
+    }()
+
     private var formattedTime: String {
         guard let date = ThreadItem.sms(entry).eventAtDate else { return "" }
-        let formatter = DateFormatter()
-        formatter.timeStyle = .short
-        return formatter.string(from: date)
+        return Self.timeFormatter.string(from: date)
     }
 
+    // #007AFF outbound (spec), #2C2C2E inbound (spec)
     private var bubbleColor: Color {
-        isOutbound ? Color(red: 0, green: 0.478, blue: 1) : Color(UIColor.secondarySystemBackground)
+        isOutbound
+            ? Color(red: 0, green: 0.478, blue: 1)           // #007AFF
+            : Color(red: 0.173, green: 0.173, blue: 0.173)   // #2C2C2E
     }
 
     private var bubbleShape: UnevenRoundedRectangle {
         if isOutbound {
+            // tail at bottom-trailing corner
             UnevenRoundedRectangle(
-                topLeadingRadius: 16,
-                bottomLeadingRadius: 16,
+                topLeadingRadius: 18,
+                bottomLeadingRadius: 18,
                 bottomTrailingRadius: 4,
-                topTrailingRadius: 16
+                topTrailingRadius: 18
             )
         } else {
+            // tail at bottom-leading corner
             UnevenRoundedRectangle(
-                topLeadingRadius: 16,
+                topLeadingRadius: 18,
                 bottomLeadingRadius: 4,
-                bottomTrailingRadius: 16,
-                topTrailingRadius: 16
+                bottomTrailingRadius: 18,
+                topTrailingRadius: 18
             )
         }
     }
 
     var body: some View {
         HStack {
-            if isOutbound { Spacer(minLength: UIScreen.main.bounds.width * 0.25) }
+            if isOutbound { Spacer(minLength: 60) }
 
             VStack(alignment: isOutbound ? .trailing : .leading, spacing: 2) {
+                // Sender name label — #8E8E93, shown above inbound bubbles only
+                if !isOutbound, let name = senderName, !name.isEmpty {
+                    Text(name)
+                        .font(.caption2)
+                        .foregroundStyle(Color(red: 0.557, green: 0.557, blue: 0.576)) // #8E8E93
+                        .padding(.horizontal, 4)
+                }
+
                 Text(entry.content ?? "")
                     .font(.body)
                     .foregroundStyle(.white)
@@ -49,13 +68,15 @@ struct SMSBubble: View {
                     .background(bubbleColor)
                     .clipShape(bubbleShape)
 
-                Text(formattedTime)
-                    .font(.caption2)
-                    .foregroundStyle(.secondary)
-                    .padding(.horizontal, 4)
+                if showTimestamp {
+                    Text(formattedTime)
+                        .font(.caption2)
+                        .foregroundStyle(.secondary)
+                        .padding(.horizontal, 4)
+                }
             }
 
-            if !isOutbound { Spacer(minLength: UIScreen.main.bounds.width * 0.25) }
+            if !isOutbound { Spacer(minLength: 60) }
         }
     }
 }

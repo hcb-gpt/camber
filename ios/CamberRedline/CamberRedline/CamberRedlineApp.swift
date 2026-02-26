@@ -2,15 +2,44 @@ import SwiftUI
 
 @main
 struct CamberRedlineApp: App {
-    @State private var viewModel = ThreadViewModel()
+    @State private var contactListViewModel = ContactListViewModel()
+    @State private var threadViewModel = ThreadViewModel()
+    @State private var selectedTab: Int = 0
+
+    // #FF3B30 — system red (Redline tab tint)
+    private let redlineTint = Color(red: 1.0, green: 0.231, blue: 0.188)
+    // #30D158 — system green (Triage tab tint)
+    private let triageTint = Color(red: 0.188, green: 0.820, blue: 0.345)
+    // #0A0A0A — near-black tab bar background
+    private let tabBarBackground = Color(red: 0.039, green: 0.039, blue: 0.039)
 
     var body: some Scene {
         WindowGroup {
-            ContactListView(viewModel: viewModel)
-                .preferredColorScheme(.dark)
-                .onAppear {
-                    viewModel.loadContacts()
+            TabView(selection: $selectedTab) {
+                ContactListView(
+                    contactListViewModel: contactListViewModel,
+                    threadViewModel: threadViewModel
+                )
+                .tabItem {
+                    Label("Redline", systemImage: "phone.fill")
                 }
+                .tag(0)
+
+                TriageView()
+                .tabItem {
+                    Label("Triage", systemImage: "checkmark.circle.fill")
+                }
+                .tag(1)
+            }
+            .tint(selectedTab == 0 ? redlineTint : triageTint)
+            .preferredColorScheme(.dark)
+            .onAppear {
+                let appearance = UITabBarAppearance()
+                appearance.configureWithOpaqueBackground()
+                appearance.backgroundColor = UIColor(tabBarBackground)
+                UITabBar.appearance().standardAppearance = appearance
+                UITabBar.appearance().scrollEdgeAppearance = appearance
+            }
         }
     }
 }

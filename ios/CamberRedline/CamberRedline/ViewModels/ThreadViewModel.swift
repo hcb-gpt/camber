@@ -1,64 +1,129 @@
 import Foundation
 import Observation
+import Supabase
 
+@MainActor
 @Observable
 final class ThreadViewModel {
 
     // MARK: - Published State
 
-    var contacts: [Contact] = []
     var currentContact: Contact?
     var threadItems: [ThreadItem] = []
     var isLoading = false
+    var isLoadingOlderThread = false
+    var hasOlderThreadItems = false
     var error: String?
 
     // MARK: - Dependencies
 
     private let service = SupabaseService.shared
-
-    // MARK: - Load Contacts
-
-    func loadContacts() {
-        isLoading = true
-        error = nil
-
-        Task { @MainActor in
-            do {
-                let fetched = try await service.fetchContacts()
-                contacts = fetched
-                isLoading = false
-            } catch {
-                self.error = error.localizedDescription
-                isLoading = false
-            }
-        }
-    }
+    private var gradeChannel: RealtimeChannelV2?
+    private var gradeInsertTask: Task<Void, Never>?
+    private var gradeUpdateTask: Task<Void, Never>?
+    private var subscribedContactId: UUID?
+    private let threadPageSize = 50
+    private var currentThreadOffset = 0
+    private var totalThreadCount = 0
 
     // MARK: - Load Thread
 
-    func loadThread(contactId: UUID) {
+    func loadThread(contactId: UUID) async {
         isLoading = true
         error = nil
+        defer { isLoading = false }
 
-        Task { @MainActor in
-            await loadThreadInternal(contactId: contactId)
-            isLoading = false
-        }
+        currentThreadOffset = 0
+        totalThreadCount = 0
+        hasOlderThreadItems = false
+        await loadThreadPage(contactId: contactId, offset: 0, resetItems: true)
     }
 
-    private func loadThreadInternal(contactId: UUID) async {
+    func loadOlderThreadPageIfNeeded() async {
+        guard let contactId = currentContact?.contactId else { return }
+        guard hasOlderThreadItems, !isLoadingOlderThread else { return }
+
+        isLoadingOlderThread = true
+        defer { isLoadingOlderThread = false }
+
+        let nextOffset = currentThreadOffset + threadPageSize
+        await loadThreadPage(contactId: contactId, offset: nextOffset, resetItems: false)
+    }
+
+    private func loadThreadPage(contactId: UUID, offset: Int, resetItems: Bool) async {
         do {
-            let response = try await service.fetchThread(contactId: contactId)
-            let items = response.thread.compactMap { $0.toThreadItem() }
-            threadItems = items.sorted { lhs, rhs in
-                guard let ld = lhs.eventAtDate, let rd = rhs.eventAtDate else {
-                    return false
-                }
-                return ld < rd
+            let response = try await service.fetchThread(
+                contactId: contactId,
+                limit: threadPageSize,
+                offset: offset
+            )
+            let pageItems = makeThreadItems(from: response)
+
+            if resetItems {
+                threadItems = pageItems
+            } else {
+                let existingIDs = Set(threadItems.map(\.id))
+                let uniqueOlderItems = pageItems.filter { !existingIDs.contains($0.id) }
+                threadItems = uniqueOlderItems + threadItems
             }
+
+            currentThreadOffset = offset
+            totalThreadCount = response.pagination.total
+            hasOlderThreadItems = (offset + response.pagination.limit) < totalThreadCount
         } catch {
             self.error = error.localizedDescription
         }
+    }
+
+    private func makeThreadItems(from response: ThreadResponse) -> [ThreadItem] {
+        var items: [ThreadItem] = []
+
+        for raw in response.thread {
+            guard let item = raw.toThreadItem() else { continue }
+            switch item {
+            case .call(let entry):
+                let allClaims = entry.allClaims
+                let header = CallHeaderEntry(
+                    interactionId: entry.interactionId,
+                    eventAt: entry.eventAt,
+                    contactName: entry.contactName,
+                    direction: entry.direction,
+                    channel: entry.channel,
+                    summary: entry.summary,
+                    claims: allClaims,
+                    spans: entry.spans
+                )
+                items.append(.callHeader(header))
+
+                let transcript: String
+                if let raw = entry.rawTranscript, !raw.isEmpty {
+                    transcript = raw
+                } else {
+                    transcript = entry.spans
+                        .sorted { $0.spanIndex < $1.spanIndex }
+                        .compactMap(\.transcriptSegment)
+                        .joined(separator: "\n")
+                }
+
+                if !transcript.isEmpty {
+                    let turns = TranscriptParser.parse(
+                        transcript,
+                        contactName: response.contact.name
+                    )
+                    for turn in turns {
+                        items.append(.speakerTurn(turn))
+                    }
+                }
+
+            case .sms(let entry):
+                items.append(.sms(entry))
+
+            default:
+                items.append(item)
+            }
+        }
+
+        return items
     }
 
     // MARK: - Grade Claim
@@ -67,23 +132,316 @@ final class ThreadViewModel {
         claimId: UUID,
         grade: GradeType,
         correctionText: String? = nil
-    ) {
-        guard let contact = currentContact else { return }
+    ) async {
+        guard let contactId = currentContact?.contactId else {
+            error = "No contact selected"
+            return
+        }
+        self.error = nil
+
+        do {
+            try await service.gradeClaimViaAPI(
+                claimId: claimId,
+                grade: grade.rawValue,
+                correctionText: correctionText,
+                gradedBy: "ios_reviewer"
+            )
+            await loadThread(contactId: contactId)
+        } catch {
+            self.error = error.localizedDescription
+        }
+    }
+
+    // MARK: - Realtime (claim_grades)
+
+    func startClaimGradeSubscription(contactId: UUID) async {
+        if subscribedContactId == contactId, gradeChannel != nil {
+            return
+        }
+
+        await stopClaimGradeSubscription()
+
+        let channel = service.client.channel("claim-grades-\(contactId.uuidString.lowercased())")
+        gradeChannel = channel
+        subscribedContactId = contactId
+
+        let inserts = channel.postgresChange(
+            InsertAction.self,
+            schema: "public",
+            table: "claim_grades"
+        )
+        let updates = channel.postgresChange(
+            UpdateAction.self,
+            schema: "public",
+            table: "claim_grades"
+        )
+
+        do {
+            try await channel.subscribeWithError()
+        } catch {
+            if shouldIgnoreRealtimeError(error) {
+                return
+            }
+            print("Claim grade realtime unavailable: \(error.localizedDescription)")
+            await stopClaimGradeSubscription()
+            return
+        }
         error = nil
 
-        Task { @MainActor in
-            do {
-                try await service.gradeClaimViaAPI(
-                    claimId: claimId,
-                    grade: grade.rawValue,
-                    correctionText: correctionText,
-                    gradedBy: "ios_reviewer"
-                )
-                // Reload the thread to reflect the updated grade
-                await loadThreadInternal(contactId: contact.contactId)
-            } catch {
-                self.error = error.localizedDescription
+        gradeInsertTask = Task { @MainActor [weak self] in
+            guard let self else { return }
+            for await insert in inserts {
+                self.mergeGrade(from: insert)
             }
         }
+
+        gradeUpdateTask = Task { @MainActor [weak self] in
+            guard let self else { return }
+            for await update in updates {
+                self.mergeGrade(from: update)
+            }
+        }
+    }
+
+    func stopClaimGradeSubscription() async {
+        gradeInsertTask?.cancel()
+        gradeInsertTask = nil
+
+        gradeUpdateTask?.cancel()
+        gradeUpdateTask = nil
+
+        subscribedContactId = nil
+
+        if let channel = gradeChannel {
+            gradeChannel = nil
+            await service.client.removeChannel(channel)
+        }
+    }
+
+    private static let realtimeDecoder = JSONDecoder()
+
+    private func mergeGrade(from action: InsertAction) {
+        guard
+            let record = try? action.decodeRecord(
+                as: RealtimeGradeRecord.self,
+                decoder: Self.realtimeDecoder
+            )
+        else { return }
+
+        applyGradeUpdate(record)
+    }
+
+    private func mergeGrade(from action: UpdateAction) {
+        guard
+            let record = try? action.decodeRecord(
+                as: RealtimeGradeRecord.self,
+                decoder: Self.realtimeDecoder
+            )
+        else { return }
+
+        applyGradeUpdate(record)
+    }
+
+    private func applyGradeUpdate(_ record: RealtimeGradeRecord) {
+        threadItems = threadItems.map { item in
+            guard case .callHeader(let header) = item else { return item }
+
+            let updatedClaims = header.claims.map { claim in
+                guard claim.claimId == record.claimId else { return claim }
+                return ClaimEntry(
+                    claimId: claim.claimId,
+                    claimType: claim.claimType,
+                    claimText: claim.claimText,
+                    grade: record.grade ?? claim.grade,
+                    correctionText: record.correctionText ?? claim.correctionText,
+                    gradedBy: record.gradedBy ?? claim.gradedBy
+                )
+            }
+
+            return .callHeader(
+                CallHeaderEntry(
+                    interactionId: header.interactionId,
+                    eventAt: header.eventAt,
+                    contactName: header.contactName,
+                    direction: header.direction,
+                    channel: header.channel,
+                    summary: header.summary,
+                    claims: updatedClaims,
+                    spans: header.spans
+                )
+            )
+        }
+    }
+
+    private func shouldIgnoreRealtimeError(_ error: Error) -> Bool {
+        if error is CancellationError {
+            return true
+        }
+
+        let nsError = error as NSError
+        if nsError.domain == NSURLErrorDomain && nsError.code == NSURLErrorCancelled {
+            return true
+        }
+
+        let message = error.localizedDescription.lowercased()
+        return message.contains("cancellationerror") || message.contains("cancelled")
+    }
+}
+
+@MainActor
+@Observable
+final class ContactListViewModel {
+    var contacts: [Contact] = []
+    var isLoading = false
+    var error: String?
+
+    private let service = SupabaseService.shared
+    private var interactionsChannel: RealtimeChannelV2?
+    private var interactionsTask: Task<Void, Never>?
+    private var liveRefreshTask: Task<Void, Never>?
+
+    func loadContacts() async {
+        isLoading = true
+        error = nil
+        defer { isLoading = false }
+
+        do {
+            let fetched = try await service.fetchContactsList()
+            contacts = sortNewestFirst(fetched)
+        } catch {
+            self.error = error.localizedDescription
+        }
+    }
+
+    func subscribeToNewInteractions() async {
+        guard interactionsChannel == nil else { return }
+
+        let channel = service.client.channel("new-interactions")
+        let inserts = channel.postgresChange(
+            InsertAction.self,
+            schema: "public",
+            table: "interactions"
+        )
+
+        do {
+            try await channel.subscribeWithError()
+        } catch {
+            if shouldIgnoreRealtimeError(error) {
+                return
+            }
+            print("Interactions realtime unavailable: \(error.localizedDescription)")
+            return
+        }
+
+        interactionsChannel = channel
+        error = nil
+
+        interactionsTask = Task { @MainActor [weak self] in
+            guard let self else { return }
+            for await _ in inserts {
+                await self.reloadContactsFromRealtime()
+            }
+        }
+    }
+
+    func unsubscribe() async {
+        interactionsTask?.cancel()
+        interactionsTask = nil
+
+        if let channel = interactionsChannel {
+            interactionsChannel = nil
+            await service.client.removeChannel(channel)
+        }
+    }
+
+    func startLiveRefresh() {
+        guard liveRefreshTask == nil else { return }
+
+        liveRefreshTask = Task { @MainActor [weak self] in
+            guard let self else { return }
+            while !Task.isCancelled {
+                do {
+                    try await Task.sleep(for: .seconds(8))
+                } catch {
+                    break
+                }
+                guard !Task.isCancelled else { break }
+                await self.reloadContactsFromRealtime()
+            }
+        }
+    }
+
+    func stopLiveRefresh() {
+        liveRefreshTask?.cancel()
+        liveRefreshTask = nil
+    }
+
+    private func reloadContactsFromRealtime() async {
+        do {
+            let fetched = try await service.fetchContactsList()
+            contacts = sortNewestFirst(fetched)
+        } catch {
+            self.error = error.localizedDescription
+        }
+    }
+
+    private func sortNewestFirst(_ rows: [Contact]) -> [Contact] {
+        rows.sorted { lhs, rhs in
+            let lhsDate = parseISO8601(lhs.lastActivity)
+            let rhsDate = parseISO8601(rhs.lastActivity)
+
+            switch (lhsDate, rhsDate) {
+            case let (left?, right?):
+                return left > right
+            case (.some, .none):
+                return true
+            case (.none, .some):
+                return false
+            case (.none, .none):
+                return lhs.name.localizedCaseInsensitiveCompare(rhs.name) == .orderedAscending
+            }
+        }
+    }
+
+    private func parseISO8601(_ raw: String?) -> Date? {
+        guard let raw, !raw.isEmpty else { return nil }
+
+        let fractionalFormatter = ISO8601DateFormatter()
+        fractionalFormatter.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
+        if let date = fractionalFormatter.date(from: raw) {
+            return date
+        }
+
+        let basicFormatter = ISO8601DateFormatter()
+        basicFormatter.formatOptions = [.withInternetDateTime]
+        return basicFormatter.date(from: raw)
+    }
+
+    private func shouldIgnoreRealtimeError(_ error: Error) -> Bool {
+        if error is CancellationError {
+            return true
+        }
+
+        let nsError = error as NSError
+        if nsError.domain == NSURLErrorDomain && nsError.code == NSURLErrorCancelled {
+            return true
+        }
+
+        let message = error.localizedDescription.lowercased()
+        return message.contains("cancellationerror") || message.contains("cancelled")
+    }
+}
+
+private struct RealtimeGradeRecord: Decodable {
+    let claimId: UUID
+    let grade: String?
+    let correctionText: String?
+    let gradedBy: String?
+
+    enum CodingKeys: String, CodingKey {
+        case claimId = "claim_id"
+        case grade
+        case correctionText = "correction_text"
+        case gradedBy = "graded_by"
     }
 }

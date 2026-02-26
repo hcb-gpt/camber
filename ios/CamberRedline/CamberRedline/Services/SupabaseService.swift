@@ -3,14 +3,19 @@ import Supabase
 
 // MARK: - SupabaseService
 
+@MainActor
 final class SupabaseService {
     static let shared = SupabaseService()
 
+    // Retained for Realtime subscriptions (claim_grades, interactions channels).
     let client: SupabaseClient
 
     private let edgeFunctionBaseURL = URL(
         string: "https://rjhdwidddtfetbwqolof.supabase.co/functions/v1/redline-thread"
     )!
+
+    private let anonKey =
+        "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InJqaGR3aWRkZHRmZXRid3FvbG9mIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NjUxMTYwNDQsImV4cCI6MjA4MDY5MjA0NH0.m0BArfDxAMQrX2-50_IgircX_SwWLe5VccxewGmuWio"
 
     private init() {
         client = SupabaseClient(
@@ -19,13 +24,22 @@ final class SupabaseService {
         )
     }
 
-    // MARK: - Fetch Contacts
+    // MARK: - Fetch Contacts (edge function: GET ?action=contacts)
 
-    func fetchContacts() async throws -> [Contact] {
+    func fetchContactsList() async throws -> [Contact] {
         var components = URLComponents(url: edgeFunctionBaseURL, resolvingAgainstBaseURL: false)!
-        components.queryItems = [URLQueryItem(name: "action", value: "contacts")]
+        components.queryItems = [
+            URLQueryItem(name: "action", value: "contacts"),
+        ]
 
-        let (data, response) = try await URLSession.shared.data(from: components.url!)
+        guard let url = components.url else {
+            throw ServiceError.apiError("Failed to construct contacts URL")
+        }
+
+        var request = URLRequest(url: url)
+        request.setValue("Bearer \(anonKey)", forHTTPHeaderField: "Authorization")
+
+        let (data, response) = try await URLSession.shared.data(for: request)
         try validateHTTPResponse(response)
 
         let decoded = try JSONDecoder().decode(ContactsResponse.self, from: data)
@@ -35,27 +49,38 @@ final class SupabaseService {
         return decoded.contacts
     }
 
-    // MARK: - Fetch Thread
+    func fetchContacts() async throws -> [Contact] {
+        try await fetchContactsList()
+    }
 
-    func fetchThread(contactId: UUID, limit: Int = 100) async throws -> ThreadResponse {
+    // MARK: - Fetch Thread (edge function: GET ?contact_id=X&limit=Y&offset=Z)
+
+    func fetchThread(contactId: UUID, limit: Int = 50, offset: Int = 0) async throws -> ThreadResponse {
         var components = URLComponents(url: edgeFunctionBaseURL, resolvingAgainstBaseURL: false)!
         components.queryItems = [
             URLQueryItem(name: "contact_id", value: contactId.uuidString.lowercased()),
             URLQueryItem(name: "limit", value: String(limit)),
+            URLQueryItem(name: "offset", value: String(offset)),
         ]
 
-        let (data, response) = try await URLSession.shared.data(from: components.url!)
+        guard let url = components.url else {
+            throw ServiceError.apiError("Failed to construct thread URL")
+        }
+
+        var request = URLRequest(url: url)
+        request.setValue("Bearer \(anonKey)", forHTTPHeaderField: "Authorization")
+
+        let (data, response) = try await URLSession.shared.data(for: request)
         try validateHTTPResponse(response)
 
-        let decoder = JSONDecoder()
-        let decoded = try decoder.decode(ThreadResponse.self, from: data)
+        let decoded = try JSONDecoder().decode(ThreadResponse.self, from: data)
         guard decoded.ok else {
             throw ServiceError.apiError("Thread endpoint returned ok=false")
         }
         return decoded
     }
 
-    // MARK: - Grade Claim
+    // MARK: - Grade Claim (edge function: POST { claim_id, grade, graded_by })
 
     func gradeClaimViaAPI(
         claimId: UUID,
@@ -73,12 +98,12 @@ final class SupabaseService {
         var request = URLRequest(url: edgeFunctionBaseURL)
         request.httpMethod = "POST"
         request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        request.setValue("Bearer \(anonKey)", forHTTPHeaderField: "Authorization")
         request.httpBody = try JSONEncoder().encode(body)
 
         let (data, response) = try await URLSession.shared.data(for: request)
         try validateHTTPResponse(response)
 
-        // Verify the response indicates success
         if let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
            let ok = json["ok"] as? Bool, !ok
         {
@@ -101,6 +126,7 @@ final class SupabaseService {
 
 // MARK: - Response Types
 
+/// Wrapper for GET ?action=contacts → { ok, contacts: [...] }
 struct ContactsResponse: Decodable {
     let ok: Bool
     let contacts: [Contact]
@@ -127,62 +153,35 @@ struct ThreadResponse: Decodable {
 
 // MARK: - RawThreadItem (polymorphic decoding)
 
+/// Decodes a polymorphic thread item from the v2 edge function response.
+/// Delegates to `CallEntry` / `SMSEntry` Codable conformance so field mappings
+/// stay in one place (CodingKeys on each model).
 struct RawThreadItem: Decodable {
     let type: String
     let callEntry: CallEntry?
     let smsEntry: SMSEntry?
 
-    enum CodingKeys: String, CodingKey {
+    private enum TypeKey: String, CodingKey {
         case type
-        case eventAt = "event_at"
-        case direction
-        case summary
-        case spans
-        case interactionId = "interaction_id"
-        case content
-        case smsId = "sms_id"
     }
 
     init(from decoder: Decoder) throws {
-        let container = try decoder.container(keyedBy: CodingKeys.self)
-        type = try container.decode(String.self, forKey: .type)
+        let typeContainer = try decoder.container(keyedBy: TypeKey.self)
+        type = try typeContainer.decode(String.self, forKey: .type)
 
         switch type {
         case "call":
-            let interactionId = try container.decodeIfPresent(String.self, forKey: .interactionId) ?? ""
-            let eventAt = try container.decode(String.self, forKey: .eventAt)
-            let direction = try container.decodeIfPresent(String.self, forKey: .direction)
-            let summary = try container.decodeIfPresent(String.self, forKey: .summary)
-            let spans = try container.decodeIfPresent([SpanEntry].self, forKey: .spans) ?? []
-            callEntry = CallEntry(
-                interactionId: interactionId,
-                eventAt: eventAt,
-                direction: direction,
-                summary: summary,
-                spans: spans
-            )
+            callEntry = try CallEntry(from: decoder)
             smsEntry = nil
-
         case "sms":
-            let smsId = try container.decodeIfPresent(UUID.self, forKey: .smsId) ?? UUID()
-            let eventAt = try container.decode(String.self, forKey: .eventAt)
-            let direction = try container.decodeIfPresent(String.self, forKey: .direction)
-            let content = try container.decodeIfPresent(String.self, forKey: .content)
-            smsEntry = SMSEntry(
-                smsId: smsId,
-                eventAt: eventAt,
-                direction: direction,
-                content: content
-            )
             callEntry = nil
-
+            smsEntry = try SMSEntry(from: decoder)
         default:
             callEntry = nil
             smsEntry = nil
         }
     }
 
-    /// Convert to the strongly-typed ThreadItem enum.
     func toThreadItem() -> ThreadItem? {
         switch type {
         case "call":
