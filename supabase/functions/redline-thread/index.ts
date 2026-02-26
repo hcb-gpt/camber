@@ -1,7 +1,7 @@
 import "jsr:@supabase/functions-js/edge-runtime.d.ts";
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
 
-const FUNCTION_VERSION = "redline-thread_v2.0.1";
+const FUNCTION_VERSION = "redline-thread_v2.0.2";
 const OWNER_SMS_USER_IDS = ["+17066889158", "usr_4PCSTDQ8N161KAC4GG7AF9CR94"];
 const OUTBOUND_INFERENCE_WINDOW_MS = 30 * 60 * 1000;
 const OUTBOUND_INFERENCE_MAX_GAP_MS = 60 * 1000;
@@ -315,6 +315,15 @@ async function handleThread(
 
   const interactions = allInteractions.filter((i: any) => pagedCallIds.has(i.interaction_id));
   const interactionIds = interactions.map((i: any) => i.interaction_id);
+  const interactionAliasToCanonical = new Map<string, string>();
+  for (const interaction of interactions) {
+    if (interaction?.interaction_id) {
+      interactionAliasToCanonical.set(String(interaction.interaction_id), String(interaction.interaction_id));
+    }
+    if (interaction?.id) {
+      interactionAliasToCanonical.set(String(interaction.id), String(interaction.interaction_id));
+    }
+  }
   const pagedSmsMessages = smsMessages.filter((s: any) => pagedSmsIds.has(s.id));
 
   let callsRaw: any[] = [];
@@ -352,19 +361,36 @@ async function handleThread(
 
   let callClaims: any[] = [];
   if (interactionIds.length > 0) {
+    const claimCallKeys = [
+      ...new Set(
+        interactions.flatMap((interaction: any) => [
+          interaction?.interaction_id ? String(interaction.interaction_id) : "",
+          interaction?.id ? String(interaction.id) : "",
+        ]).filter((value: string) => value.length > 0),
+      ),
+    ];
     const { data: claimData, error: claimsErr } = await db
       .from("journal_claims")
       .select("id, call_id, source_span_id, claim_type, claim_text, speaker_label")
-      .in("call_id", interactionIds);
+      .in("call_id", claimCallKeys);
 
     if (claimsErr) {
       return json({ ok: false, error_code: "claims_query_failed", error: claimsErr.message }, 500);
     }
-    callClaims = claimData || [];
+    const dedupedClaims = new Map<string, any>();
+    for (const claim of claimData || []) {
+      if (claim?.id) {
+        dedupedClaims.set(String(claim.id), claim);
+      }
+    }
+    callClaims = [...dedupedClaims.values()];
   }
 
   const allClaimIds = callClaims.map((c: any) => c.id);
-  const claimsPerCall = groupBy(callClaims, (c: any) => c.call_id);
+  const claimsPerCall = groupBy(
+    callClaims,
+    (claim: any) => interactionAliasToCanonical.get(String(claim.call_id)) || String(claim.call_id),
+  );
 
   let grades: any[] = [];
   if (allClaimIds.length > 0) {
@@ -391,6 +417,7 @@ async function handleThread(
       const g = gradeMap.get(c.id);
       return {
         claim_id: c.id,
+        source_span_id: c.source_span_id || null,
         claim_type: c.claim_type,
         claim_text: c.claim_text,
         grade: g?.grade || null,
@@ -398,6 +425,12 @@ async function handleThread(
         graded_by: g?.graded_by || null,
       };
     });
+    const interactionClaimPayload = interactionClaims.map(({ source_span_id: _sourceSpanId, ...claim }) => claim);
+    const claimsPerSpan = groupBy(
+      interactionClaims.filter((claim: any) => !!claim.source_span_id),
+      (claim: any) => String(claim.source_span_id),
+    );
+    const unscopedClaims = interactionClaims.filter((claim: any) => !claim.source_span_id);
 
     return {
       type: "call",
@@ -408,16 +441,21 @@ async function handleThread(
       contact_name: i.contact_name || contact.name,
       raw_transcript: rawTranscript,
       participants,
-      spans: dedupedSpans.map((s: any) => ({
-        span_id: s.id,
-        span_index: s.span_index,
-        transcript_segment: s.transcript_segment,
-        word_count: s.word_count,
-        claims: interactionClaims.filter((c: any) =>
-          callClaims.find((cc: any) => cc.id === c.claim_id && cc.source_span_id === s.id)
-        ),
-      })),
-      claims: interactionClaims,
+      spans: dedupedSpans.map((s: any, index: number) => {
+        const scopedClaims = (claimsPerSpan.get(String(s.id)) || [])
+          .map(({ source_span_id: _sourceSpanId, ...claim }: any) => claim);
+        const fallbackUnscopedClaims = index === 0
+          ? unscopedClaims.map(({ source_span_id: _sourceSpanId, ...claim }: any) => claim)
+          : [];
+        return {
+          span_id: s.id,
+          span_index: s.span_index,
+          transcript_segment: s.transcript_segment,
+          word_count: s.word_count,
+          claims: [...scopedClaims, ...fallbackUnscopedClaims],
+        };
+      }),
+      claims: interactionClaimPayload,
     };
   });
 
