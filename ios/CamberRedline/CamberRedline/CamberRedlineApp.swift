@@ -1,4 +1,5 @@
 import SwiftUI
+import UserNotifications
 
 @main
 struct CamberRedlineApp: App {
@@ -42,7 +43,9 @@ struct CamberRedlineApp: App {
                 UITabBar.appearance().scrollEdgeAppearance = appearance
             }
             .task {
+                await requestBadgePermission()
                 await contactListViewModel.loadContacts()
+                updateBadge()
                 await contactListViewModel.subscribeToNewInteractions()
                 contactListViewModel.startLiveRefresh()
             }
@@ -50,6 +53,7 @@ struct CamberRedlineApp: App {
                 if newPhase == .active {
                     Task {
                         await contactListViewModel.loadContacts()
+                        updateBadge()
                         await contactListViewModel.subscribeToNewInteractions()
                         if let contact = threadViewModel.currentContact {
                             await threadViewModel.startClaimGradeSubscription(contactId: contact.contactId)
@@ -58,6 +62,19 @@ struct CamberRedlineApp: App {
                     }
                 }
             }
+            .onChange(of: contactListViewModel.totalUngraded) { _, _ in
+                updateBadge()
+            }
         }
+    }
+
+    private func updateBadge() {
+        let count = contactListViewModel.totalUngraded
+        UNUserNotificationCenter.current().setBadgeCount(count)
+    }
+
+    private func requestBadgePermission() async {
+        let center = UNUserNotificationCenter.current()
+        try? await center.requestAuthorization(options: [.badge])
     }
 }

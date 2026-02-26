@@ -502,6 +502,10 @@ final class ContactListViewModel {
     var isLoading = false
     var error: String?
 
+    var totalUngraded: Int {
+        contacts.reduce(0) { $0 + $1.ungradedCount }
+    }
+
     private let service = SupabaseService.shared
     private var interactionsChannel: RealtimeChannelV2?
     private var interactionsTask: Task<Void, Never>?
