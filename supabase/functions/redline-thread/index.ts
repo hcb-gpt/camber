@@ -1,7 +1,7 @@
 import "jsr:@supabase/functions-js/edge-runtime.d.ts";
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
 
-const FUNCTION_VERSION = "redline-thread_v2.0.2";
+const FUNCTION_VERSION = "redline-thread_v2.2.0";
 const OWNER_SMS_USER_IDS = ["+17066889158", "usr_4PCSTDQ8N161KAC4GG7AF9CR94"];
 const OUTBOUND_INFERENCE_WINDOW_MS = 30 * 60 * 1000;
 const OUTBOUND_INFERENCE_MAX_GAP_MS = 60 * 1000;
@@ -109,12 +109,20 @@ function shouldAssignOutboundToInboundWindow(sentAt: unknown, inboundMs: number[
   return false;
 }
 
+// Infer outbound SMS that belong to the same conversation thread as the
+// contact's inbound messages.  We scope by contact_phone so that outbound
+// messages sent to *other* contacts within the same time window are excluded.
 async function inferMissingOutboundSms(
   db: any,
   inboundMs: number[],
   existingSmsIds: Set<string>,
+  contactPhone: string | null,
 ): Promise<any[]> {
   if (inboundMs.length === 0) return [];
+  if (!contactPhone) {
+    console.warn("inferMissingOutboundSms: no contactPhone — skipping inference");
+    return [];
+  }
 
   const minInboundMs = Math.min(...inboundMs);
   const maxInboundMs = Math.max(...inboundMs);
@@ -125,6 +133,7 @@ async function inferMissingOutboundSms(
     .from("sms_messages")
     .select("id, sent_at, content, direction, contact_name, sender_user_id")
     .eq("direction", "outbound")
+    .eq("contact_phone", contactPhone)
     .in("sender_user_id", OWNER_SMS_USER_IDS)
     .gte("sent_at", lowerBound)
     .lte("sent_at", upperBound)
@@ -139,6 +148,47 @@ async function inferMissingOutboundSms(
     .filter((row: any) => !!row.id && !existingSmsIds.has(row.id))
     .filter((row: any) => isLikelyOwnerOutboundCandidate(row))
     .filter((row: any) => shouldAssignOutboundToInboundWindow(row.sent_at, inboundMs));
+}
+
+// reset grading clock endpoint
+async function handleResetClock(db: any, t0: number): Promise<Response> {
+  const { data, error } = await db
+    .from("redline_settings")
+    .update({ value_timestamptz: new Date().toISOString(), updated_at: new Date().toISOString() })
+    .eq("key", "grading_cutoff")
+    .select()
+    .single();
+
+  if (error) {
+    return json({ ok: false, error_code: "reset_clock_failed", error: error.message }, 500);
+  }
+
+  return json({
+    ok: true,
+    grading_cutoff: data.value_timestamptz,
+    function_version: FUNCTION_VERSION,
+    ms: Date.now() - t0,
+  });
+}
+
+// get grading cutoff endpoint
+async function handleGetCutoff(db: any, t0: number): Promise<Response> {
+  const { data, error } = await db
+    .from("redline_settings")
+    .select("value_timestamptz")
+    .eq("key", "grading_cutoff")
+    .single();
+
+  if (error) {
+    return json({ ok: false, error_code: "get_cutoff_failed", error: error.message }, 500);
+  }
+
+  return json({
+    ok: true,
+    grading_cutoff: data?.value_timestamptz || null,
+    function_version: FUNCTION_VERSION,
+    ms: Date.now() - t0,
+  });
 }
 
 // contacts endpoint
@@ -204,8 +254,10 @@ async function handleThread(
     const interactionsTo = interactionsFrom + queryPageSize - 1;
     const { data: page, error: intErr } = await db
       .from("interactions")
-      .select("id, interaction_id, event_at_utc, human_summary, contact_name")
+      .select("id, interaction_id, event_at_utc, human_summary, contact_name, is_shadow")
       .eq("contact_id", contactId)
+      .or("is_shadow.is.false,is_shadow.is.null")
+      .not("interaction_id", "like", "cll_SHADOW_%")
       .not("event_at_utc", "is", null)
       .order("event_at_utc", { ascending: false })
       .range(interactionsFrom, interactionsTo);
@@ -255,6 +307,7 @@ async function handleThread(
         db,
         inboundMs,
         new Set(smsMessages.map((s: any) => s.id)),
+        contact.phone,
       );
       if (inferredOutbound.length > 0) {
         smsMessages = smsMessages.concat(inferredOutbound);
@@ -1257,6 +1310,12 @@ Deno.serve(async (req: Request) => {
     const action = url.searchParams.get("action");
     if (action === "contacts") {
       return await handleContacts(db, t0);
+    }
+    if (action === "reset_clock") {
+      return await handleResetClock(db, t0);
+    }
+    if (action === "get_cutoff") {
+      return await handleGetCutoff(db, t0);
     }
 
     const contactId = url.searchParams.get("contact_id");
