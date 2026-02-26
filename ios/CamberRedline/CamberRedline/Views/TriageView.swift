@@ -221,6 +221,7 @@ private struct TriageCallCard: View {
     let projectNameForId: (String?) -> String?
     let onToggleExpanded: () -> Void
     let onLongPressSpan: (TriageSpan) -> Void
+    @State private var expandedSpanIDs: Set<String> = []
 
     var body: some View {
         VStack(alignment: .leading, spacing: 10) {
@@ -331,6 +332,10 @@ private struct TriageCallCard: View {
                     span: span,
                     projectName: projectNameForId(span.projectId) ?? "Unassigned",
                     accentColor: accentColor(for: span.projectId),
+                    isExpanded: expandedSpanIDs.contains(span.id),
+                    onTap: {
+                        toggleSpanExpansion(span)
+                    },
                     onLongPress: {
                         onLongPressSpan(span)
                     }
@@ -341,19 +346,26 @@ private struct TriageCallCard: View {
 
     private var compactSpansPreview: some View {
         VStack(alignment: .leading, spacing: 6) {
-            ForEach(call.spans.prefix(2)) { span in
-                HStack(spacing: 8) {
-                    Circle()
-                        .fill(accentColor(for: span.projectId))
-                        .frame(width: 7, height: 7)
-                    Text(projectNameForId(span.projectId) ?? "Unassigned")
-                        .font(.caption2)
-                        .foregroundStyle(.white)
-                    Spacer()
-                    Text("\(Int(span.confidence * 100))%")
-                        .font(.caption2)
-                        .foregroundStyle(.secondary)
-                }
+            let previewSpans = call.spans.count > 3 ? Array(call.spans.prefix(3)) : call.spans
+            ForEach(previewSpans) { span in
+                TriageSpanRow(
+                    span: span,
+                    projectName: projectNameForId(span.projectId) ?? "Unassigned",
+                    accentColor: accentColor(for: span.projectId),
+                    isExpanded: expandedSpanIDs.contains(span.id),
+                    onTap: {
+                        toggleSpanExpansion(span)
+                    },
+                    onLongPress: {
+                        onLongPressSpan(span)
+                    }
+                )
+            }
+
+            if call.spans.count > previewSpans.count {
+                Text("+\(call.spans.count - previewSpans.count) more spans in full transcript view")
+                    .font(.caption2)
+                    .foregroundStyle(.secondary)
             }
         }
     }
@@ -388,12 +400,23 @@ private struct TriageCallCard: View {
         }
         return palette[seed % palette.count]
     }
+
+    private func toggleSpanExpansion(_ span: TriageSpan) {
+        guard span.transcriptSegment.count > 120 else { return }
+        if expandedSpanIDs.contains(span.id) {
+            expandedSpanIDs.remove(span.id)
+        } else {
+            expandedSpanIDs.insert(span.id)
+        }
+    }
 }
 
 private struct TriageSpanRow: View {
     let span: TriageSpan
     let projectName: String
     let accentColor: Color
+    let isExpanded: Bool
+    let onTap: () -> Void
     let onLongPress: () -> Void
 
     var body: some View {
@@ -412,14 +435,26 @@ private struct TriageSpanRow: View {
                 Text("\(Int(span.confidence * 100))%")
                     .font(.caption2)
                     .foregroundStyle(.secondary)
+
+                if isExpandable {
+                    Image(systemName: isExpanded ? "chevron.up" : "chevron.down")
+                        .font(.caption2)
+                        .foregroundStyle(.secondary)
+                }
             }
 
             Text(span.transcriptSegment)
                 .font(.caption)
                 .foregroundStyle(Color(white: 0.83))
-                .lineLimit(nil)
+                .lineLimit(isExpanded ? nil : 3)
 
-            if !span.reasonCodes.isEmpty {
+            if isExpandable {
+                Text(isExpanded ? "Tap to collapse · Long press to re-assign" : "Tap to expand · Long press to re-assign")
+                    .font(.caption2)
+                    .foregroundStyle(.secondary)
+            }
+
+            if isExpanded && !span.reasonCodes.isEmpty {
                 HStack(spacing: 6) {
                     ForEach(Array(span.reasonCodes.prefix(3)), id: \.self) { reason in
                         Text(reason)
@@ -445,7 +480,12 @@ private struct TriageSpanRow: View {
                 .padding(.vertical, 6)
         }
         .contentShape(RoundedRectangle(cornerRadius: 10))
+        .onTapGesture(perform: onTap)
         .onLongPressGesture(minimumDuration: 0.35, perform: onLongPress)
+    }
+
+    private var isExpandable: Bool {
+        span.transcriptSegment.count > 120
     }
 }
 
