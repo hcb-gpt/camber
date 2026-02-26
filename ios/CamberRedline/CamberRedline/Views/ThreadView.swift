@@ -374,12 +374,27 @@ private struct CallCard: View {
             }
 
             // --- Transcript section ---
-            if !turns.isEmpty {
+            if header.spans.count > 1 {
+                // Multi-span: span boxes are the transcript. Each expands to bubbles.
+                Divider()
+                    .overlay(Color(.systemGray4))
+
+                Text("Project Spans (\(header.spans.count))")
+                    .font(.caption)
+                    .fontWeight(.semibold)
+                    .foregroundStyle(.secondary)
+                    .textCase(.uppercase)
+
+                ForEach(Array(header.spans.sorted { $0.spanIndex < $1.spanIndex }.enumerated()), id: \.element.id) { idx, span in
+                    SpanBlock(span: span, colorIndex: idx, contactName: contactName)
+                }
+
+            } else if !turns.isEmpty {
+                // Single-span: existing speaker bubble transcript.
                 Divider()
                     .overlay(Color(.systemGray4))
 
                 if transcriptExpanded {
-                    // Expanded: render speaker bubbles inline.
                     VStack(alignment: .leading, spacing: 0) {
                         ForEach(Array(turns.enumerated()), id: \.element.id) { idx, turn in
                             SpeakerTurnBubble(
@@ -391,7 +406,6 @@ private struct CallCard: View {
                     }
                     .padding(.top, 4)
 
-                    // Collapse button
                     Button {
                         withAnimation(.easeInOut(duration: 0.2)) {
                             transcriptExpanded = false
@@ -410,7 +424,6 @@ private struct CallCard: View {
                     .padding(.top, 4)
 
                 } else {
-                    // Collapsed: "Read Conversation" button.
                     Button {
                         withAnimation(.easeInOut(duration: 0.2)) {
                             transcriptExpanded = true
@@ -423,14 +436,6 @@ private struct CallCard: View {
                                 .font(.caption)
                                 .fontWeight(.medium)
                             Spacer()
-                            if header.spans.count > 1 {
-                                Text("\(header.spans.count) spans")
-                                    .font(.caption2)
-                                    .foregroundStyle(Color(red: 0.18, green: 0.64, blue: 0.25))
-                                Text("\u{00B7}")
-                                    .font(.caption2)
-                                    .foregroundStyle(Color(.systemGray2))
-                            }
                             Text("\(turns.count) turns")
                                 .font(.caption2)
                                 .foregroundStyle(Color(.systemGray2))
@@ -440,22 +445,6 @@ private struct CallCard: View {
                         .foregroundStyle(.secondary)
                     }
                     .buttonStyle(.plain)
-                }
-            }
-
-            // --- Spans section ---
-            if header.spans.count > 1, transcriptExpanded {
-                Divider()
-                    .overlay(Color(.systemGray4))
-
-                Text("Project Spans (\(header.spans.count))")
-                    .font(.caption)
-                    .fontWeight(.semibold)
-                    .foregroundStyle(.secondary)
-                    .textCase(.uppercase)
-
-                ForEach(Array(header.spans.sorted { $0.spanIndex < $1.spanIndex }.enumerated()), id: \.element.id) { idx, span in
-                    SpanBlock(span: span, colorIndex: idx)
                 }
             }
 
@@ -512,11 +501,12 @@ private struct CallCard: View {
 // MARK: - Span Block
 
 /// Color-coded span block showing a project attribution segment.
-/// Tap to expand full transcript. Long-press for attribution change.
+/// Tap to expand into speaker bubbles. Long-press for attribution change.
 /// Uses dummy project names until the API returns real attributions.
 private struct SpanBlock: View {
     let span: SpanEntry
     let colorIndex: Int
+    let contactName: String
 
     @State private var isExpanded = false
     @State private var assignedIndex: Int?
@@ -544,8 +534,14 @@ private struct SpanBlock: View {
         Self.dummyProjects[effectiveIndex % Self.dummyProjects.count]
     }
 
+    private var parsedTurns: [SpeakerTurn] {
+        guard let segment = span.transcriptSegment, !segment.isEmpty else { return [] }
+        return TranscriptParser.parse(segment, contactName: contactName)
+    }
+
     var body: some View {
         VStack(alignment: .leading, spacing: 4) {
+            // Header: always visible (project name, span index, chevron)
             HStack(spacing: 6) {
                 Circle()
                     .fill(color)
@@ -563,11 +559,29 @@ private struct SpanBlock: View {
                     .foregroundStyle(Color(.systemGray3))
             }
 
-            if let segment = span.transcriptSegment, !segment.isEmpty {
+            if isExpanded {
+                // Expanded: speaker bubbles for this span's transcript segment.
+                let turns = parsedTurns
+                if !turns.isEmpty {
+                    VStack(alignment: .leading, spacing: 0) {
+                        ForEach(Array(turns.enumerated()), id: \.offset) { idx, turn in
+                            SpeakerTurnBubble(
+                                turn: turn,
+                                showSpeakerLabel: idx == 0 || turn.isOwnerSide != turns[idx - 1].isOwnerSide
+                            )
+                            .padding(.bottom, idx + 1 < turns.count
+                                ? (turn.isOwnerSide == turns[idx + 1].isOwnerSide ? 2 : 8)
+                                : 0)
+                        }
+                    }
+                    .padding(.top, 4)
+                }
+            } else if let segment = span.transcriptSegment, !segment.isEmpty {
+                // Compressed: 3-line text preview.
                 Text(segment)
                     .font(.caption)
                     .foregroundStyle(Color(.systemGray))
-                    .lineLimit(isExpanded ? nil : 3)
+                    .lineLimit(3)
             }
         }
         .padding(10)
