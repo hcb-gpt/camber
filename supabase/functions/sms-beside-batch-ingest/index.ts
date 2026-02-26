@@ -113,20 +113,45 @@ Deno.serve(async (req: Request) => {
   }
 
   if (body) {
-    // Format B: messages array
+    // Format B: messages array (of objects or of JSON strings)
     if (Array.isArray(body.messages) && body.messages.length > 0) {
-      messages = body.messages;
+      // Zapier list might be strings — parse each if needed
+      messages = body.messages.map((item: unknown) => {
+        if (typeof item === "string") {
+          try {
+            return JSON.parse(item);
+          } catch {
+            parseErrors.push(`messages[] string parse failed: ${String(item).slice(0, 80)}`);
+            return null;
+          }
+        }
+        return item;
+      }).filter(Boolean) as BesideSmsEntry[];
     } // Format A: digest_raw string (newline-delimited JSON)
     else if (typeof body.digest_raw === "string" && body.digest_raw.length > 0) {
       messages = parseNdjson(body.digest_raw, parseErrors);
     } // Format A fallback: digest_raw as array (Zapier sometimes does this)
     else if (Array.isArray(body.digest_raw)) {
-      messages = body.digest_raw as unknown as BesideSmsEntry[];
+      messages = (body.digest_raw as unknown[]).map((item: unknown) => {
+        if (typeof item === "string") {
+          try {
+            return JSON.parse(item);
+          } catch {
+            parseErrors.push(`digest_raw[] string parse failed: ${String(item).slice(0, 80)}`);
+            return null;
+          }
+        }
+        return item;
+      }).filter(Boolean) as BesideSmsEntry[];
     } else {
       return jsonResponse({
         ok: false,
         error: "NO_MESSAGES",
         detail: "Payload must include 'messages' array or 'digest_raw' string",
+        body_preview: rawBody.slice(0, 500),
+        body_keys: Object.keys(body),
+        messages_type: typeof body.messages,
+        digest_raw_type: typeof body.digest_raw,
       }, 400);
     }
   }
@@ -137,6 +162,9 @@ Deno.serve(async (req: Request) => {
       error: "ALL_PARSE_FAILED",
       detail: `All ${parseErrors.length} message(s) failed to parse`,
       parse_errors: parseErrors,
+      body_preview: rawBody.slice(0, 500),
+      body_type: body ? typeof body : "json_parse_failed",
+      body_keys: body ? Object.keys(body) : [],
     }, 400);
   }
 
