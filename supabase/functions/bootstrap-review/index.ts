@@ -20,7 +20,7 @@ function json(data: unknown, status = 200): Response {
   });
 }
 
-function escapeHtml(text: string): string {
+function _escapeHtml(text: string): string {
   if (!text) return "";
   return text
     .replace(/&/g, "&amp;")
