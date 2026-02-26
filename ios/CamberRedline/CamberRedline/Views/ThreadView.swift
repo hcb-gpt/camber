@@ -512,10 +512,14 @@ private struct CallCard: View {
 // MARK: - Span Block
 
 /// Color-coded span block showing a project attribution segment.
+/// Tap to expand full transcript. Long-press for attribution change.
 /// Uses dummy project names until the API returns real attributions.
 private struct SpanBlock: View {
     let span: SpanEntry
     let colorIndex: Int
+
+    @State private var isExpanded = false
+    @State private var assignedIndex: Int?
 
     private static let spanColors: [Color] = [
         Color(red: 0.18, green: 0.64, blue: 0.25),
@@ -530,12 +534,14 @@ private struct SpanBlock: View {
         "Skelton Residence", "Sittler Madison",
     ]
 
+    private var effectiveIndex: Int { assignedIndex ?? colorIndex }
+
     private var color: Color {
-        Self.spanColors[colorIndex % Self.spanColors.count]
+        Self.spanColors[effectiveIndex % Self.spanColors.count]
     }
 
     private var projectName: String {
-        Self.dummyProjects[colorIndex % Self.dummyProjects.count]
+        Self.dummyProjects[effectiveIndex % Self.dummyProjects.count]
     }
 
     var body: some View {
@@ -552,13 +558,16 @@ private struct SpanBlock: View {
                 Text("Span \(span.spanIndex + 1)")
                     .font(.caption2)
                     .foregroundStyle(Color(.systemGray2))
+                Image(systemName: isExpanded ? "chevron.up" : "chevron.down")
+                    .font(.caption2)
+                    .foregroundStyle(Color(.systemGray3))
             }
 
             if let segment = span.transcriptSegment, !segment.isEmpty {
                 Text(segment)
                     .font(.caption)
                     .foregroundStyle(Color(.systemGray))
-                    .lineLimit(3)
+                    .lineLimit(isExpanded ? nil : 3)
             }
         }
         .padding(10)
@@ -569,6 +578,28 @@ private struct SpanBlock: View {
                 .frame(width: 3)
         }
         .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
+        .contentShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
+        .onTapGesture {
+            withAnimation(.easeInOut(duration: 0.2)) {
+                isExpanded.toggle()
+            }
+        }
+        .contextMenu {
+            Text("Assign to Project")
+                .font(.caption)
+            ForEach(Array(Self.dummyProjects.enumerated()), id: \.offset) { idx, name in
+                Button {
+                    withAnimation { assignedIndex = idx }
+                } label: {
+                    HStack {
+                        Text(name)
+                        if idx == effectiveIndex {
+                            Image(systemName: "checkmark")
+                        }
+                    }
+                }
+            }
+        }
     }
 }
 
