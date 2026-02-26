@@ -30,6 +30,7 @@ final class SupabaseService {
         var components = URLComponents(url: edgeFunctionBaseURL, resolvingAgainstBaseURL: false)!
         components.queryItems = [
             URLQueryItem(name: "action", value: "contacts"),
+            URLQueryItem(name: "_ts", value: String(Int(Date().timeIntervalSince1970))),
         ]
 
         guard let url = components.url else {
@@ -37,7 +38,10 @@ final class SupabaseService {
         }
 
         var request = URLRequest(url: url)
+        request.cachePolicy = .reloadIgnoringLocalCacheData
         request.setValue("Bearer \(anonKey)", forHTTPHeaderField: "Authorization")
+        request.setValue("no-cache", forHTTPHeaderField: "Cache-Control")
+        request.setValue("no-cache", forHTTPHeaderField: "Pragma")
 
         let (data, response) = try await URLSession.shared.data(for: request)
         try validateHTTPResponse(response)
@@ -61,6 +65,7 @@ final class SupabaseService {
             URLQueryItem(name: "contact_id", value: contactId.uuidString.lowercased()),
             URLQueryItem(name: "limit", value: String(limit)),
             URLQueryItem(name: "offset", value: String(offset)),
+            URLQueryItem(name: "_ts", value: String(Int(Date().timeIntervalSince1970))),
         ]
 
         guard let url = components.url else {
@@ -68,7 +73,10 @@ final class SupabaseService {
         }
 
         var request = URLRequest(url: url)
+        request.cachePolicy = .reloadIgnoringLocalCacheData
         request.setValue("Bearer \(anonKey)", forHTTPHeaderField: "Authorization")
+        request.setValue("no-cache", forHTTPHeaderField: "Cache-Control")
+        request.setValue("no-cache", forHTTPHeaderField: "Pragma")
 
         let (data, response) = try await URLSession.shared.data(for: request)
         try validateHTTPResponse(response)
@@ -100,6 +108,34 @@ final class SupabaseService {
         request.setValue("application/json", forHTTPHeaderField: "Content-Type")
         request.setValue("Bearer \(anonKey)", forHTTPHeaderField: "Authorization")
         request.httpBody = try JSONEncoder().encode(body)
+
+        let (data, response) = try await URLSession.shared.data(for: request)
+        try validateHTTPResponse(response)
+
+        if let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+           let ok = json["ok"] as? Bool, !ok
+        {
+            let message = json["error"] as? String ?? "Unknown error"
+            throw ServiceError.apiError(message)
+        }
+    }
+
+    // MARK: - Reset Grading Clock (edge function: GET ?action=reset_clock)
+
+    func resetGradingClock() async throws {
+        var components = URLComponents(url: edgeFunctionBaseURL, resolvingAgainstBaseURL: false)!
+        components.queryItems = [
+            URLQueryItem(name: "action", value: "reset_clock"),
+            URLQueryItem(name: "_ts", value: String(Int(Date().timeIntervalSince1970))),
+        ]
+
+        guard let url = components.url else {
+            throw ServiceError.apiError("Failed to construct reset_clock URL")
+        }
+
+        var request = URLRequest(url: url)
+        request.cachePolicy = .reloadIgnoringLocalCacheData
+        request.setValue("Bearer \(anonKey)", forHTTPHeaderField: "Authorization")
 
         let (data, response) = try await URLSession.shared.data(for: request)
         try validateHTTPResponse(response)

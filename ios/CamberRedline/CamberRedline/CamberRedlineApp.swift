@@ -5,6 +5,7 @@ struct CamberRedlineApp: App {
     @State private var contactListViewModel = ContactListViewModel()
     @State private var threadViewModel = ThreadViewModel()
     @State private var selectedTab: Int = 0
+    @Environment(\.scenePhase) private var scenePhase
 
     // #FF3B30 — system red (Redline tab tint)
     private let redlineTint = Color(red: 1.0, green: 0.231, blue: 0.188)
@@ -39,6 +40,23 @@ struct CamberRedlineApp: App {
                 appearance.backgroundColor = UIColor(tabBarBackground)
                 UITabBar.appearance().standardAppearance = appearance
                 UITabBar.appearance().scrollEdgeAppearance = appearance
+            }
+            .task {
+                await contactListViewModel.loadContacts()
+                await contactListViewModel.subscribeToNewInteractions()
+                contactListViewModel.startLiveRefresh()
+            }
+            .onChange(of: scenePhase) { _, newPhase in
+                if newPhase == .active {
+                    Task {
+                        await contactListViewModel.loadContacts()
+                        await contactListViewModel.subscribeToNewInteractions()
+                        if let contact = threadViewModel.currentContact {
+                            await threadViewModel.startClaimGradeSubscription(contactId: contact.contactId)
+                            await threadViewModel.startInteractionsSubscription(contactId: contact.contactId)
+                        }
+                    }
+                }
             }
         }
     }

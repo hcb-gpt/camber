@@ -5,6 +5,7 @@ struct ContactListView: View {
     var threadViewModel: ThreadViewModel
 
     @State private var searchText = ""
+    @State private var showResetConfirmation = false
 
     private var filteredContacts: [Contact] {
         let trimmed = searchText.trimmingCharacters(in: .whitespaces)
@@ -20,25 +21,49 @@ struct ContactListView: View {
                 NavigationLink(value: contact) {
                     ContactRow(contact: contact)
                 }
-                .listRowBackground(Color(hex: 0x1C1C1E))
-                .listRowSeparatorTint(Color(white: 0.15))
+                .listRowBackground(Color(white: 0.06))
+                .listRowSeparatorTint(Color(white: 0.13))
             }
             .listStyle(.plain)
             .searchable(
                 text: $searchText,
                 placement: .navigationBarDrawer(displayMode: .always),
-                prompt: "Search contacts"
+                prompt: "Search"
             )
             .refreshable {
                 await contactListViewModel.loadContacts()
                 try? await Task.sleep(for: .milliseconds(300))
             }
             .navigationTitle("Redline")
+            .navigationBarTitleDisplayMode(.inline)
             .navigationDestination(for: Contact.self) { contact in
                 ThreadView(viewModel: threadViewModel, contact: contact)
             }
-            .background(Color.black)
+            .background(Color(white: 0.06))
             .scrollContentBackground(.hidden)
+            .toolbarBackground(Color(white: 0.06), for: .navigationBar)
+            .toolbarBackground(.visible, for: .navigationBar)
+            .toolbar {
+                ToolbarItem(placement: .topBarTrailing) {
+                    Button {
+                        showResetConfirmation = true
+                    } label: {
+                        Image(systemName: "clock.arrow.circlepath")
+                            .font(.system(size: 15, weight: .medium))
+                            .foregroundStyle(Color(white: 0.5))
+                    }
+                }
+            }
+            .confirmationDialog("Reset grading clock?", isPresented: $showResetConfirmation, titleVisibility: .visible) {
+                Button("Reset to now", role: .destructive) {
+                    Task {
+                        await contactListViewModel.resetGradingClock()
+                    }
+                }
+                Button("Cancel", role: .cancel) {}
+            } message: {
+                Text("All current ungraded counts will reset to zero. Only new claims from this moment forward will count as ungraded.")
+            }
             .overlay {
                 if contactListViewModel.isLoading && contactListViewModel.contacts.isEmpty {
                     ProgressView()
@@ -59,19 +84,6 @@ struct ContactListView: View {
                         .padding(8)
                         .background(.ultraThinMaterial, in: RoundedRectangle(cornerRadius: 8))
                         .padding()
-                }
-            }
-            .onAppear {
-                Task {
-                    await contactListViewModel.loadContacts()
-                    await contactListViewModel.subscribeToNewInteractions()
-                    contactListViewModel.startLiveRefresh()
-                }
-            }
-            .onDisappear {
-                contactListViewModel.stopLiveRefresh()
-                Task {
-                    await contactListViewModel.unsubscribe()
                 }
             }
         }

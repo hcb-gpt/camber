@@ -6,109 +6,95 @@ struct ContactRow: View {
     // MARK: - Layout constants
 
     private let avatarSize: CGFloat = 44
-    private let badgeFont = Font.system(size: 11, weight: .semibold)
+    private let metricFont = Font.system(size: 12, weight: .medium).monospacedDigit()
 
     // MARK: - Body
 
     var body: some View {
-        HStack(spacing: 12) {
+        HStack(spacing: 16) {
             initialsAvatar
 
-            VStack(alignment: .leading, spacing: 4) {
+            VStack(alignment: .leading, spacing: 6) {
 
-                // Row 1: name + last-activity timestamp
+                // Row 1: name + timestamp
                 HStack(alignment: .firstTextBaseline) {
                     Text(contact.name)
-                        .font(.body)
-                        .fontWeight(.semibold)
-                        .foregroundStyle(.white)
+                        .font(.system(size: 16, weight: .medium))
+                        .foregroundStyle(Color(white: 0.93))
                         .lineLimit(1)
 
                     Spacer()
 
                     if let relativeTime = relativeTimeString {
                         Text(relativeTime)
-                            .font(.subheadline)
-                            .foregroundStyle(Color(hex: 0x8E8E93))
+                            .font(.system(size: 13, weight: .regular).monospacedDigit())
+                            .foregroundStyle(Color(white: 0.38))
                     }
                 }
 
-                // Row 2: direction + preview snippet
-                HStack(spacing: 4) {
-                    if let dir = contact.lastDirection {
-                        Image(systemName: dir == "outbound" ? "arrow.up.right" : "arrow.down.left")
-                            .font(.caption2)
-                            .foregroundStyle(dir == "outbound" ? .blue : .green)
-                    }
+                // Row 2: preview snippet
+                Text(previewText)
+                    .font(.system(size: 14))
+                    .foregroundStyle(Color(white: 0.42))
+                    .lineLimit(1)
 
-                    Text(previewText)
-                        .font(.subheadline)
-                        .foregroundStyle(Color(hex: 0x8E8E93))
-                        .lineLimit(1)
-                }
-
-                // Row 3: call count badge, SMS count badge, ungraded badge
-                HStack(spacing: 6) {
+                // Row 3: metrics line
+                HStack(spacing: 12) {
                     if contact.callCount > 0 {
-                        countBadge(
-                            icon: "phone.fill",
-                            count: contact.callCount,
-                            tint: Color(hex: 0x3A3A3C)
-                        )
+                        metricLabel(icon: "phone", count: contact.callCount)
                     }
 
                     if contact.smsCount > 0 {
-                        countBadge(
-                            icon: "message.fill",
-                            count: contact.smsCount,
-                            tint: Color(hex: 0x3A3A3C)
-                        )
+                        metricLabel(icon: "message", count: contact.smsCount)
                     }
 
                     if contact.ungradedCount > 0 {
-                        Text("\(contact.ungradedCount) ungraded")
-                            .font(badgeFont)
-                            .foregroundStyle(.white)
-                            .padding(.horizontal, 7)
-                            .padding(.vertical, 3)
-                            .background(.orange, in: Capsule())
+                        HStack(spacing: 4) {
+                            Circle()
+                                .fill(Color(red: 0.75, green: 0.22, blue: 0.17))
+                                .frame(width: 6, height: 6)
+                            Text("\(contact.ungradedCount)")
+                                .font(metricFont)
+                                .foregroundStyle(Color(red: 0.75, green: 0.22, blue: 0.17))
+                        }
                     }
                 }
             }
         }
-        .padding(.vertical, 6)
+        .padding(.vertical, 10)
     }
 
-    // MARK: - Count badge
+    // MARK: - Metric label
 
-    private func countBadge(icon: String, count: Int, tint: Color) -> some View {
-        HStack(spacing: 3) {
+    private func metricLabel(icon: String, count: Int) -> some View {
+        HStack(spacing: 4) {
             Image(systemName: icon)
-                .font(.system(size: 10, weight: .medium))
+                .font(.system(size: 11, weight: .regular))
+                .foregroundStyle(Color(white: 0.32))
             Text("\(count)")
-                .font(badgeFont)
+                .font(metricFont)
+                .foregroundStyle(Color(white: 0.42))
         }
-        .foregroundStyle(Color(hex: 0x8E8E93))
-        .padding(.horizontal, 7)
-        .padding(.vertical, 3)
-        .background(tint, in: Capsule())
     }
 
     // MARK: - Initials Avatar
 
     private var initialsAvatar: some View {
-        let initials = contact.name
+        let words = contact.name
             .split(separator: " ")
+            .filter { $0.first?.isLetter == true }
+        let initials = words
             .prefix(2)
             .compactMap { $0.first.map(String.init) }
             .joined()
 
         return Text(initials)
             .font(.system(size: 15, weight: .semibold))
-            .foregroundStyle(.white)
+            .foregroundStyle(Color(white: 0.52))
             .frame(width: avatarSize, height: avatarSize)
-            .background(Color(white: 0.22))
+            .background(Color(white: 0.12))
             .clipShape(Circle())
+            .overlay(Circle().strokeBorder(Color(white: 0.20), lineWidth: 0.5))
     }
 
     // MARK: - Preview Text
