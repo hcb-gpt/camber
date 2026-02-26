@@ -44,7 +44,7 @@ BEGIN
   IF v_contact_phone IS NOT NULL AND v_contact_phone != '' THEN
     SELECT EXISTS (
       SELECT 1 FROM owner_phones
-      WHERE phone_number = v_contact_phone
+      WHERE phone = v_contact_phone
         AND active = true
     ) INTO v_is_owner_phone;
   END IF;
@@ -141,7 +141,7 @@ WITH sms_to_resolve AS (
     AND i.contact_phone != ''
     AND NOT EXISTS (
       SELECT 1 FROM owner_phones op
-      WHERE op.phone_number = i.contact_phone AND op.active = true
+      WHERE op.phone = i.contact_phone AND op.active = true
     )
 ),
 resolved AS (
