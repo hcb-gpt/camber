@@ -290,6 +290,21 @@ function m1(raw: any) {
   if (!a.other_party_phone && signal.other_party_phone_norm) {
     a.other_party_phone = signal.other_party_phone_norm;
   }
+  // --- Beside camelCase passthrough normalization (STRAT-VP directive 2026-02-27) ---
+  if (!a.interaction_id && a.id) a.interaction_id = a.id;
+  if (!a.other_party_name && a.fromName) a.other_party_name = a.fromName;
+  if (!a.other_party_name && a.from_name) a.other_party_name = a.from_name;
+  if (!a.other_party_name && a.toName) a.other_party_name = a.toName;
+  if (!a.other_party_name && a.to_name) a.other_party_name = a.to_name;
+  if (!a.from_phone && a.fromPhoneNumber) a.from_phone = a.fromPhoneNumber;
+  if (!a.from_phone && a.from_phone_number) a.from_phone = a.from_phone_number;
+  if (!a.to_phone && a.toPhoneNumber) a.to_phone = a.toPhoneNumber;
+  if (!a.to_phone && a.to_phone_number) a.to_phone = a.to_phone_number;
+  if (!a.event_at_utc && a.createdAt) a.event_at_utc = a.createdAt;
+  if (!a.event_at_utc && a.initiatedAt) a.event_at_utc = a.initiatedAt;
+  if (!a.beside_contact_id && a.contactId) a.beside_contact_id = a.contactId;
+  if (!a.beside_contact_id && a.contact_id) a.beside_contact_id = a.contact_id;
+  if (!a.duration_seconds && a.durationMs) a.duration_seconds = Math.round(Number(a.durationMs) / 1000);
   return a;
 }
 
@@ -441,8 +456,9 @@ Deno.serve(async (req: Request) => {
     Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!,
   );
   const provenance_source = normalizeProvenanceSource(raw.source);
-  const iid = raw.interaction_id || raw.call_id || `unknown_${run_id}`;
-  const id_gen = !raw.interaction_id && !raw.call_id;
+  const idempotencyKey = req.headers.get("Idempotency-Key");
+  const iid = raw.interaction_id || raw.call_id || raw.id || idempotencyKey || `unknown_${run_id}`;
+  const id_gen = !raw.interaction_id && !raw.call_id && !raw.id && !idempotencyKey;
   const is_shadow = raw.is_shadow === true || iid.startsWith("cll_SHADOW_") || provenance_source === "shadow";
 
   let audit_id: number | null = null, cr_uuid: string | null = null;
