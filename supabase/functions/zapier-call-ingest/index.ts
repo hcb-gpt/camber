@@ -1,5 +1,5 @@
 /**
- * zapier-call-ingest Edge Function v1.4.0
+ * zapier-call-ingest Edge Function v1.4.1
  *
  * Auth model (consolidated):
  * - Canonical: X-Edge-Secret === EDGE_SHARED_SECRET
@@ -13,7 +13,7 @@
 import "jsr:@supabase/functions-js/edge-runtime.d.ts";
 import { createClient } from "jsr:@supabase/supabase-js@2";
 
-const VERSION = "v1.4.0";
+const VERSION = "v1.4.1";
 
 async function logDiagnostic(message: string, metadata: Record<string, any>) {
   try {
@@ -105,24 +105,27 @@ Deno.serve(async (req: Request) => {
   }
 
   // ---- Unwrap payload_json ----
+  const ingestWarnings: string[] = [];
   let payload: any;
-  try {
-    if (rawBody.payload_json && typeof rawBody.payload_json === "string") {
+  if (rawBody.payload_json && typeof rawBody.payload_json === "string") {
+    try {
       payload = JSON.parse(rawBody.payload_json);
-    } else if (rawBody.payload_json && typeof rawBody.payload_json === "object") {
-      payload = rawBody.payload_json;
-    } else {
-      payload = rawBody;
+    } catch (e: any) {
+      // Robust fallback: some Zapier steps pass plain text into payload_json.
+      // Keep the request flowing by lifting raw text into payload_text and
+      // forwarding remaining fields unchanged.
+      ingestWarnings.push("payload_json_non_json_string_fallback");
+      payload = { ...rawBody, payload_text: rawBody.payload_json };
+      delete payload.payload_json;
+      await logDiagnostic("PAYLOAD_JSON_PARSE_FALLBACK", {
+        detail: e?.message || "unknown",
+        snippet: String(rawBody.payload_json || "").slice(0, 160),
+      });
     }
-  } catch (e: any) {
-    return new Response(
-      JSON.stringify({
-        error: "payload_json_parse_failed",
-        detail: e.message,
-        version: VERSION,
-      }),
-      { status: 400, headers: { "Content-Type": "application/json" } },
-    );
+  } else if (rawBody.payload_json && typeof rawBody.payload_json === "object") {
+    payload = rawBody.payload_json;
+  } else {
+    payload = rawBody;
   }
 
   // Always stamp ingest provenance as zapier to avoid upstream payload source leakage.
@@ -215,6 +218,7 @@ Deno.serve(async (req: Request) => {
       zapier_meta: zapierMeta,
       auth_mode: canonicalValid ? "canonical_x_edge_secret" : "legacy_x_secret",
       process_call_status: processCallResponse.status,
+      warnings: ingestWarnings,
       ms: Date.now() - t0,
     },
   };
