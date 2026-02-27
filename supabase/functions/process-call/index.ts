@@ -578,7 +578,9 @@ Deno.serve(async (req: Request) => {
 
     // Guard: Suppress otherPartyPhone if it matches a known owner/shared line
     if (partyPhones.otherPartyPhone && OWNER_PHONES.has(partyPhones.otherPartyPhone)) {
-      warnings.push(`misattribution_guard_owner_phone: otherPartyPhone=${partyPhones.otherPartyPhone} is a shared line; suppressing`);
+      warnings.push(
+        `misattribution_guard_owner_phone: otherPartyPhone=${partyPhones.otherPartyPhone} is a shared line; suppressing`,
+      );
       partyPhones.otherPartyPhone = null;
     }
 
@@ -606,7 +608,9 @@ Deno.serve(async (req: Request) => {
 
     // Guard: Suppress contact_name if it matches a known admin name with no phone
     if (contact_name && !partyPhones.otherPartyPhone && ADMIN_NAMES.has(contact_name.toLowerCase())) {
-      warnings.push(`misattribution_guard_admin_name: contact_name="${contact_name}" is a known admin fallback with no phone; suppressing`);
+      warnings.push(
+        `misattribution_guard_admin_name: contact_name="${contact_name}" is a known admin fallback with no phone; suppressing`,
+      );
       contact_name = null;
       contact_id = null;
     }

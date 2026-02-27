@@ -93,7 +93,7 @@ const ZACK_BESIDE_LINE = "+17066889158";
 const OWNER_PHONES = new Set([ZACK_BESIDE_LINE]);
 
 const ADMIN_NAMES = new Set([
-  "chad barlow",  // Beside inbox admin — never a real SMS contact
+  "chad barlow", // Beside inbox admin — never a real SMS contact
 ]);
 
 // ============================================================
@@ -278,7 +278,9 @@ Deno.serve(async (req: Request) => {
 
       if (contactWarnings.length > 0) {
         console.warn(
-          `[sms-beside-batch-ingest] misattribution guard triggered for message_id=${msg.message_id}: ${contactWarnings.join("; ")}`,
+          `[sms-beside-batch-ingest] misattribution guard triggered for message_id=${msg.message_id}: ${
+            contactWarnings.join("; ")
+          }`,
         );
       }
 

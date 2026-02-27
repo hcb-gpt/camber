@@ -159,8 +159,7 @@ function zonedDateParts(date: Date, timeZone: string): { year: number; month: nu
   });
 
   const parts = formatter.formatToParts(date);
-  const value = (type: string): number =>
-    Number(parts.find((part) => part.type === type)?.value || "0");
+  const value = (type: string): number => Number(parts.find((part) => part.type === type)?.value || "0");
 
   return {
     year: value("year"),
@@ -675,16 +674,20 @@ async function handleTriageQueue(db: any, url: URL, t0: number): Promise<Respons
     });
   }
 
-  const spanIds: string[] = Array.from(new Set(
-    queueRows
-      .map((row: any) => String(row?.span_id || ""))
-      .filter((value: string) => value.length > 0),
-  )) as string[];
-  const interactionIdsFromQueue: string[] = Array.from(new Set(
-    queueRows
-      .map((row: any) => String(row?.interaction_id || ""))
-      .filter((value: string) => value.length > 0),
-  )) as string[];
+  const spanIds: string[] = Array.from(
+    new Set(
+      queueRows
+        .map((row: any) => String(row?.span_id || ""))
+        .filter((value: string) => value.length > 0),
+    ),
+  ) as string[];
+  const interactionIdsFromQueue: string[] = Array.from(
+    new Set(
+      queueRows
+        .map((row: any) => String(row?.interaction_id || ""))
+        .filter((value: string) => value.length > 0),
+    ),
+  ) as string[];
 
   const { data: spanRows, error: spanErr } = await batchIn<any>(
     spanIds,
@@ -701,10 +704,12 @@ async function handleTriageQueue(db: any, url: URL, t0: number): Promise<Respons
     (spanRows || []).map((row: any) => [String(row?.id || ""), row]),
   );
 
-  const interactionIds: string[] = [...new Set([
-    ...interactionIdsFromQueue,
-    ...((spanRows || []).map((row: any) => String(row?.interaction_id || "")).filter(Boolean)),
-  ])];
+  const interactionIds: string[] = [
+    ...new Set([
+      ...interactionIdsFromQueue,
+      ...((spanRows || []).map((row: any) => String(row?.interaction_id || "")).filter(Boolean)),
+    ]),
+  ];
 
   const { data: interactionRows, error: interactionErr } = await batchIn<any>(
     interactionIds,
@@ -740,11 +745,13 @@ async function handleTriageQueue(db: any, url: URL, t0: number): Promise<Respons
     attributionBySpan.set(spanId, row);
   }
 
-  const projectIds = [...new Set(
-    (attributionRows || [])
-      .map((row: any) => String(row?.applied_project_id || row?.project_id || ""))
-      .filter(Boolean),
-  )];
+  const projectIds = [
+    ...new Set(
+      (attributionRows || [])
+        .map((row: any) => String(row?.applied_project_id || row?.project_id || ""))
+        .filter(Boolean),
+    ),
+  ];
   const { data: projectRows, error: projectErr } = await batchIn<any>(
     projectIds,
     (chunk: string[]) =>
@@ -995,8 +1002,7 @@ async function handleThread(
       .from("contacts")
       .select("id, name, phone")
       .eq("id", contactId)
-      .single()
-  );
+      .single());
 
   if (contactErr || !contact) {
     return json({ ok: false, error_code: "contact_not_found", error: contactErr?.message || "not found" }, 404);
@@ -1022,8 +1028,7 @@ async function handleThread(
         .not("interaction_id", "like", "cll_SHADOW_%")
         .not("event_at_utc", "is", null)
         .order("event_at_utc", { ascending: false })
-        .range(interactionsFrom, interactionsTo)
-    );
+        .range(interactionsFrom, interactionsTo));
 
     if (intErr) {
       return json({ ok: false, error_code: "interactions_query_failed", error: intErr.message }, 500);
@@ -1056,7 +1061,7 @@ async function handleThread(
   }
   const { data: inboundProbe, error: inboundProbeErr } = await timeDb(
     "db_sms_inbound_probe",
-    () => inboundProbeQuery
+    () => inboundProbeQuery,
   );
 
   if (inboundProbeErr) {
@@ -1209,7 +1214,7 @@ async function handleThread(
           .select("id, interaction_id, created_at")
           .eq("status", "pending")
           .in("interaction_id", smsInteractionKeys)
-          .order("created_at", { ascending: false })
+          .order("created_at", { ascending: false }),
     );
 
     if (pendingSmsReviewErr) {
@@ -1243,8 +1248,7 @@ async function handleThread(
       db
         .from("calls_raw")
         .select("interaction_id, direction, transcript")
-        .in("interaction_id", interactionIds)
-    );
+        .in("interaction_id", interactionIds));
 
     if (error) {
       return json({ ok: false, error_code: "calls_raw_query_failed", error: error.message }, 500);
@@ -1267,8 +1271,7 @@ async function handleThread(
             .in("interaction_id", chunk)
             .eq("is_superseded", false)
             .order("span_index", { ascending: true }),
-      )
-    );
+      ));
 
     if (error) {
       return json({ ok: false, error_code: "spans_query_failed", error: error.message }, 500);
@@ -1295,8 +1298,7 @@ async function handleThread(
             .from("span_attributions")
             .select("span_id, project_id, applied_project_id, confidence")
             .in("span_id", chunk),
-      )
-    );
+      ));
 
     if (error) {
       return json({ ok: false, error_code: "span_attributions_query_failed", error: error.message }, 500);
@@ -1342,8 +1344,7 @@ async function handleThread(
             .from("projects")
             .select("id, name")
             .in("id", chunk),
-      )
-    );
+      ));
 
     if (error) {
       return json({ ok: false, error_code: "projects_for_spans_query_failed", error: error.message }, 500);
@@ -1369,8 +1370,7 @@ async function handleThread(
             .eq("status", "pending")
             .in("span_id", chunk)
             .order("created_at", { ascending: false }),
-      )
-    );
+      ));
 
     if (error) {
       return json({ ok: false, error_code: "pending_review_query_failed", error: error.message }, 500);
@@ -1421,8 +1421,7 @@ async function handleThread(
             .from("journal_claims")
             .select("id, call_id, source_span_id, claim_type, claim_text, speaker_label")
             .in("call_id", chunk),
-      )
-    );
+      ));
 
     if (claimsErr) {
       return json({ ok: false, error_code: "claims_query_failed", error: claimsErr.message }, 500);
@@ -1452,8 +1451,7 @@ async function handleThread(
             .from("claim_grades")
             .select("claim_id, grade, correction_text, graded_by")
             .in("claim_id", chunk),
-      )
-    );
+      ));
 
     if (gradesErr) {
       return json({ ok: false, error_code: "grades_query_failed", error: gradesErr.message }, 500);
@@ -1570,14 +1568,18 @@ async function handleThread(
     totalMs,
   );
 
-  return json({
-    ok: true,
-    contact: { id: contact.id, name: contact.name, phone: contact.phone },
-    thread,
-    pagination: { limit, offset, total: totalCount },
-    function_version: FUNCTION_VERSION,
-    ms: totalMs,
-  }, 200, serverTiming ? { "Server-Timing": serverTiming } : {});
+  return json(
+    {
+      ok: true,
+      contact: { id: contact.id, name: contact.name, phone: contact.phone },
+      thread,
+      pagination: { limit, offset, total: totalCount },
+      function_version: FUNCTION_VERSION,
+      ms: totalMs,
+    },
+    200,
+    serverTiming ? { "Server-Timing": serverTiming } : {},
+  );
 }
 
 async function handleThreadApi(db: any, contactId: string, url: URL, t0: number): Promise<Response> {
@@ -1740,11 +1742,13 @@ async function handleSpansApi(db: any, contactId: string, url: URL, t0: number):
     (spanAttributions || []).map((row: any) => [String(row?.span_id || ""), row]),
   );
 
-  const projectIds = [...new Set(
-    (spanAttributions || [])
-      .map((row: any) => String(row?.applied_project_id || row?.project_id || ""))
-      .filter((value: string) => value.length > 0),
-  )];
+  const projectIds = [
+    ...new Set(
+      (spanAttributions || [])
+        .map((row: any) => String(row?.applied_project_id || row?.project_id || ""))
+        .filter((value: string) => value.length > 0),
+    ),
+  ];
   const { data: projectRows, error: projectErr } = await batchIn<any>(
     projectIds,
     (chunk: string[]) =>
@@ -1982,12 +1986,11 @@ async function handleVerdict(db: any, req: Request, t0: number): Promise<Respons
 
   const resolved = typeof rpcData === "string" ? JSON.parse(rpcData) : rpcData;
   if (!resolved?.ok) {
-    const status =
-      resolved?.error === "review_queue_item_not_found"
-        ? 404
-        : resolved?.error === "human_lock_conflict"
-        ? 409
-        : 400;
+    const status = resolved?.error === "review_queue_item_not_found"
+      ? 404
+      : resolved?.error === "human_lock_conflict"
+      ? 409
+      : 400;
     return json({ ...resolved, ms: Date.now() - t0 }, status);
   }
 
@@ -2048,7 +2051,7 @@ async function handleGrade(db: any, req: Request, t0: number): Promise<Response>
 }
 
 // PWA icon base64 strings (red R on black, 3 sizes)
-const ICON_180 =
+const _ICON_180 =
   "iVBORw0KGgoAAAANSUhEUgAAALQAAAC0CAYAAAA9zQYyAAAHN0lEQVR4nO3d32tk5R3H8c+ZmcxkJpmdTEhMd7Puxeq67I2CRUQsiFTx1uJCKVIvLLrYXvRG7EVB8Mc/oMVSXV2oiOKqvagWlhYRUdtSSr3o0tZa67a4m6zZZDI7M2cyk5xzeiErpTWa5JnNec73vF+Qyzl5MnnzcObMeZ4TSEoEGFFIewDAKBE0TCFomELQMIWgYQpBwxSChikEDVMIGqYQNEwhaJhC0DCFoGEKQcMUgoYpBA1TCBqmEDRMIWiYQtAwhaBhCkHDFIKGKQQNUwgaphA0TCFomELQMIWgYQpBwxSChikEDVMIGqYQNEwhaJhC0DCFoGEKQcMUgoYpBA1TCBqmEDRMIWiYQtAwhaBhCkHDFIKGKaW0B+CDQNI3JiZ0Vbm8629ILGmQJBrEsZajSAsbG/rXcKh+kuzySGwIJOX+nXtsbk7faTTSHsbnIkn/HA71hzDUW72e3gtDrRP4luQ+6IKk04cOqRwEaQ9lU8tRpJPttk60WmpFUdrD8Vrug64XCnr/6qvTHsaWdONYTy0v67lWS3Hag/FU7j8U+jsv/7/JQkE/mp3VS1deqbkSH3++SO6DzqKvV6t67cABXVOppD0U7xB0Rn2tVNLz+/frwNhY2kPxCkFn2EyxqGfn51Ut8G+8hHci4w6Wy3p4djbtYXiDoA042mjouvHxtIfhBYI2IJD04MxM2sPwAkEbcVOtpsNc9SBoS+7asyftIaSOoEcgljRMkm39XA63TU5eluNmCV83OfpNt6sfLixsO9JiEKhZKOjI+LhuqdV0V6OhuuPltwNjY9pXKuncxobTcbKMGdrR78JwRzNulCS6EEV6p9fT40tLuv3jj/X7MHQez7U5v9pB0I5GdfJwIYp07Nw5nRkOnY5zKOcfDAnaI7041lMrK07H2Jvzm5YI2jO/7nadbg2dIWj4pBfHTqcdVY8XKuwGgvaQy6qU8ZzfqJTvv95TYbzzk468/0Pz/vfDGIKGKQQNUwgaphA0TCFomELQMIWgYQpBwxSChikEDVMIGqYQNEwhaJhC0DCFoGEKQcMUgoYpBA1TCBqmEDRMIWiYQtAwhaBhCkHDFIKGKQQNUwgaphA0TCFomELQMIWgYQpBwxSChikEDVMIGqYQNEwhaJhC0DCFoGEKQcMUgoYpBA1TCBqmEDRMIWiYQtAwhaBhCkHDFIKGKQQNUwgaphA0TCFomELQMOU/hcvt+Vd481YAAAAASUVORK5CYII=";
 
 const _ICON_192 =
@@ -2569,23 +2572,18 @@ async function handleHealth(db: any, t0: number): Promise<Response> {
   const lastInteractionUtc = lastInteractionRes?.data?.event_at_utc ?? null;
   const pendingReviews = pendingRes?.count ?? 0;
 
-  const callStaleMin = lastCallUtc
-    ? Math.round((nowMs - new Date(lastCallUtc).getTime()) / 60_000)
-    : null;
-  const smsStaleMin = lastSmsUtc
-    ? Math.round((nowMs - new Date(lastSmsUtc).getTime()) / 60_000)
-    : null;
+  const callStaleMin = lastCallUtc ? Math.round((nowMs - new Date(lastCallUtc).getTime()) / 60_000) : null;
+  const smsStaleMin = lastSmsUtc ? Math.round((nowMs - new Date(lastSmsUtc).getTime()) / 60_000) : null;
 
   const lastError = lastErrorRes?.data
     ? {
-        function: lastErrorRes.data.function_name,
-        message: lastErrorRes.data.message,
-        at: lastErrorRes.data.created_at,
-      }
+      function: lastErrorRes.data.function_name,
+      message: lastErrorRes.data.message,
+      at: lastErrorRes.data.created_at,
+    }
     : null;
 
-  const pipelineOk =
-    callStaleMin !== null &&
+  const pipelineOk = callStaleMin !== null &&
     smsStaleMin !== null &&
     callStaleMin < 120 &&
     smsStaleMin < 120;
