@@ -1,7 +1,5 @@
--- Replace trigger function with idempotent version
--- Prevents double-counting contact stats on pipeline replay
--- Applied from browser session; synced to git for git-first compliance.
 
+-- Replace trigger function with idempotent version
 CREATE OR REPLACE FUNCTION public.update_contact_interaction_stats()
 RETURNS trigger
 LANGUAGE plpgsql
@@ -19,7 +17,7 @@ BEGIN
   BEGIN
     INSERT INTO contact_scoring_log (contact_id, interaction_id, transcript_chars)
     VALUES (NEW.contact_id, NEW.interaction_id, COALESCE(NEW.transcript_chars, 0));
-
+    
     v_already_scored := false;
   EXCEPTION WHEN unique_violation THEN
     v_already_scored := true;
@@ -29,12 +27,12 @@ BEGIN
     -- Log the suppression for audit trail
     INSERT INTO contact_scoring_suppressions (contact_id, interaction_id, reason)
     VALUES (NEW.contact_id, NEW.interaction_id, 'duplicate_interaction');
-
+    
     -- Do NOT increment stats
     RETURN NEW;
   END IF;
 
-  -- First time scoring this contact for this interaction -- increment stats
+  -- First time scoring this contact for this interaction — increment stats
   UPDATE contacts SET
     interaction_count = COALESCE(interaction_count, 0) + 1,
     last_interaction_at = GREATEST(COALESCE(last_interaction_at, '1970-01-01'::timestamptz), NEW.event_at_utc),
@@ -45,3 +43,4 @@ BEGIN
   RETURN NEW;
 END;
 $$;
+;

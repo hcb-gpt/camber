@@ -9,7 +9,7 @@ struct ReviewItem: Codable, Identifiable {
     let createdAt: String?
     let eventAt: String?
     let transcriptSegment: String
-    let confidence: Double
+    let confidence: Double?
     let aiGuessProjectId: String?
     let contactName: String?
     let humanSummary: String?

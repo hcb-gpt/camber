@@ -31,7 +31,7 @@ const CLOSURE_CONFIDENCE_THRESHOLD = 0.75;
 const MAX_OPEN_LOOPS_PER_PROJECT = 50;
 const MAX_TOKENS = 2048;
 const DEFAULT_MODEL = "gpt-4o-mini";
-const DEFAULT_TIMEOUT_MS = 30000;
+const DEFAULT_TIMEOUT_MS = 60000;
 
 interface LoopMatch {
   loop_id: string;

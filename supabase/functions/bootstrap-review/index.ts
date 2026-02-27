@@ -69,21 +69,64 @@ async function tagReviewQueueSource(
 }
 
 async function fetchReviewProjects(db: any): Promise<any[]> {
-  const { data, error } = await db
+  const inactiveStatuses = new Set([
+    "archived",
+    "closed",
+    "completed",
+    "done",
+    "inactive",
+    "on_hold",
+    "on hold",
+    "paused",
+    "prospect",
+    "pipeline",
+    "cancelled",
+    "canceled",
+  ]);
+
+  const excludedProjectNames = new Set([
+    "Business Development & Networking",
+    "Overhead / Internal Operations",
+  ]);
+
+  const pickerLabelBySourceName = new Map<string, string>([
+    ["Hurley Residence", "Hurley Residence"],
+    ["Moss Residence", "Moss Residence"],
+    ["Permar Residence", "Permar Home"],
+    ["Permar Home", "Permar Home"],
+    ["Skelton Residence", "Skelton Residence"],
+    ["Winship Residence", "Winship Residence"],
+    ["Woodbery Residence", "Woodbery Residence"],
+    ["Young Residence", "Young Residence"],
+  ]);
+
+  const { data: withStatus, error: withStatusErr } = await db
     .from("projects")
-    .select("id, name")
-    .eq("status", "active")
+    .select("id, name, status")
     .order("name");
 
-  if (error) {
-    console.warn(`[bootstrap-review] fetchReviewProjects failed: ${error.message}`);
-    return [];
+  if (!withStatusErr && withStatus) {
+    return withStatus
+      .filter((project: any) => {
+        const name = String(project?.name || "").trim();
+        if (excludedProjectNames.has(name)) return false;
+        const status = String(project?.status || "").trim().toLowerCase();
+        if (status && inactiveStatuses.has(status)) return false;
+        return pickerLabelBySourceName.has(name);
+      })
+      .map((project: any) => ({
+        id: project.id,
+        name: pickerLabelBySourceName.get(String(project?.name || "").trim()) || project.name,
+      }));
   }
 
-  return (data || []).map((project: any) => ({
-    id: project.id,
-    name: project.name,
-  }));
+  const { data: fallback, error: fallbackErr } = await db
+    .from("projects")
+    .select("id, name")
+    .order("name");
+
+  if (fallbackErr) return [];
+  return fallback || [];
 }
 
 async function handleProjects(db: any, t0: number): Promise<Response> {

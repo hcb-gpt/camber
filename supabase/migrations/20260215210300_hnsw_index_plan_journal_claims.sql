@@ -20,7 +20,6 @@
 CREATE INDEX IF NOT EXISTS idx_journal_claims_active_embedded
   ON public.journal_claims (project_id)
   WHERE embedding IS NOT NULL AND active = true;
-
 COMMENT ON INDEX public.idx_journal_claims_active_embedded IS
   'Partial index for xref_search_journal_claims RPC. '
   'Covers active claims with embeddings. '

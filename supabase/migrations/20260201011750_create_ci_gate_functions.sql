@@ -48,7 +48,6 @@ BEGIN
     v_violations;
 END;
 $$ LANGUAGE plpgsql STABLE;
-
 -- ============================================================
 -- CI GATE 2: NO_GAP
 -- Adjacent spans must have no character gaps (contiguous)
@@ -99,7 +98,6 @@ BEGIN
     v_violations;
 END;
 $$ LANGUAGE plpgsql STABLE;
-
 -- ============================================================
 -- CI GATE 3: NO_UNCOVERED
 -- Every active span must have attribution OR open/pending review
@@ -151,7 +149,6 @@ BEGIN
     v_violations;
 END;
 $$ LANGUAGE plpgsql STABLE;
-
 -- ============================================================
 -- CI GATE 4: NO_DOUBLE_COVERED
 -- Span cannot have BOTH attribution AND open/pending review
@@ -191,7 +188,6 @@ BEGIN
     v_violations;
 END;
 $$ LANGUAGE plpgsql STABLE;
-
 -- ============================================================
 -- MASTER CI RUNNER
 -- Run all gates, return aggregate result
@@ -210,7 +206,6 @@ BEGIN
   RETURN QUERY SELECT * FROM ci_gate_no_double_covered();
 END;
 $$ LANGUAGE plpgsql STABLE;
-
 -- Usage in CI:
 -- SELECT * FROM ci_run_all_gates();
 -- CI fails if ANY row has status = 'FAIL'

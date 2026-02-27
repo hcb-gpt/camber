@@ -1,8 +1,10 @@
--- create_v_active_conversation_spans
--- Applied via MCP: 2026-01-31
--- Creates view for active (non-superseded) conversation spans
+-- Convenience view for active (non-superseded) spans
+-- Prevents query bugs from forgetting is_superseded filter
 
--- This migration was applied directly to production via MCP.
--- Stub file created for migration drift closure.
+CREATE OR REPLACE VIEW v_active_conversation_spans AS
+SELECT *
+FROM conversation_spans
+WHERE is_superseded = false;
 
-SELECT 1; -- no-op placeholder
+COMMENT ON VIEW v_active_conversation_spans IS
+  'Active spans only (is_superseded=false). Use for pipeline queries to prevent stale span access.';;

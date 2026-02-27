@@ -1,10 +1,7 @@
--- Backfill scoring log from existing interactions and recalculate correct stats
--- Applied from browser session; synced to git for git-first compliance.
--- Idempotent: uses ON CONFLICT DO NOTHING and conditional updates.
 
 -- Step 1: Backfill scoring log from existing interactions
 INSERT INTO contact_scoring_log (contact_id, interaction_id, transcript_chars, scored_at)
-SELECT
+SELECT 
   i.contact_id,
   i.interaction_id,
   COALESCE(i.transcript_chars, 0),
@@ -15,7 +12,7 @@ ON CONFLICT (contact_id, interaction_id) DO NOTHING;
 
 -- Step 2: Recalculate correct stats from actual data
 WITH correct_stats AS (
-  SELECT
+  SELECT 
     i.contact_id,
     count(DISTINCT i.interaction_id) as correct_interaction_count,
     max(i.event_at_utc) as correct_last_interaction,
@@ -41,3 +38,4 @@ UPDATE contacts SET
   updated_at = now()
 WHERE interaction_count > 0
   AND id NOT IN (SELECT DISTINCT contact_id FROM interactions WHERE contact_id IS NOT NULL);
+;

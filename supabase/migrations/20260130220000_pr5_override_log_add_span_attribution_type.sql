@@ -12,33 +12,26 @@
 -- - Assert SSOT rowcount > 0 (fail if no span_attributions row)
 
 begin;
-
 -- ============================================================
 -- 1. EXPAND OVERRIDE_LOG ENTITY_TYPE CONSTRAINT
 -- ============================================================
 alter table public.override_log
   drop constraint if exists chk_override_log_entity_type;
-
 alter table public.override_log
   add constraint chk_override_log_entity_type
   check (entity_type in ('interaction', 'scheduler_item', 'span_attribution'));
-
 comment on constraint chk_override_log_entity_type on public.override_log is
   'Valid entity types for audit: interaction, scheduler_item, span_attribution';
-
 -- ============================================================
 -- 2. ADD IDEMPOTENCY_KEY COLUMN + UNIQUE INDEX
 -- ============================================================
 alter table public.override_log
   add column if not exists idempotency_key text;
-
 create unique index if not exists override_log_idempotency_key_uq
   on public.override_log (idempotency_key)
   where idempotency_key is not null;
-
 comment on column public.override_log.idempotency_key is
   'Unique key for deduplication (e.g., resolve:<review_queue_id>:<project_id>)';
-
 -- ============================================================
 -- 3. CREATE RESOLVE_REVIEW_ITEM() RPC
 -- ============================================================
@@ -273,11 +266,8 @@ begin
   );
 end;
 $$;
-
 comment on function public.resolve_review_item is
   'Atomic human resolution of a pending review item. Updates SSOT + audit + scheduler + claims in single transaction. Gates: human-lock conflict, SSOT rowcount assertion, no overwrites on scheduler/claims.';
-
 -- Grant execute to service_role (edge functions use this)
 grant execute on function public.resolve_review_item to service_role;
-
 commit;

@@ -8,7 +8,6 @@
 -- and ongoing extraction gap monitoring.
 
 DROP VIEW IF EXISTS v_review_spans_missing_extraction;
-
 CREATE VIEW v_review_spans_missing_extraction AS
 SELECT
   sa.id AS attribution_id,
@@ -28,6 +27,5 @@ LEFT JOIN journal_claims jc ON jc.source_span_id = sa.span_id
 WHERE sa.decision = 'review'
   AND sa.confidence >= 0.70
   AND jc.id IS NULL;
-
 COMMENT ON VIEW v_review_spans_missing_extraction IS
   'Review spans with confidence >= 0.70 that have no extracted journal_claims. Used for backfill recovery and ongoing extraction gap monitoring.';
