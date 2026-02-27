@@ -9,6 +9,15 @@ const THREAD_SCAN_MULTIPLIER = Number(Deno.env.get("REDLINE_THREAD_SCAN_MULTIPLI
 const THREAD_SCAN_MIN_ITEMS = Number(Deno.env.get("REDLINE_THREAD_SCAN_MIN_ITEMS") || "200");
 const THREAD_SCAN_MAX_ITEMS = Number(Deno.env.get("REDLINE_THREAD_SCAN_MAX_ITEMS") || "1000");
 
+function noStoreHeaders(): Record<string, string> {
+  return {
+    "Cache-Control": "no-store, no-cache, must-revalidate, proxy-revalidate, max-age=0",
+    Pragma: "no-cache",
+    Expires: "0",
+    "Surrogate-Control": "no-store",
+  };
+}
+
 function corsHeaders(): Record<string, string> {
   return {
     "Access-Control-Allow-Origin": "*",
@@ -20,7 +29,7 @@ function corsHeaders(): Record<string, string> {
 function json(data: unknown, status = 200): Response {
   return new Response(JSON.stringify(data), {
     status,
-    headers: { "Content-Type": "application/json", ...corsHeaders() },
+    headers: { "Content-Type": "application/json", ...noStoreHeaders(), ...corsHeaders() },
   });
 }
 
@@ -1269,7 +1278,7 @@ Deno.serve(async (req: Request) => {
 
     return new Response(HTML, {
       status: 200,
-      headers: { "Content-Type": "text/html; charset=utf-8", ...corsHeaders() },
+      headers: { "Content-Type": "text/html; charset=utf-8", ...noStoreHeaders(), ...corsHeaders() },
     });
   } catch (err: any) {
     console.error("[redline-thread] Error:", err.message);
