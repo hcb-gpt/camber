@@ -33,6 +33,10 @@
  *   exists for interaction_id with payload_ref + integrity_hash.
  * - Fails closed with error_code='call_evidence_write_failed' if evidence upsert cannot be completed.
  *
+ * v2.6.4:
+ * - Passes normalized segmentation channel to segment-llm (`call`|`sms_thread`).
+ * - Adds interaction_id fallback channel inference for sms_thread_* and beside_sms_* ids.
+ *
  * Auth (internal gate; verify_jwt=false):
  * - X-Edge-Secret == EDGE_SHARED_SECRET, OR
  * - JWT + ALLOWED_EMAILS verified via auth.getUser() (debug path)
@@ -40,7 +44,7 @@
 import "jsr:@supabase/functions-js/edge-runtime.d.ts";
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
 
-const SEGMENT_CALL_VERSION = "v2.6.3";
+const SEGMENT_CALL_VERSION = "v2.6.4";
 const MAX_SEGMENT_CHARS_HARD_LIMIT = 3000;
 const MAX_HOOK_NON2XX_DIAGNOSTICS = 3;
 
@@ -62,6 +66,7 @@ type SegmentFromLLM = {
   confidence: number;
   boundary_quote: string | null;
 };
+type SegmentationChannel = "call" | "sms_thread";
 
 type SpanChainStatus = {
   span_id: string;
@@ -102,6 +107,24 @@ function sanitizeTranscriptForPipeline(text: string): TranscriptSanitizeResult {
 function normalizeReasonCodes(raw: unknown): string[] {
   if (!Array.isArray(raw)) return [];
   return raw.map((r) => String(r || "").trim()).filter(Boolean);
+}
+
+function normalizeSegmentationChannel(
+  rawChannel: unknown,
+  interactionId: string | null,
+): SegmentationChannel {
+  const normalized = String(rawChannel || "").trim().toLowerCase();
+  if (
+    normalized === "sms_thread" || normalized === "sms" ||
+    normalized === "text" || normalized === "text_message"
+  ) {
+    return "sms_thread";
+  }
+  const iid = String(interactionId || "").toLowerCase();
+  if (iid.startsWith("sms_thread_") || iid.startsWith("beside_sms_")) {
+    return "sms_thread";
+  }
+  return "call";
 }
 
 async function sha256Hex(input: string): Promise<string> {
@@ -586,6 +609,7 @@ Deno.serve(async (req: Request) => {
     const {
       interaction_id,
       transcript,
+      channel,
       dry_run = false,
       max_segments = 10,
       min_segment_chars = 200,
@@ -604,6 +628,7 @@ Deno.serve(async (req: Request) => {
         { status: 400, headers: jsonHeaders },
       );
     }
+    const segmentationChannel = normalizeSegmentationChannel(channel, interaction_id);
 
     const edgeSecret = Deno.env.get("EDGE_SHARED_SECRET");
     if (!edgeSecret) {
@@ -905,6 +930,7 @@ Deno.serve(async (req: Request) => {
         body: JSON.stringify({
           interaction_id,
           transcript: spanTranscript,
+          channel: segmentationChannel,
           source: "segment-call",
           max_segments,
           min_segment_chars,
@@ -1603,6 +1629,7 @@ Deno.serve(async (req: Request) => {
         run_id,
         version: SEGMENT_CALL_VERSION,
         interaction_id,
+        segmentation_channel: segmentationChannel,
         transcript_source: transcriptSource,
         spans_written,
         spans_write_ok,
