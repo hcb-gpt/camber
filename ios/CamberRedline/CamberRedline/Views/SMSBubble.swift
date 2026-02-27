@@ -8,7 +8,7 @@ struct SMSBubble: View {
         entry.direction?.lowercased() == "outbound"
     }
 
-    nonisolated(unsafe) private static let timeFormatter: DateFormatter = {
+    private static let timeFormatter: DateFormatter = {
         let f = DateFormatter()
         f.timeStyle = .short
         return f

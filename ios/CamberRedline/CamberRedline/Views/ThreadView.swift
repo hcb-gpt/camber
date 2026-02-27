@@ -4,11 +4,15 @@ import SwiftUI
 
 /// Project attribution for SMS zebra striping (dummy until API provides data).
 private struct SMSProjectAssignment: Hashable, Identifiable {
+    let projectId: String?
     let name: String
     let colorIndex: Int?
 
     var id: String {
-        name.lowercased()
+        if let projectId, !projectId.isEmpty {
+            return projectId
+        }
+        return name.lowercased()
             .replacingOccurrences(of: " ", with: "_")
             .replacingOccurrences(of: "(", with: "")
             .replacingOccurrences(of: ")", with: "")
@@ -62,7 +66,10 @@ struct ThreadView: View {
     let contact: Contact
     @State private var hasScrolledToLatest = false
     @State private var didTriggerTopPagination = false
+    @State private var hasUserScrolledThread = false
+    @State private var lastObservedTopOffset: CGFloat?
     @State private var smsOverrides: [String: SMSProjectAssignment] = [:]
+    @State private var spanOverrides: [UUID: SMSProjectAssignment] = [:]
     @State private var activeNoteContext: ThreadNoteContext?
     @State private var noteDraft = ""
     private let bottomAnchorID = "thread-bottom-anchor"
@@ -73,15 +80,17 @@ struct ThreadView: View {
         Color(red: 0.38, green: 0.24, blue: 0.18),
     ]
     private static let smsDummyProjects: [SMSProjectAssignment] = [
-        SMSProjectAssignment(name: "Hurley Residence", colorIndex: 0),
-        SMSProjectAssignment(name: "Woodbery Residence", colorIndex: 1),
-        SMSProjectAssignment(name: "Winship Residence", colorIndex: 2),
-        SMSProjectAssignment(name: "Moss Residence", colorIndex: 3),
-        SMSProjectAssignment(name: "Young Residence", colorIndex: 4),
+        SMSProjectAssignment(projectId: nil, name: "Hurley Residence", colorIndex: 0),
+        SMSProjectAssignment(projectId: nil, name: "Woodbery Residence", colorIndex: 1),
+        SMSProjectAssignment(projectId: nil, name: "Winship Residence", colorIndex: 2),
+        SMSProjectAssignment(projectId: nil, name: "Moss Residence", colorIndex: 3),
+        SMSProjectAssignment(projectId: nil, name: "Young Residence", colorIndex: 4),
     ]
-    private static let unknownProject = SMSProjectAssignment(name: "Unknown", colorIndex: nil)
-    private static var smsMenuProjects: [SMSProjectAssignment] {
-        smsDummyProjects + [unknownProject]
+    private var reviewProjectOptions: [SMSProjectAssignment] {
+        guard !viewModel.reviewProjects.isEmpty else { return [] }
+        return viewModel.reviewProjects.enumerated().map { index, project in
+            SMSProjectAssignment(projectId: project.id, name: project.name, colorIndex: index)
+        }
     }
 
     // MARK: - Derived display groups
@@ -95,6 +104,7 @@ struct ThreadView: View {
         var smsIndex = 0
         var pendingSmsEntries: [SMSEntry] = []
         var pendingSmsAssignment: SMSProjectAssignment?
+        var pendingSmsGroupKey: String?
 
         func flushPending() {
             guard let header = pendingHeader else { return }
@@ -108,6 +118,7 @@ struct ThreadView: View {
             groups.append(.smsGroup(entries: pendingSmsEntries, assignment: pendingSmsAssignment))
             pendingSmsEntries = []
             pendingSmsAssignment = nil
+            pendingSmsGroupKey = nil
         }
 
         for item in viewModel.threadItems {
@@ -131,15 +142,18 @@ struct ThreadView: View {
                 if let override = smsOverrides[entry.messageId] {
                     assignment = override
                 }
+                let groupKey = smsGroupKey(for: entry, assignment: assignment)
                 if pendingSmsEntries.isEmpty {
                     pendingSmsAssignment = assignment
                     pendingSmsEntries = [entry]
-                } else if pendingSmsAssignment?.id == assignment?.id {
+                    pendingSmsGroupKey = groupKey
+                } else if pendingSmsGroupKey == groupKey {
                     pendingSmsEntries.append(entry)
                 } else {
                     flushSmsGroup()
                     pendingSmsAssignment = assignment
                     pendingSmsEntries = [entry]
+                    pendingSmsGroupKey = groupKey
                 }
                 smsIndex += 1
 
@@ -179,6 +193,23 @@ struct ThreadView: View {
                             .padding(.vertical, 8)
                     }
 
+                    let missingCount = missingAttributions(in: groups)
+                    if missingCount > 0 {
+                        HStack(spacing: 8) {
+                            Image(systemName: "exclamationmark.triangle.fill")
+                            Text("\(missingCount) attribution\(missingCount == 1 ? "" : "s") still missing in this thread")
+                                .font(.caption)
+                                .fontWeight(.semibold)
+                            Spacer()
+                        }
+                        .foregroundStyle(Color(red: 0.95, green: 0.62, blue: 0.23))
+                        .padding(.horizontal, 12)
+                        .padding(.vertical, 8)
+                        .background(Color(red: 0.20, green: 0.12, blue: 0.05), in: RoundedRectangle(cornerRadius: 10))
+                        .padding(.horizontal, 16)
+                        .padding(.bottom, 10)
+                    }
+
                     ForEach(Array(groups.enumerated()), id: \.element.id) { index, group in
 
                         // Date separator when the calendar date changes between items.
@@ -195,6 +226,25 @@ struct ThreadView: View {
                                 turns: turns,
                                 contactName: header.contactName ?? contact.name,
                                 viewModel: viewModel,
+                                projectOptions: reviewProjectOptions,
+                                spanOverrides: spanOverrides,
+                                onAssignSpanProject: { span, selectedProject in
+                                    spanOverrides[span.spanId] = selectedProject
+                                    guard let queueId = span.reviewQueueId else { return }
+                                    guard let projectId = selectedProject.projectId else {
+                                        viewModel.error = "Project selection unavailable for this span."
+                                        return
+                                    }
+                                    Task {
+                                        let didResolve = await viewModel.resolveAttribution(
+                                            reviewQueueId: queueId,
+                                            projectId: projectId
+                                        )
+                                        if !didResolve {
+                                            spanOverrides.removeValue(forKey: span.spanId)
+                                        }
+                                    }
+                                },
                                 onAddNote: { title, targets in
                                     openNoteEditor(title: title, targets: targets)
                                 }
@@ -208,10 +258,37 @@ struct ThreadView: View {
                                 assignment: assignment,
                                 stripeColor: stripeColor(for: assignment),
                                 stripeLabel: assignment?.name,
-                                projectOptions: Self.smsMenuProjects,
+                                unresolvedCount: unresolvedSMSCount(in: entries),
+                                projectOptions: reviewProjectOptions,
                                 onAssignProject: { selectedProject in
                                     for id in entries.map(\.messageId) {
                                         smsOverrides[id] = selectedProject
+                                    }
+                                    guard let projectId = selectedProject.projectId else {
+                                        viewModel.error = "Pick a project-backed option to apply attribution."
+                                        return
+                                    }
+                                    let queueIds = entries
+                                        .compactMap { entry -> String? in
+                                            guard entry.needsAttribution else { return nil }
+                                            return entry.reviewQueueId
+                                        }
+                                    guard !queueIds.isEmpty else { return }
+                                    Task {
+                                        let didResolve = await viewModel.resolveAttributions(
+                                            reviewQueueIds: queueIds,
+                                            projectId: projectId
+                                        )
+                                        if !didResolve {
+                                            for id in entries.map(\.messageId) {
+                                                smsOverrides.removeValue(forKey: id)
+                                            }
+                                        }
+                                    }
+                                },
+                                onOpenPicker: {
+                                    if reviewProjectOptions.isEmpty {
+                                        viewModel.error = "Project list still loading. Pull to refresh and try again."
                                     }
                                 },
                                 onAddNote: {
@@ -240,7 +317,10 @@ struct ThreadView: View {
             .refreshable {
                 hasScrolledToLatest = false
                 didTriggerTopPagination = false
+                hasUserScrolledThread = false
+                lastObservedTopOffset = nil
                 await viewModel.loadThread(contactId: contact.contactId)
+                await viewModel.loadReviewProjectsIfNeeded()
                 for _ in 0..<2 {
                     withAnimation(.none) {
                         proxy.scrollTo(bottomAnchorID, anchor: .bottom)
@@ -249,6 +329,12 @@ struct ThreadView: View {
                 }
                 hasScrolledToLatest = true
             }
+            .simultaneousGesture(
+                DragGesture(minimumDistance: 2)
+                    .onChanged { _ in
+                        hasUserScrolledThread = true
+                    }
+            )
             .navigationTitle(contact.name)
             .navigationBarTitleDisplayMode(.inline)
             .toolbarBackground(Color.black, for: .navigationBar)
@@ -272,12 +358,15 @@ struct ThreadView: View {
             .task(id: contact.contactId) {
                 hasScrolledToLatest = false
                 didTriggerTopPagination = false
+                hasUserScrolledThread = false
+                lastObservedTopOffset = nil
                 viewModel.currentContact = contact
                 viewModel.threadItems = []
                 // Subscribe FIRST so no Realtime events are missed during REST fetch
                 await viewModel.startClaimGradeSubscription(contactId: contact.contactId)
                 await viewModel.startInteractionsSubscription(contactId: contact.contactId)
                 await viewModel.loadThread(contactId: contact.contactId)
+                await viewModel.loadReviewProjectsIfNeeded()
                 for _ in 0..<3 {
                     if Task.isCancelled { return }
                     withAnimation(.none) {
@@ -288,18 +377,26 @@ struct ThreadView: View {
                 hasScrolledToLatest = true
             }
             .onChange(of: viewModel.threadItems.count) { _, newCount in
-                guard newCount > 0, !hasScrolledToLatest else { return }
-                withAnimation(.none) {
-                    proxy.scrollTo(bottomAnchorID, anchor: .bottom)
+                guard newCount > 0 else { return }
+                if !hasScrolledToLatest || !hasUserScrolledThread {
+                    withAnimation(.none) {
+                        proxy.scrollTo(bottomAnchorID, anchor: .bottom)
+                    }
+                    hasScrolledToLatest = true
                 }
-                hasScrolledToLatest = true
             }
             .onPreferenceChange(ThreadTopOffsetPreferenceKey.self) { topY in
+                let previousTopY = lastObservedTopOffset
+                lastObservedTopOffset = topY
+
                 guard hasScrolledToLatest else { return }
+                guard hasUserScrolledThread else { return }
                 if topY <= topLoadThreshold - 80 {
                     didTriggerTopPagination = false
                     return
                 }
+                guard let previousTopY else { return }
+                guard topY > previousTopY + 1 else { return }
                 guard topY > topLoadThreshold else { return }
                 guard !didTriggerTopPagination else { return }
                 didTriggerTopPagination = true
@@ -333,6 +430,35 @@ struct ThreadView: View {
 
     // MARK: - Date separator logic
 
+    private func missingAttributions(in groups: [DisplayGroup]) -> Int {
+        groups.reduce(0) { partial, group in
+            switch group {
+            case .callGroup(let header, _):
+                let optimisticResolved = header.spans.filter {
+                    $0.needsAttribution && spanOverrides[$0.spanId] != nil
+                }.count
+                return partial + max(0, header.pendingAttributionCount - optimisticResolved)
+            case .smsGroup(let entries, _):
+                let pendingQueueIds = Set(
+                    entries.compactMap { entry -> String? in
+                        guard entry.needsAttribution else { return nil }
+                        return entry.reviewQueueId
+                    }
+                )
+                let optimisticResolvedQueueIds = Set(
+                    entries.compactMap { entry -> String? in
+                        guard
+                            entry.needsAttribution,
+                            smsOverrides[entry.messageId]?.projectId != nil
+                        else { return nil }
+                        return entry.reviewQueueId
+                    }
+                )
+                return partial + max(0, pendingQueueIds.count - optimisticResolvedQueueIds.count)
+            }
+        }
+    }
+
     private func shouldShowDateSeparator(at index: Int, in groups: [DisplayGroup]) -> Bool {
         guard let currentDate = groups[index].eventAtDate else { return false }
         if index == 0 { return true }
@@ -343,6 +469,10 @@ struct ThreadView: View {
     // MARK: - SMS zebra striping
 
     private func smsProjectAssignment(for entry: SMSEntry, smsIndex: Int) -> SMSProjectAssignment? {
+        if entry.needsAttribution {
+            return SMSProjectAssignment(projectId: nil, name: "Needs Attribution", colorIndex: nil)
+        }
+
         let contactName = contact.name.lowercased()
         guard contactName.contains("hetzer") else { return nil }
 
@@ -350,8 +480,39 @@ struct ThreadView: View {
         return Self.smsDummyProjects[segmentIndex]
     }
 
+    private func smsGroupKey(for entry: SMSEntry, assignment: SMSProjectAssignment?) -> String {
+        let assignmentKey = assignment?.id ?? "none"
+        if assignment?.projectId != nil {
+            return assignmentKey
+        }
+        let queueKey = entry.reviewQueueId ?? "none"
+        return "\(assignmentKey)|\(queueKey)"
+    }
+
+    private func unresolvedSMSCount(in entries: [SMSEntry]) -> Int {
+        let pendingQueueIds = Set(
+            entries.compactMap { entry -> String? in
+                guard entry.needsAttribution else { return nil }
+                return entry.reviewQueueId
+            }
+        )
+        let optimisticResolvedQueueIds = Set(
+            entries.compactMap { entry -> String? in
+                guard
+                    entry.needsAttribution,
+                    smsOverrides[entry.messageId]?.projectId != nil
+                else { return nil }
+                return entry.reviewQueueId
+            }
+        )
+        return max(0, pendingQueueIds.count - optimisticResolvedQueueIds.count)
+    }
+
     private func stripeColor(for assignment: SMSProjectAssignment?) -> Color? {
         guard let assignment else { return nil }
+        if assignment.name == "Needs Attribution" {
+            return Color(red: 0.46, green: 0.29, blue: 0.08)
+        }
         guard let colorIndex = assignment.colorIndex else {
             return Color(red: 0.22, green: 0.22, blue: 0.24)
         }
@@ -366,7 +527,7 @@ struct ThreadView: View {
 }
 
 private struct ThreadTopOffsetPreferenceKey: PreferenceKey {
-    static var defaultValue: CGFloat = -.greatestFiniteMagnitude
+    static let defaultValue: CGFloat = -.greatestFiniteMagnitude
 
     static func reduce(value: inout CGFloat, nextValue: () -> CGFloat) {
         value = nextValue()
@@ -380,7 +541,7 @@ private struct ThreadTopOffsetPreferenceKey: PreferenceKey {
 private struct DateSeparatorRow: View {
     let date: Date?
 
-    nonisolated(unsafe) private static let timeFormatter: DateFormatter = {
+    private static let timeFormatter: DateFormatter = {
         let f = DateFormatter()
         f.timeStyle = .short
         return f
@@ -441,10 +602,14 @@ private struct CallCard: View {
     /// Resolved contact name ("Zack ↔ <contactName>").
     let contactName: String
     var viewModel: ThreadViewModel
+    let projectOptions: [SMSProjectAssignment]
+    let spanOverrides: [UUID: SMSProjectAssignment]
+    let onAssignSpanProject: (SpanEntry, SMSProjectAssignment) -> Void
     let onAddNote: (String, [ThreadNoteTarget]) -> Void
 
     @State private var transcriptExpanded = false
     @State private var claimsExpanded = false
+    @State private var activePendingSpan: SpanEntry?
 
     private var isInbound: Bool {
         header.direction?.lowercased() == "inbound"
@@ -456,7 +621,7 @@ private struct CallCard: View {
             : Color(red: 0, green: 0.48, blue: 1.0)
     }
 
-    nonisolated(unsafe) private static let timeFormatter: DateFormatter = {
+    private static let timeFormatter: DateFormatter = {
         let f = DateFormatter()
         f.timeStyle = .short
         return f
@@ -470,6 +635,18 @@ private struct CallCard: View {
     /// "Zack ↔ Randy Booth"
     private var participantsLine: String {
         "Zack \u{2194} \(contactName)"
+    }
+
+    private var unresolvedCount: Int {
+        let pending = header.pendingAttributionCount
+        let optimisticResolved = header.spans.filter {
+            $0.needsAttribution && spanOverrides[$0.spanId] != nil
+        }.count
+        return max(0, pending - optimisticResolved)
+    }
+
+    private var firstPendingSpan: SpanEntry? {
+        header.spans.first { $0.needsAttribution }
     }
 
     var body: some View {
@@ -505,6 +682,37 @@ private struct CallCard: View {
                     .foregroundStyle(.secondary)
             }
 
+            if unresolvedCount > 0 {
+                HStack(spacing: 6) {
+                    Image(systemName: "exclamationmark.triangle.fill")
+                        .font(.caption2)
+                    Text("\(unresolvedCount) missing attribution\(unresolvedCount == 1 ? "" : "s")")
+                        .font(.caption)
+                        .fontWeight(.semibold)
+                    if let firstPendingSpan, !projectOptions.isEmpty {
+                        Spacer(minLength: 8)
+                        Button("Assign") {
+                            activePendingSpan = firstPendingSpan
+                        }
+                        .font(.caption2)
+                        .fontWeight(.bold)
+                        .padding(.horizontal, 8)
+                        .padding(.vertical, 4)
+                        .background(Color.black.opacity(0.22), in: Capsule())
+                        .buttonStyle(.plain)
+                    } else if projectOptions.isEmpty {
+                        Spacer(minLength: 8)
+                        Text("Loading projects…")
+                            .font(.caption2)
+                            .foregroundStyle(Color(.systemGray3))
+                    }
+                }
+                .foregroundStyle(Color(red: 0.95, green: 0.62, blue: 0.23))
+                .padding(.horizontal, 10)
+                .padding(.vertical, 6)
+                .background(Color(red: 0.33, green: 0.20, blue: 0.07), in: Capsule())
+            }
+
             // --- Participants line ---
             HStack(spacing: 4) {
                 Image(systemName: "person.2")
@@ -529,17 +737,16 @@ private struct CallCard: View {
                 Divider()
                     .overlay(Color(.systemGray4))
 
-                Text("Project Spans (\(header.spans.count))")
-                    .font(.caption)
-                    .fontWeight(.semibold)
-                    .foregroundStyle(.secondary)
-                    .textCase(.uppercase)
-
                 ForEach(Array(header.spans.sorted { $0.spanIndex < $1.spanIndex }.enumerated()), id: \.element.id) { idx, span in
                     SpanBlock(
                         span: span,
                         colorIndex: idx,
                         contactName: contactName,
+                        selectedAssignment: spanOverrides[span.spanId],
+                        projectOptions: projectOptions,
+                        onSelectProject: { selected in
+                            onAssignSpanProject(span, selected)
+                        },
                         onAddNote: onAddNote
                     )
                 }
@@ -659,6 +866,22 @@ private struct CallCard: View {
                 .frame(width: 3)
         }
         .clipShape(RoundedRectangle(cornerRadius: 14, style: .continuous))
+        .sheet(item: $activePendingSpan) { span in
+            ProjectAssignmentSheet(
+                title: "Assign Project",
+                currentAssignment: spanOverrides[span.spanId],
+                options: projectOptions,
+                onSelect: { selected in
+                    onAssignSpanProject(span, selected)
+                },
+                onAddNote: {
+                    onAddNote(
+                        "Notes — Conversation segment",
+                        [ThreadNoteTarget(type: .span, id: span.spanId.uuidString)]
+                    )
+                }
+            )
+        }
     }
 
     // MARK: - Speaker label helpers
@@ -685,10 +908,12 @@ private struct SpanBlock: View {
     let span: SpanEntry
     let colorIndex: Int
     let contactName: String
+    let selectedAssignment: SMSProjectAssignment?
+    let projectOptions: [SMSProjectAssignment]
+    let onSelectProject: (SMSProjectAssignment) -> Void
     let onAddNote: (String, [ThreadNoteTarget]) -> Void
 
     @State private var isExpanded = false
-    @State private var assignedProject: SMSProjectAssignment?
     @State private var showProjectSheet = false
 
     private static let spanColors: [Color] = [
@@ -700,20 +925,29 @@ private struct SpanBlock: View {
     ]
 
     private static let baseProjects: [SMSProjectAssignment] = [
-        SMSProjectAssignment(name: "Hurley Residence", colorIndex: 0),
-        SMSProjectAssignment(name: "Woodbery Residence", colorIndex: 1),
-        SMSProjectAssignment(name: "Winship Residence", colorIndex: 2),
-        SMSProjectAssignment(name: "Skelton Residence", colorIndex: 3),
-        SMSProjectAssignment(name: "Moss Residence", colorIndex: 4),
-        SMSProjectAssignment(name: "Young Residence", colorIndex: 5),
+        SMSProjectAssignment(projectId: nil, name: "Hurley Residence", colorIndex: 0),
+        SMSProjectAssignment(projectId: nil, name: "Woodbery Residence", colorIndex: 1),
+        SMSProjectAssignment(projectId: nil, name: "Winship Residence", colorIndex: 2),
+        SMSProjectAssignment(projectId: nil, name: "Skelton Residence", colorIndex: 3),
+        SMSProjectAssignment(projectId: nil, name: "Moss Residence", colorIndex: 4),
+        SMSProjectAssignment(projectId: nil, name: "Young Residence", colorIndex: 5),
     ]
-    private static let unknownProject = SMSProjectAssignment(name: "Unknown", colorIndex: nil)
-    private static var menuProjects: [SMSProjectAssignment] {
-        baseProjects + [unknownProject]
-    }
 
     private var currentProject: SMSProjectAssignment {
-        assignedProject ?? Self.baseProjects[colorIndex % Self.baseProjects.count]
+        if let selectedAssignment {
+            return selectedAssignment
+        }
+        if span.needsAttribution {
+            return SMSProjectAssignment(projectId: nil, name: "Unassigned", colorIndex: nil)
+        }
+        return Self.baseProjects[colorIndex % Self.baseProjects.count]
+    }
+
+    private var displayProjectName: String? {
+        if span.needsAttribution && selectedAssignment == nil {
+            return nil
+        }
+        return currentProject.name
     }
 
     private var color: Color {
@@ -730,30 +964,18 @@ private struct SpanBlock: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 4) {
-            // Header: always visible (project name, span index, chevron)
+            // Header: always visible (project marker and chevron).
             HStack(spacing: 6) {
                 Circle()
                     .fill(color)
                     .frame(width: 8, height: 8)
-                Text(currentProject.name)
-                    .font(.caption)
-                    .fontWeight(.semibold)
-                    .foregroundStyle(color)
-                Spacer()
-                Text("Span \(span.spanIndex + 1)")
-                    .font(.caption2)
-                    .foregroundStyle(Color(.systemGray2))
-                Button {
-                    showProjectSheet = true
-                } label: {
-                    Image(systemName: "slider.horizontal.3")
-                        .font(.caption2)
-                        .foregroundStyle(Color(.systemGray2))
-                        .padding(.horizontal, 8)
-                        .padding(.vertical, 6)
-                        .background(Color.black.opacity(0.18), in: Capsule())
+                if let displayProjectName {
+                    Text(displayProjectName)
+                        .font(.caption)
+                        .fontWeight(.semibold)
+                        .foregroundStyle(color)
                 }
-                .buttonStyle(.plain)
+                Spacer()
                 Image(systemName: isExpanded ? "chevron.up" : "chevron.down")
                     .font(.caption2)
                     .foregroundStyle(Color(.systemGray3))
@@ -803,17 +1025,15 @@ private struct SpanBlock: View {
         }
         .sheet(isPresented: $showProjectSheet) {
             ProjectAssignmentSheet(
-                title: "Assign Span \(span.spanIndex + 1)",
+                title: "Assign Project",
                 currentAssignment: currentProject,
-                options: Self.menuProjects,
+                options: projectOptions,
                 onSelect: { selected in
-                    withAnimation(.easeInOut(duration: 0.2)) {
-                        assignedProject = selected
-                    }
+                    onSelectProject(selected)
                 },
                 onAddNote: {
                     onAddNote(
-                        "Notes — Span \(span.spanIndex + 1)",
+                        "Notes — Conversation segment",
                         [ThreadNoteTarget(type: .span, id: span.spanId.uuidString)]
                     )
                 }
@@ -830,8 +1050,10 @@ private struct SMSStripeGroup: View {
     let assignment: SMSProjectAssignment?
     let stripeColor: Color?
     let stripeLabel: String?
+    let unresolvedCount: Int
     let projectOptions: [SMSProjectAssignment]
     let onAssignProject: (SMSProjectAssignment) -> Void
+    let onOpenPicker: () -> Void
     let onAddNote: () -> Void
 
     @State private var showProjectSheet = false
@@ -857,6 +1079,19 @@ private struct SMSStripeGroup: View {
                     .padding(.bottom, 4)
                 }
 
+                if unresolvedCount > 0 {
+                    HStack(spacing: 6) {
+                        Image(systemName: "exclamationmark.triangle.fill")
+                            .font(.caption2)
+                        Text("\(unresolvedCount) missing attribution\(unresolvedCount == 1 ? "" : "s")")
+                            .font(.caption2)
+                            .fontWeight(.semibold)
+                    }
+                    .foregroundStyle(Color(red: 0.95, green: 0.62, blue: 0.23))
+                    .padding(.horizontal, 10)
+                    .padding(.bottom, 4)
+                }
+
                 ForEach(Array(entries.enumerated()), id: \.element.id) { idx, entry in
                     SMSBubble(entry: entry, showTimestamp: true)
                         .padding(.bottom, bubbleSpacing(at: idx))
@@ -866,6 +1101,7 @@ private struct SMSStripeGroup: View {
         .frame(maxWidth: .infinity, alignment: .leading)
         .overlay(alignment: .topTrailing) {
             Button {
+                onOpenPicker()
                 showProjectSheet = true
             } label: {
                 Image(systemName: "slider.horizontal.3")
@@ -881,6 +1117,7 @@ private struct SMSStripeGroup: View {
         }
         .contentShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
         .onLongPressGesture(minimumDuration: 0.25) {
+            onOpenPicker()
             showProjectSheet = true
         }
         .sheet(isPresented: $showProjectSheet) {
@@ -925,21 +1162,26 @@ private struct ProjectAssignmentSheet: View {
         NavigationStack {
             List {
                 Section("Project") {
-                    ForEach(options) { option in
-                        Button {
-                            onSelect(option)
-                            dismiss()
-                        } label: {
-                            HStack(spacing: 10) {
-                                Circle()
-                                    .fill(color(for: option))
-                                    .frame(width: 9, height: 9)
-                                Text(option.name)
-                                    .foregroundStyle(.primary)
-                                Spacer()
-                                if currentAssignment?.id == option.id {
-                                    Image(systemName: "checkmark")
-                                        .foregroundStyle(.blue)
+                    if options.isEmpty {
+                        Text("No projects available yet.")
+                            .foregroundStyle(.secondary)
+                    } else {
+                        ForEach(options) { option in
+                            Button {
+                                onSelect(option)
+                                dismiss()
+                            } label: {
+                                HStack(spacing: 10) {
+                                    Circle()
+                                        .fill(color(for: option))
+                                        .frame(width: 9, height: 9)
+                                    Text(option.name)
+                                        .foregroundStyle(.primary)
+                                    Spacer()
+                                    if currentAssignment?.id == option.id {
+                                        Image(systemName: "checkmark")
+                                            .foregroundStyle(.blue)
+                                    }
                                 }
                             }
                         }

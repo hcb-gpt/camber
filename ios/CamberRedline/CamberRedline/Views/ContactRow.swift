@@ -6,7 +6,6 @@ struct ContactRow: View {
     // MARK: - Layout constants
 
     private let avatarSize: CGFloat = 44
-    private let metricFont = Font.system(size: 12, weight: .medium).monospacedDigit()
 
     // MARK: - Body
 
@@ -37,64 +36,30 @@ struct ContactRow: View {
                     .font(.system(size: 14))
                     .foregroundStyle(Color(white: 0.42))
                     .lineLimit(1)
-
-                // Row 3: metrics line
-                HStack(spacing: 12) {
-                    if contact.callCount > 0 {
-                        metricLabel(icon: "phone", count: contact.callCount)
-                    }
-
-                    if contact.smsCount > 0 {
-                        metricLabel(icon: "message", count: contact.smsCount)
-                    }
-
-                    if contact.ungradedCount > 0 {
-                        HStack(spacing: 4) {
-                            Circle()
-                                .fill(Color(red: 0.75, green: 0.22, blue: 0.17))
-                                .frame(width: 6, height: 6)
-                            Text("\(contact.ungradedCount)")
-                                .font(metricFont)
-                                .foregroundStyle(Color(red: 0.75, green: 0.22, blue: 0.17))
-                        }
-                    }
-                }
             }
         }
         .padding(.vertical, 10)
     }
 
-    // MARK: - Metric label
-
-    private func metricLabel(icon: String, count: Int) -> some View {
-        HStack(spacing: 4) {
-            Image(systemName: icon)
-                .font(.system(size: 11, weight: .regular))
-                .foregroundStyle(Color(white: 0.32))
-            Text("\(count)")
-                .font(metricFont)
-                .foregroundStyle(Color(white: 0.42))
-        }
-    }
-
     // MARK: - Initials Avatar
 
     private var initialsAvatar: some View {
-        let words = contact.name
-            .split(separator: " ")
-            .filter { $0.first?.isLetter == true }
-        let initials = words
-            .prefix(2)
-            .compactMap { $0.first.map(String.init) }
-            .joined()
+        let count = contact.ungradedCount
+        let label = count > 99 ? "99+" : "\(count)"
 
-        return Text(initials)
-            .font(.system(size: 15, weight: .semibold))
-            .foregroundStyle(Color(white: 0.52))
+        return Text(label)
+            .font(.system(size: label.count > 2 ? 12 : 15, weight: .semibold).monospacedDigit())
+            .foregroundStyle(count > 0 ? Color(red: 0.95, green: 0.62, blue: 0.23) : Color(white: 0.52))
             .frame(width: avatarSize, height: avatarSize)
-            .background(Color(white: 0.12))
+            .background(count > 0 ? Color(red: 0.20, green: 0.12, blue: 0.05) : Color(white: 0.12))
             .clipShape(Circle())
-            .overlay(Circle().strokeBorder(Color(white: 0.20), lineWidth: 0.5))
+            .overlay(
+                Circle()
+                    .strokeBorder(
+                        count > 0 ? Color(red: 0.43, green: 0.26, blue: 0.11) : Color(white: 0.20),
+                        lineWidth: 0.5
+                    )
+            )
     }
 
     // MARK: - Preview Text
@@ -107,6 +72,18 @@ struct ContactRow: View {
             }
             return snippet
         }
+
+        if let lastActivity = contact.lastActivity, !lastActivity.isEmpty {
+            let interactionType = contact.lastInteractionType?.lowercased()
+            if interactionType == "call" {
+                return "Phone call"
+            }
+            if interactionType == "sms" {
+                return "Text message"
+            }
+            return "Recent activity"
+        }
+
         return "No recent activity"
     }
 
@@ -130,14 +107,14 @@ struct ContactRow: View {
         return f
     }()
 
-    nonisolated(unsafe) private static let postgresFormatter: DateFormatter = {
+    private static let postgresFormatter: DateFormatter = {
         let f = DateFormatter()
         f.dateFormat = "yyyy-MM-dd HH:mm:ssxx"
         f.locale = Locale(identifier: "en_US_POSIX")
         return f
     }()
 
-    nonisolated(unsafe) private static let shortDateFormatter: DateFormatter = {
+    private static let shortDateFormatter: DateFormatter = {
         let f = DateFormatter()
         f.dateFormat = "MMM d"
         return f

@@ -13,9 +13,14 @@ final class SupabaseService {
     private let edgeFunctionBaseURL = URL(
         string: "https://rjhdwidddtfetbwqolof.supabase.co/functions/v1/redline-thread"
     )!
+    private let reviewResolveURL = URL(
+        string: "https://rjhdwidddtfetbwqolof.supabase.co/functions/v1/review-resolve"
+    )!
 
     private let anonKey =
         "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InJqaGR3aWRkZHRmZXRid3FvbG9mIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NjUxMTYwNDQsImV4cCI6MjA4MDY5MjA0NH0.m0BArfDxAMQrX2-50_IgircX_SwWLe5VccxewGmuWio"
+    private let reviewResolveAuthEmail = "redline_ios_dev3_resolver@example.com"
+    private let reviewResolveAuthPassword = "RedlineDev3!2026"
 
     private init() {
         client = SupabaseClient(
@@ -148,6 +153,52 @@ final class SupabaseService {
         }
     }
 
+    // MARK: - Resolve Review Queue Item (edge function: review-resolve)
+
+    func resolveReviewQueueItem(
+        reviewQueueId: String,
+        chosenProjectId: String,
+        notes: String? = nil,
+        source: String = "redline"
+    ) async throws -> ReviewResolveResponse {
+        let accessToken = try await reviewResolveAccessToken()
+
+        var request = URLRequest(url: reviewResolveURL)
+        request.httpMethod = "POST"
+        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        request.setValue("Bearer \(accessToken)", forHTTPHeaderField: "Authorization")
+        request.setValue(anonKey, forHTTPHeaderField: "apikey")
+        request.httpBody = try JSONEncoder().encode(
+            ReviewResolveRequest(
+                reviewQueueId: reviewQueueId,
+                chosenProjectId: chosenProjectId,
+                notes: notes,
+                source: source
+            )
+        )
+
+        let (data, response) = try await URLSession.shared.data(for: request)
+        guard let http = response as? HTTPURLResponse else {
+            throw ServiceError.invalidResponse
+        }
+
+        let payload = try? JSONDecoder().decode(ReviewResolveResponse.self, from: data)
+        let errorMessage = payload?.error
+            ?? payload?.detail
+            ?? String(data: data, encoding: .utf8)
+            ?? "Review resolve failed"
+
+        guard (200...299).contains(http.statusCode) else {
+            throw ServiceError.apiError(errorMessage)
+        }
+
+        guard payload?.ok == true else {
+            throw ServiceError.apiError(errorMessage)
+        }
+
+        return payload!
+    }
+
     // MARK: - Helpers
 
     private func validateHTTPResponse(_ response: URLResponse) throws {
@@ -156,6 +207,28 @@ final class SupabaseService {
         }
         guard (200...299).contains(http.statusCode) else {
             throw ServiceError.httpError(statusCode: http.statusCode)
+        }
+    }
+
+    private func reviewResolveAccessToken() async throws -> String {
+        if let currentSession = client.auth.currentSession, !currentSession.isExpired {
+            return currentSession.accessToken
+        }
+
+        if let refreshedSession = try? await client.auth.session {
+            return refreshedSession.accessToken
+        }
+
+        do {
+            let session = try await client.auth.signIn(
+                email: reviewResolveAuthEmail,
+                password: reviewResolveAuthPassword
+            )
+            return session.accessToken
+        } catch {
+            throw ServiceError.apiError(
+                "Review resolve authentication failed: \(error.localizedDescription)"
+            )
         }
     }
 }
@@ -185,6 +258,38 @@ struct ThreadResponse: Decodable {
     let contact: ThreadContactInfo
     let thread: [RawThreadItem]
     let pagination: ThreadPagination
+}
+
+struct ReviewResolveResponse: Decodable {
+    let ok: Bool?
+    let error: String?
+    let detail: String?
+    let reviewQueueId: String?
+    let chosenProjectId: String?
+    let wasAlreadyResolved: Bool?
+
+    enum CodingKeys: String, CodingKey {
+        case ok
+        case error
+        case detail
+        case reviewQueueId = "review_queue_id"
+        case chosenProjectId = "chosen_project_id"
+        case wasAlreadyResolved = "was_already_resolved"
+    }
+}
+
+private struct ReviewResolveRequest: Encodable {
+    let reviewQueueId: String
+    let chosenProjectId: String
+    let notes: String?
+    let source: String
+
+    enum CodingKeys: String, CodingKey {
+        case reviewQueueId = "review_queue_id"
+        case chosenProjectId = "chosen_project_id"
+        case notes
+        case source
+    }
 }
 
 // MARK: - RawThreadItem (polymorphic decoding)

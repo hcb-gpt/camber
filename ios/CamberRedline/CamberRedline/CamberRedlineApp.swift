@@ -75,6 +75,6 @@ struct CamberRedlineApp: App {
 
     private func requestBadgePermission() async {
         let center = UNUserNotificationCenter.current()
-        try? await center.requestAuthorization(options: [.badge])
+        _ = try? await center.requestAuthorization(options: [.badge])
     }
 }

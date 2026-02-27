@@ -86,6 +86,11 @@ struct ContactListView: View {
                         .padding()
                 }
             }
+            .onReceive(NotificationCenter.default.publisher(for: .redlineAttributionDidResolve)) { _ in
+                Task {
+                    await contactListViewModel.loadContacts()
+                }
+            }
         }
         .preferredColorScheme(.dark)
     }
