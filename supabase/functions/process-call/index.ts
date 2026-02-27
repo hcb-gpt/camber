@@ -1,10 +1,16 @@
 /**
- * process-call Edge Function v4.3.12
+ * process-call Edge Function v4.3.13
  * Full v3.6 pipeline in Supabase - Ported from v4.0.22 context_assembly
  *
- * @version 4.3.12
+ * @version 4.3.13
  * @date 2026-02-27
  * @port context_assembly v4.0.22 - 6-source ranking, word boundaries, speaker stripping
+ *
+ * v4.3.13 CHANGES (zapier final cleanup):
+ * - Harden m1() fallback handling for Beside direct payloads:
+ *   - treat empty/null/template placeholder values as missing
+ *   - read interaction/name/phone fallback fields from signal.raw_event camelCase + snake_case
+ * - Build interaction_id from normalized payload first (prevents unknown_run_* when Beside id only exists in fallback fields)
  *
  * v4.3.12 CHANGES (transcript rescue):
  * - Add payload_text as transcript fallback in m1() normalization.
@@ -82,7 +88,7 @@ import { fireAndForget } from "../_shared/lineage.ts";
 import { normalizePhoneForLookup } from "./phone_lookup.ts";
 import { resolveCallPartyPhones } from "./phone_direction.ts";
 
-const PROCESS_CALL_VERSION = "v4.3.12"; // adds payload_text transcript fallback
+const PROCESS_CALL_VERSION = "v4.3.13"; // zapier final cleanup + fallback hardening
 const GATE = { PASS: "PASS", SKIP: "SKIP", NEEDS_REVIEW: "NEEDS_REVIEW" };
 const ID_PATTERN = /^cll_[a-zA-Z0-9_]+$/;
 const SEGMENT_CALL_TIMEOUT_MS = Number(Deno.env.get("PROCESS_CALL_SEGMENT_TIMEOUT_MS") || "6000");
@@ -258,53 +264,98 @@ type CandidateProject = {
 // ORIGINAL HELPERS
 // ============================================================
 function m1(raw: any) {
+  const isMissing = (v: unknown) => {
+    if (v === null || v === undefined) return true;
+    if (typeof v === "string") {
+      const s = v.trim();
+      if (!s) return true;
+      if (s.toLowerCase() === "null" || s.toLowerCase() === "undefined") return true;
+      if (/^\{\{[^}]+\}\}$/.test(s)) return true; // unresolved zapier template token
+    }
+    return false;
+  };
   const a = { ...raw };
   const signal = a.signal && typeof a.signal === "object" ? a.signal : {};
   const rawEvent = signal.raw_event && typeof signal.raw_event === "object" ? signal.raw_event : {};
-  if (a.transcript_text && !a.transcript) a.transcript = a.transcript_text;
-  if (signal.transcript && !a.transcript) a.transcript = signal.transcript;
-  if (a.payload_text && !a.transcript) a.transcript = a.payload_text;
-  if (!a.interaction_id && a.call_id) a.interaction_id = a.call_id;
-  if (!a.interaction_id && signal.interaction_id) {
+  if (!isMissing(a.transcript_text) && isMissing(a.transcript)) a.transcript = a.transcript_text;
+  if (!isMissing(signal.transcript) && isMissing(a.transcript)) a.transcript = signal.transcript;
+  if (!isMissing(a.payload_text) && isMissing(a.transcript)) a.transcript = a.payload_text;
+  if (isMissing(a.interaction_id) && !isMissing(a.call_id)) a.interaction_id = a.call_id;
+  if (isMissing(a.interaction_id) && !isMissing(signal.interaction_id)) {
     a.interaction_id = signal.interaction_id;
   }
-  if (!a.direction && signal.direction) a.direction = signal.direction;
-  if (!a.direction && rawEvent.direction) a.direction = rawEvent.direction;
-  if (!a.from_phone_norm && signal.from_phone_norm) {
+  if (isMissing(a.interaction_id) && !isMissing(signal.call_id)) {
+    a.interaction_id = signal.call_id;
+  }
+  if (isMissing(a.interaction_id) && !isMissing(rawEvent.interaction_id)) {
+    a.interaction_id = rawEvent.interaction_id;
+  }
+  if (isMissing(a.interaction_id) && !isMissing(rawEvent.call_id)) {
+    a.interaction_id = rawEvent.call_id;
+  }
+  if (isMissing(a.interaction_id) && !isMissing(a.id)) a.interaction_id = a.id;
+  if (isMissing(a.interaction_id) && !isMissing(rawEvent.id)) a.interaction_id = rawEvent.id;
+  if (isMissing(a.direction) && !isMissing(signal.direction)) a.direction = signal.direction;
+  if (isMissing(a.direction) && !isMissing(rawEvent.direction)) a.direction = rawEvent.direction;
+  if (isMissing(a.from_phone_norm) && !isMissing(signal.from_phone_norm)) {
     a.from_phone_norm = signal.from_phone_norm;
   }
-  if (!a.to_phone_norm && signal.to_phone_norm) {
+  if (isMissing(a.to_phone_norm) && !isMissing(signal.to_phone_norm)) {
     a.to_phone_norm = signal.to_phone_norm;
   }
-  if (!a.from_phone_norm && rawEvent.from_phone_norm) {
+  if (isMissing(a.from_phone_norm) && !isMissing(rawEvent.from_phone_norm)) {
     a.from_phone_norm = rawEvent.from_phone_norm;
   }
-  if (!a.to_phone_norm && rawEvent.to_phone_norm) {
+  if (isMissing(a.to_phone_norm) && !isMissing(rawEvent.to_phone_norm)) {
     a.to_phone_norm = rawEvent.to_phone_norm;
   }
-  if (!a.from_phone && a.from_phone_norm) a.from_phone = a.from_phone_norm;
-  if (!a.to_phone && a.to_phone_norm) a.to_phone = a.to_phone_norm;
-  if (!a.owner_phone && signal.owner_phone_norm) {
+  if (isMissing(a.from_phone) && !isMissing(signal.from_phone)) a.from_phone = signal.from_phone;
+  if (isMissing(a.to_phone) && !isMissing(signal.to_phone)) a.to_phone = signal.to_phone;
+  if (isMissing(a.from_phone) && !isMissing(rawEvent.from_phone)) a.from_phone = rawEvent.from_phone;
+  if (isMissing(a.to_phone) && !isMissing(rawEvent.to_phone)) a.to_phone = rawEvent.to_phone;
+  if (isMissing(a.from_phone) && !isMissing(a.fromPhoneNumber)) a.from_phone = a.fromPhoneNumber;
+  if (isMissing(a.from_phone) && !isMissing(a.from_phone_number)) a.from_phone = a.from_phone_number;
+  if (isMissing(a.from_phone) && !isMissing(signal.fromPhoneNumber)) a.from_phone = signal.fromPhoneNumber;
+  if (isMissing(a.from_phone) && !isMissing(signal.from_phone_number)) a.from_phone = signal.from_phone_number;
+  if (isMissing(a.from_phone) && !isMissing(rawEvent.fromPhoneNumber)) a.from_phone = rawEvent.fromPhoneNumber;
+  if (isMissing(a.from_phone) && !isMissing(rawEvent.from_phone_number)) a.from_phone = rawEvent.from_phone_number;
+  if (isMissing(a.to_phone) && !isMissing(a.toPhoneNumber)) a.to_phone = a.toPhoneNumber;
+  if (isMissing(a.to_phone) && !isMissing(a.to_phone_number)) a.to_phone = a.to_phone_number;
+  if (isMissing(a.to_phone) && !isMissing(signal.toPhoneNumber)) a.to_phone = signal.toPhoneNumber;
+  if (isMissing(a.to_phone) && !isMissing(signal.to_phone_number)) a.to_phone = signal.to_phone_number;
+  if (isMissing(a.to_phone) && !isMissing(rawEvent.toPhoneNumber)) a.to_phone = rawEvent.toPhoneNumber;
+  if (isMissing(a.to_phone) && !isMissing(rawEvent.to_phone_number)) a.to_phone = rawEvent.to_phone_number;
+  if (isMissing(a.from_phone) && !isMissing(a.from_phone_norm)) a.from_phone = a.from_phone_norm;
+  if (isMissing(a.to_phone) && !isMissing(a.to_phone_norm)) a.to_phone = a.to_phone_norm;
+  if (isMissing(a.owner_phone) && !isMissing(signal.owner_phone_norm)) {
     a.owner_phone = signal.owner_phone_norm;
   }
-  if (!a.other_party_phone && signal.other_party_phone_norm) {
+  if (isMissing(a.other_party_phone) && !isMissing(signal.other_party_phone_norm)) {
     a.other_party_phone = signal.other_party_phone_norm;
   }
-  // --- Beside camelCase passthrough normalization (STRAT-VP directive 2026-02-27) ---
-  if (!a.interaction_id && a.id) a.interaction_id = a.id;
-  if (!a.other_party_name && a.fromName) a.other_party_name = a.fromName;
-  if (!a.other_party_name && a.from_name) a.other_party_name = a.from_name;
-  if (!a.other_party_name && a.toName) a.other_party_name = a.toName;
-  if (!a.other_party_name && a.to_name) a.other_party_name = a.to_name;
-  if (!a.from_phone && a.fromPhoneNumber) a.from_phone = a.fromPhoneNumber;
-  if (!a.from_phone && a.from_phone_number) a.from_phone = a.from_phone_number;
-  if (!a.to_phone && a.toPhoneNumber) a.to_phone = a.toPhoneNumber;
-  if (!a.to_phone && a.to_phone_number) a.to_phone = a.to_phone_number;
-  if (!a.event_at_utc && a.createdAt) a.event_at_utc = a.createdAt;
-  if (!a.event_at_utc && a.initiatedAt) a.event_at_utc = a.initiatedAt;
-  if (!a.beside_contact_id && a.contactId) a.beside_contact_id = a.contactId;
-  if (!a.beside_contact_id && a.contact_id) a.beside_contact_id = a.contact_id;
-  if (!a.duration_seconds && a.durationMs) a.duration_seconds = Math.round(Number(a.durationMs) / 1000);
+  if (isMissing(a.other_party_name) && !isMissing(a.fromName)) a.other_party_name = a.fromName;
+  if (isMissing(a.other_party_name) && !isMissing(a.from_name)) a.other_party_name = a.from_name;
+  if (isMissing(a.other_party_name) && !isMissing(signal.fromName)) a.other_party_name = signal.fromName;
+  if (isMissing(a.other_party_name) && !isMissing(signal.from_name)) a.other_party_name = signal.from_name;
+  if (isMissing(a.other_party_name) && !isMissing(rawEvent.fromName)) a.other_party_name = rawEvent.fromName;
+  if (isMissing(a.other_party_name) && !isMissing(rawEvent.from_name)) a.other_party_name = rawEvent.from_name;
+  if (isMissing(a.other_party_name) && !isMissing(a.toName)) a.other_party_name = a.toName;
+  if (isMissing(a.other_party_name) && !isMissing(a.to_name)) a.other_party_name = a.to_name;
+  if (isMissing(a.other_party_name) && !isMissing(signal.toName)) a.other_party_name = signal.toName;
+  if (isMissing(a.other_party_name) && !isMissing(signal.to_name)) a.other_party_name = signal.to_name;
+  if (isMissing(a.other_party_name) && !isMissing(rawEvent.toName)) a.other_party_name = rawEvent.toName;
+  if (isMissing(a.other_party_name) && !isMissing(rawEvent.to_name)) a.other_party_name = rawEvent.to_name;
+  if (isMissing(a.event_at_utc) && !isMissing(a.createdAt)) a.event_at_utc = a.createdAt;
+  if (isMissing(a.event_at_utc) && !isMissing(a.initiatedAt)) a.event_at_utc = a.initiatedAt;
+  if (isMissing(a.event_at_utc) && !isMissing(rawEvent.createdAt)) a.event_at_utc = rawEvent.createdAt;
+  if (isMissing(a.event_at_utc) && !isMissing(rawEvent.initiatedAt)) a.event_at_utc = rawEvent.initiatedAt;
+  if (isMissing(a.beside_contact_id) && !isMissing(a.contactId)) a.beside_contact_id = a.contactId;
+  if (isMissing(a.beside_contact_id) && !isMissing(a.contact_id)) a.beside_contact_id = a.contact_id;
+  if (isMissing(a.beside_contact_id) && !isMissing(rawEvent.contactId)) a.beside_contact_id = rawEvent.contactId;
+  if (isMissing(a.beside_contact_id) && !isMissing(rawEvent.contact_id)) a.beside_contact_id = rawEvent.contact_id;
+  if (isMissing(a.duration_seconds) && !isMissing(a.durationMs)) {
+    a.duration_seconds = Math.round(Number(a.durationMs) / 1000);
+  }
   return a;
 }
 
@@ -456,9 +507,12 @@ Deno.serve(async (req: Request) => {
     Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!,
   );
   const provenance_source = normalizeProvenanceSource(raw.source);
+  const normalizedPreview = m1(raw);
   const idempotencyKey = req.headers.get("Idempotency-Key");
-  const iid = raw.interaction_id || raw.call_id || raw.id || idempotencyKey || `unknown_${run_id}`;
-  const id_gen = !raw.interaction_id && !raw.call_id && !raw.id && !idempotencyKey;
+  const iid = normalizedPreview.interaction_id || raw.interaction_id || raw.call_id || raw.id || idempotencyKey ||
+    `unknown_${run_id}`;
+  const id_gen = !normalizedPreview.interaction_id && !raw.interaction_id && !raw.call_id && !raw.id &&
+    !idempotencyKey;
   const is_shadow = raw.is_shadow === true || iid.startsWith("cll_SHADOW_") || provenance_source === "shadow";
 
   let audit_id: number | null = null, cr_uuid: string | null = null;
@@ -487,7 +541,6 @@ Deno.serve(async (req: Request) => {
   if (raw_source && raw_source !== provenance_source) {
     warnings.push(`source_normalized:${raw_source}->${provenance_source}`);
   }
-  const normalizedPreview = m1(raw);
   const previewGate = m4(normalizedPreview);
   const previewTerminalEmptyTranscript = isTerminalEmptyTranscript(
     previewGate.reasons,

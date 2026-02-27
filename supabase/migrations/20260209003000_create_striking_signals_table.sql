@@ -1,4 +1,3 @@
-
 -- Striking Signals Table
 -- Stores per-span "striking sense" detections from striking-detect Edge Function
 -- Part of the Journal/World Model project
@@ -31,13 +30,11 @@ CREATE TABLE IF NOT EXISTS striking_signals (
   -- Indexes handled below
   CONSTRAINT fk_striking_signals_span FOREIGN KEY (span_id) REFERENCES conversation_spans(id)
 );
-
 -- Performance indexes
 CREATE INDEX idx_striking_signals_span ON striking_signals(span_id);
 CREATE INDEX idx_striking_signals_interaction ON striking_signals(interaction_id);
 CREATE INDEX idx_striking_signals_score ON striking_signals(striking_score DESC);
 CREATE INDEX idx_striking_signals_high ON striking_signals(striking_score) WHERE striking_score >= 0.7;
 CREATE INDEX idx_striking_signals_type ON striking_signals(primary_signal_type) WHERE primary_signal_type IS NOT NULL;
-
 -- Unique constraint: one striking detection per span per model/prompt version
 CREATE UNIQUE INDEX idx_striking_signals_upsert ON striking_signals(span_id, model_id, prompt_version);

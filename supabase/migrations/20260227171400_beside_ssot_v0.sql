@@ -16,7 +16,6 @@
 -- - RLS is not enabled; reads should be via service_role / edge functions.
 
 begin;
-
 -- -------------------------
 -- 1) Threads (Rooms/Chats)
 -- -------------------------
@@ -49,16 +48,12 @@ create table if not exists public.beside_threads (
   constraint beside_threads_source_check
     check (source in ('direct', 'zapier'))
 );
-
 create index if not exists beside_threads_contact_id_idx
   on public.beside_threads (contact_id);
-
 create index if not exists beside_threads_contact_phone_idx
   on public.beside_threads (contact_phone_e164);
-
 create index if not exists beside_threads_updated_at_idx
   on public.beside_threads (updated_at_utc desc nulls last);
-
 -- -------------------------
 -- 2) Thread Events
 -- -------------------------
@@ -102,22 +97,16 @@ create table if not exists public.beside_thread_events (
   constraint beside_thread_events_source_check
     check (source in ('direct', 'zapier'))
 );
-
 create index if not exists beside_thread_events_room_time_idx
   on public.beside_thread_events (beside_room_id, occurred_at_utc desc);
-
 create index if not exists beside_thread_events_contact_time_idx
   on public.beside_thread_events (contact_id, occurred_at_utc desc);
-
 create index if not exists beside_thread_events_source_time_idx
   on public.beside_thread_events (source, occurred_at_utc desc);
-
 create index if not exists beside_thread_events_camber_interaction_idx
   on public.beside_thread_events (camber_interaction_id);
-
 create index if not exists beside_thread_events_camber_sms_id_idx
   on public.beside_thread_events (camber_sms_message_id);
-
 -- -------------------------
 -- 3) Transcript Turns
 -- -------------------------
@@ -140,28 +129,20 @@ create table if not exists public.beside_transcripts (
   constraint beside_transcripts_source_check
     check (source in ('direct', 'zapier'))
 );
-
 create index if not exists beside_transcripts_room_idx
   on public.beside_transcripts (beside_room_id);
-
 create index if not exists beside_transcripts_updated_at_idx
   on public.beside_transcripts (updated_at_utc desc nulls last);
-
 -- -------------------------
 -- Grants (service_role for edge functions / ops)
 -- -------------------------
 grant select, insert, update, delete on public.beside_threads to service_role;
 grant select, insert, update, delete on public.beside_thread_events to service_role;
 grant select, insert, update, delete on public.beside_transcripts to service_role;
-
 comment on table public.beside_threads is
   'Beside direct-read thread index (parallel ingest). Stores Beside room_id (prv_*) plus cursors for completeness and contact join fields for Redline coverage comparison.';
-
 comment on table public.beside_thread_events is
   'Beside direct-read event ledger (parallel ingest). Stores Beside-native ids (msg_*/cll_*/vno_*) and normalized occurred_at_utc for deterministic thread replay; includes optional join fields for Zapier fallback comparisons.';
-
 comment on table public.beside_transcripts is
   'Beside transcript turns for calls/voicemails. Preserves speaker_ids + items_json for pixel-parity rendering; additive to CAMBER call transcript text fields.';
-
 commit;
-

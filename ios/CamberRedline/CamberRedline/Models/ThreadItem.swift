@@ -161,6 +161,9 @@ struct SpanEntry: Codable, Identifiable {
     let transcriptSegment: String?
     let reviewQueueId: String?
     let needsAttribution: Bool
+    let projectId: String?
+    let projectName: String?
+    let confidence: Double?
     let claims: [ClaimEntry]
 
     var id: UUID { spanId }
@@ -171,6 +174,9 @@ struct SpanEntry: Codable, Identifiable {
         case transcriptSegment = "transcript_segment"
         case reviewQueueId = "review_queue_id"
         case needsAttribution = "needs_attribution"
+        case projectId = "project_id"
+        case projectName = "project_name"
+        case confidence
         case claims
     }
 
@@ -181,6 +187,9 @@ struct SpanEntry: Codable, Identifiable {
         transcriptSegment = try container.decodeIfPresent(String.self, forKey: .transcriptSegment)
         reviewQueueId = try container.decodeIfPresent(String.self, forKey: .reviewQueueId)
         needsAttribution = try container.decodeIfPresent(Bool.self, forKey: .needsAttribution) ?? false
+        projectId = try container.decodeIfPresent(String.self, forKey: .projectId)
+        projectName = try container.decodeIfPresent(String.self, forKey: .projectName)
+        confidence = try container.decodeIfPresent(Double.self, forKey: .confidence)
         claims = try container.decodeIfPresent([ClaimEntry].self, forKey: .claims) ?? []
     }
 }

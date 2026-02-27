@@ -59,3 +59,48 @@ verify_jwt = false
 
 [functions.bootstrap-review]
 verify_jwt = false
+
+[functions.sms-beside-batch-ingest]
+verify_jwt = false
+
+[functions.review-resolve]
+verify_jwt = false
+
+[functions.review-swarm-runner]
+verify_jwt = false
+
+[functions.review-swarm-scheduler]
+verify_jwt = false
+
+[functions.sms-thread-assembler]
+verify_jwt = false
+
+[functions.morning-digest]
+verify_jwt = false
+
+[functions.morning-brief]
+verify_jwt = false
+
+[functions.auto-review-resolver]
+verify_jwt = false
+
+[functions.training-data-export]
+verify_jwt = false
+
+[functions.transcribe-deepgram]
+verify_jwt = false
+
+[functions.loop-closure]
+verify_jwt = false
+
+[functions.reattribute-spans]
+verify_jwt = false
+
+[functions.audit-attribution]
+verify_jwt = false
+
+[functions.audit-attribution-reviewer]
+verify_jwt = false
+
+[functions.operator-validation]
+verify_jwt = false

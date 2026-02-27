@@ -60,9 +60,7 @@ BEGIN
     LIMIT 1;
 END;
 $$;
-
 GRANT EXECUTE ON FUNCTION public.lookup_contact_by_phone(text) TO service_role;
 REVOKE EXECUTE ON FUNCTION public.lookup_contact_by_phone(text) FROM anon, authenticated;
-
 COMMENT ON FUNCTION public.lookup_contact_by_phone IS
 'Lookup contact by normalized phone digits. Uses digits-only matching and last-10 fallback on phone + secondary_phone.';

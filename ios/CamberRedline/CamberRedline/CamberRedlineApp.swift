@@ -58,8 +58,15 @@ struct CamberRedlineApp: App {
                         threadViewModel.updateContactSequence(contactListViewModel.contacts)
                         await threadViewModel.warmProjectPickerCache()
                         updateBadge()
+                        // Tear down stale channels before re-subscribing so the
+                        // guard in subscribeToNewInteractions() doesn't early-return
+                        // when the old WebSocket is dead.
+                        await contactListViewModel.unsubscribe()
                         await contactListViewModel.subscribeToNewInteractions()
                         if let contact = threadViewModel.currentContact {
+                            // Force tear down stale Realtime channels so guards
+                            // don't skip re-subscription after a WebSocket drop.
+                            await threadViewModel.stopClaimGradeSubscription()
                             await threadViewModel.startClaimGradeSubscription(contactId: contact.contactId)
                             await threadViewModel.startInteractionsSubscription(contactId: contact.contactId)
                         }

@@ -57,7 +57,7 @@ final class BootstrapService {
             return cachedReviewProjects
         }
 
-        let response = try await fetchQueue(limit: 1)
+        let response = try await fetchProjects()
         cachedReviewProjects = response.projects
         cachedReviewProjectsAt = Date()
         return response.projects
@@ -126,15 +126,26 @@ final class BootstrapService {
         return data
     }
 
+    private func fetchProjects() async throws -> ReviewProjectsResponse {
+        var components = URLComponents(url: baseURL, resolvingAgainstBaseURL: false)!
+        components.queryItems = [URLQueryItem(name: "action", value: "projects")]
+
+        guard let url = components.url else {
+            throw BootstrapServiceError.invalidURL
+        }
+
+        let (data, response) = try await session.data(from: url)
+        try validateHTTPResponse(response)
+
+        let decoded = try decoder.decode(ReviewProjectsResponse.self, from: data)
+        guard decoded.ok else {
+            throw BootstrapServiceError.apiError("projects endpoint returned ok=false")
+        }
+        return decoded
+    }
+
     private func decodeOkResponse(_ data: Data, action: String) throws {
-        guard let parsed = try? decoder.decode(BootstrapActionResponse.self, from: data) else {
-            return
-        }
-        guard parsed.ok else {
-            throw BootstrapServiceError.apiError(
-                parsed.error ?? "Unknown error from \(action)"
-            )
-        }
+        try ensureBootstrapActionOk(data, action: action, decoder: decoder)
     }
 
     private func validateHTTPResponse(_ response: URLResponse) throws {
@@ -151,6 +162,10 @@ struct ResolveResponse: Decodable {
     let ok: Bool
     let reviewQueueId: String?
     let chosenProjectId: String?
+    let chosenProjectName: String?
+    let interactionId: String?
+    let pendingRemainingForInteraction: Int?
+    let totalPending: Int?
     let wasAlreadyResolved: Bool?
     let error: String?
 
@@ -158,14 +173,47 @@ struct ResolveResponse: Decodable {
         case ok
         case reviewQueueId = "review_queue_id"
         case chosenProjectId = "chosen_project_id"
+        case chosenProjectName = "chosen_project_name"
+        case interactionId = "interaction_id"
+        case pendingRemainingForInteraction = "pending_remaining_for_interaction"
+        case totalPending = "total_pending"
         case wasAlreadyResolved = "was_already_resolved"
         case error
     }
 }
 
+private struct ReviewProjectsResponse: Decodable {
+    let ok: Bool
+    let projects: [ReviewProject]
+    let count: Int?
+}
+
 private struct BootstrapActionResponse: Decodable {
     let ok: Bool
     let error: String?
+}
+
+func ensureBootstrapActionOk(
+    _ data: Data,
+    action: String,
+    decoder: JSONDecoder = JSONDecoder()
+) throws {
+    let parsed: BootstrapActionResponse
+    do {
+        parsed = try decoder.decode(BootstrapActionResponse.self, from: data)
+    } catch {
+        let snippet = String(decoding: data.prefix(240), as: UTF8.self)
+            .replacingOccurrences(of: "\n", with: "\\n")
+        throw BootstrapServiceError.apiError(
+            "Malformed \(action) response payload: \(snippet)"
+        )
+    }
+
+    guard parsed.ok else {
+        throw BootstrapServiceError.apiError(
+            parsed.error ?? "Unknown error from \(action)"
+        )
+    }
 }
 
 // MARK: - Request Bodies

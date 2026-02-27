@@ -35,7 +35,7 @@ struct SpeakerTurnBubble: View {
             if turn.isOwnerSide { Spacer(minLength: 60) }
 
             VStack(alignment: turn.isOwnerSide ? .trailing : .leading, spacing: 2) {
-                if showSpeakerLabel && !turn.isConsecutiveWithPrevious {
+                if showSpeakerLabel {
                     Text(turn.speaker)
                         .font(.caption2)
                         .foregroundStyle(Color(white: 0.55))

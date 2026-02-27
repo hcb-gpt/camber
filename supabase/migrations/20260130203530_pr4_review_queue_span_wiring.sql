@@ -5,20 +5,16 @@
 -- Source: DATA_STRAT_20260130T0810Z_pr4_review_queue_view_and_schema.sql
 
 begin;
-
 -- 1) Add span_id column to review_queue (if missing)
 alter table public.review_queue add column if not exists span_id uuid;
-
 -- 2) Create unique index on span_id for idempotent upserts
 -- (allows multiple NULL span_id rows for legacy items)
 create unique index if not exists review_queue_span_id_uq
   on public.review_queue (span_id)
   where span_id is not null;
-
 -- 3) Add index for status + created_at ordering
 create index if not exists review_queue_status_created_idx
   on public.review_queue (status, created_at desc);
-
 -- 4) Product surface view: review items joined to spans + latest attribution
 create or replace view public.v_review_queue_spans as
 with latest_attr as (
@@ -86,8 +82,6 @@ left join public.interactions i
   on i.id = coalesce(rq.interaction_id, cs.interaction_id)
 left join latest_attr la
   on la.span_id = rq.span_id;
-
 comment on view public.v_review_queue_spans is
   'Product surface for review queue. Joins review items to spans, attributions, and interactions.';
-
 commit;

@@ -4,7 +4,6 @@
 -- STRAT TURN14: Added project_kind filter to exclude internal/owner projects
 
 BEGIN;
-
 -- ============================================================
 -- 1. UPDATE v_span_enroute VIEW
 -- Add project status filter to nearest project calculation
@@ -68,8 +67,6 @@ FROM origin o
 FULL JOIN dg ON dg.span_id = o.span_id
 LEFT JOIN geo_places gpo ON gpo.id = o.place_id
 LEFT JOIN np ON np.span_id = COALESCE(dg.span_id, o.span_id) AND np.rn = 1;
-
 COMMENT ON VIEW v_span_enroute IS
   'Enroute detection view for spans with origin/destination mentions. PR-11: Filters to active/warranty/estimating client projects only.';
-
 COMMIT;

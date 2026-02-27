@@ -30,6 +30,7 @@
 		A1B2C3D4E5F60005AABBCC03 /* BootstrapService.swift in Sources */ = {isa = PBXBuildFile; fileRef = A1B2C3D4E5F60006AABBCC03 /* BootstrapService.swift */; };
 		A1B2C3D4E5F60007AABBCC04 /* TriageViewModel.swift in Sources */ = {isa = PBXBuildFile; fileRef = A1B2C3D4E5F60008AABBCC04 /* TriageViewModel.swift */; };
 		A1B2C3D4E5F60009AABBCC05 /* TriageView.swift in Sources */ = {isa = PBXBuildFile; fileRef = A1B2C3D4E5F6000AAABBCC05 /* TriageView.swift */; };
+		C1D2E3F4A5B6C7D8E9F0A1B2 /* SyncStatusView.swift in Sources */ = {isa = PBXBuildFile; fileRef = D1E2F3A4B5C6D7E8F9A0B1C2 /* SyncStatusView.swift */; };
 		A2B3C4D5E6F7A8B9C0D1E2F3 /* Assets.xcassets in Resources */ = {isa = PBXBuildFile; fileRef = F1A2B3C4D5E6F7A8B9C0D1E2 /* Assets.xcassets */; };
 /* End PBXBuildFile section */
 
@@ -57,6 +58,7 @@
 		A1B2C3D4E5F60006AABBCC03 /* BootstrapService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BootstrapService.swift; sourceTree = "<group>"; };
 		A1B2C3D4E5F60008AABBCC04 /* TriageViewModel.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TriageViewModel.swift; sourceTree = "<group>"; };
 		A1B2C3D4E5F6000AAABBCC05 /* TriageView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TriageView.swift; sourceTree = "<group>"; };
+		D1E2F3A4B5C6D7E8F9A0B1C2 /* SyncStatusView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SyncStatusView.swift; sourceTree = "<group>"; };
 		F1A2B3C4D5E6F7A8B9C0D1E2 /* Assets.xcassets */ = {isa = PBXFileReference; lastKnownFileType = folder.assetcatalog; path = Assets.xcassets; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
@@ -95,6 +97,7 @@
 				595848F3F46DFB87B0C65D55 /* GradeIndicator.swift */,
 				C0B838D3F03C0D2CDB76E802 /* SMSBubble.swift */,
 				CD4E5F6A7B8C9D0E1F2A3B4C /* SpeakerTurnBubble.swift */,
+				D1E2F3A4B5C6D7E8F9A0B1C2 /* SyncStatusView.swift */,
 				055EAEA048AB6BB4CA4EEE80 /* ThreadView.swift */,
 				A1B2C3D4E5F6000AAABBCC05 /* TriageView.swift */,
 			);
@@ -240,6 +243,7 @@
 				A1B2C3D4E5F60003AABBCC02 /* ReviewProject.swift in Sources */,
 				A1B2C3D4E5F60005AABBCC03 /* BootstrapService.swift in Sources */,
 				A1B2C3D4E5F60007AABBCC04 /* TriageViewModel.swift in Sources */,
+				C1D2E3F4A5B6C7D8E9F0A1B2 /* SyncStatusView.swift in Sources */,
 				A1B2C3D4E5F60009AABBCC05 /* TriageView.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;

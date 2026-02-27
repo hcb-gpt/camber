@@ -130,3 +130,4 @@ CREATE OR REPLACE VIEW redline_contacts AS
      LEFT JOIN latest lt ON lt.contact_id = c.id
   WHERE COALESCE(cs.call_count, 0::bigint) > 0 OR COALESCE(ss.sms_count, 0::bigint) > 0
   ORDER BY (GREATEST(cs.last_call_at, ss.last_sms_at)) DESC NULLS LAST;
+;

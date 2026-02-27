@@ -98,7 +98,7 @@ struct TriageView: View {
             isPresented: isSpanDialogPresented,
             titleVisibility: .visible
         ) {
-            if let selectedSpan {
+            if let selectedSpan = selectedSpan {
                 if let currentProjectId = selectedSpan.projectId,
                    let currentName = viewModel.projectName(for: currentProjectId)
                 {
@@ -118,7 +118,7 @@ struct TriageView: View {
 
             Button("Cancel", role: .cancel) {}
         } message: {
-            if let selectedSpan {
+            if selectedSpan != nil {
                 Text("Long press detected on a project span for \(selectedSpanContactName).")
             }
         }

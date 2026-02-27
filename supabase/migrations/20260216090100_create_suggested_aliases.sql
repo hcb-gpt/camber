@@ -15,14 +15,11 @@ CREATE TABLE suggested_aliases (
   reviewed_at timestamptz,
   reviewed_by text
 );
-
 COMMENT ON TABLE suggested_aliases IS
   'Alias candidates surfaced by alias-scout or manual entry, held for operator review before promotion to project_aliases.';
-
 -- Dedup: only one pending suggestion per project + alias
 CREATE UNIQUE INDEX idx_suggested_aliases_pending_dedup
 ON suggested_aliases (project_id, lower(alias))
 WHERE status = 'pending';
-
 -- RLS enabled with no policies = service_role only access
 ALTER TABLE suggested_aliases ENABLE ROW LEVEL SECURITY;

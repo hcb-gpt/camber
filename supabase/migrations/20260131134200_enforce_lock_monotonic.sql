@@ -20,9 +20,7 @@ BEGIN
   RETURN NEW;
 END;
 $$ LANGUAGE plpgsql;
-
 DROP TRIGGER IF EXISTS trg_span_attributions_lock_monotonic ON span_attributions;
-
 CREATE TRIGGER trg_span_attributions_lock_monotonic
 BEFORE UPDATE ON span_attributions
 FOR EACH ROW

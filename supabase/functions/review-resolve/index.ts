@@ -30,7 +30,7 @@
 import "jsr:@supabase/functions-js/edge-runtime.d.ts";
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
 
-const FUNCTION_VERSION = "review-resolve_v3.2.0";
+const FUNCTION_VERSION = "review-resolve_v3.3.0";
 type ReviewQueueSource = "pipeline" | "redline";
 
 interface ResolveRequest {
@@ -156,6 +156,18 @@ Deno.serve(async (req: Request) => {
     return jsonResponse({ ...result, ms: Date.now() - t0 }, status);
   }
 
+  let chosenProjectName: string | null = null;
+  const { data: projectRow, error: projectErr } = await db
+    .from("projects")
+    .select("name")
+    .eq("id", chosen_project_id)
+    .maybeSingle();
+  if (projectErr) {
+    console.warn(`[review-resolve] project lookup warning: ${projectErr.message}`);
+  } else {
+    chosenProjectName = projectRow?.name ?? null;
+  }
+
   // Keep contamination-control state in sync for claims tied to this resolved span.
   if (result.span_id && isValidUUID(String(result.span_id))) {
     const { error: claimConfirmErr } = await db
@@ -209,6 +221,10 @@ Deno.serve(async (req: Request) => {
 
   return jsonResponse({
     ...result,
+    ok: true,
+    project_id: result.project_id || result.chosen_project_id || chosen_project_id,
+    project_name: result.project_name || result.chosen_project_name || chosenProjectName,
+    attribution_lock: "human",
     ms: Date.now() - t0,
   }, 200);
 });

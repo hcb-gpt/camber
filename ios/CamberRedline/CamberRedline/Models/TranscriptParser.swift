@@ -8,9 +8,6 @@ struct SpeakerTurn: Identifiable {
     let text: String
     /// True when this speaker is on the owner side (right-aligned blue bubble).
     let isOwnerSide: Bool
-
-    /// True when this turn's speaker matches the previous turn's speaker (for UI grouping).
-    var isConsecutiveWithPrevious: Bool = false
 }
 
 // MARK: - TranscriptParser
@@ -32,7 +29,7 @@ enum TranscriptParser {
     /// - Parameters:
     ///   - transcript: The raw transcript text returned by the edge function.
     ///   - contactName: Unused; kept for call-site compatibility.
-    /// - Returns: Merged speaker turns with `isOwnerSide` and `isConsecutiveWithPrevious` set.
+    /// - Returns: Merged speaker turns with owner-side metadata.
     static func parse(_ transcript: String, contactName: String? = nil) -> [SpeakerTurn] {
         let trimmed = transcript.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmed.isEmpty else { return [] }
@@ -67,18 +64,16 @@ enum TranscriptParser {
             }
         }
 
-        // Build SpeakerTurn array with consecutive grouping markers.
+        // Build SpeakerTurn array.
         var result: [SpeakerTurn] = []
-        for (idx, entry) in merged.enumerated() {
+        for entry in merged {
             let ownerSide = isOwnerSide(speaker: entry.speaker)
-            let consecutive = idx > 0 && merged[idx - 1].speaker == entry.speaker
             result.append(
                 SpeakerTurn(
                     id: UUID(),
                     speaker: entry.speaker,
                     text: entry.text,
-                    isOwnerSide: ownerSide,
-                    isConsecutiveWithPrevious: consecutive
+                    isOwnerSide: ownerSide
                 )
             )
         }

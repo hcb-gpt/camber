@@ -9,7 +9,6 @@
 -- - NEVER infer direction from a single place without explicit verb
 
 BEGIN;
-
 -- ============================================================
 -- 1. CREATE span_place_mentions TABLE
 -- ============================================================
@@ -36,32 +35,25 @@ CREATE TABLE IF NOT EXISTS span_place_mentions (
   -- Timestamps
   created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
-
 COMMENT ON TABLE span_place_mentions IS
   'Place mentions detected in span transcripts with verb-driven role tagging. POLICY: Role is ONLY assigned via explicit verbs - never inferred from single place.';
-
 COMMENT ON COLUMN span_place_mentions.role IS
   'proximity = no directional verb; origin = leaving/coming from; destination = headed to/going to. VERB-DRIVEN ONLY.';
-
 COMMENT ON COLUMN span_place_mentions.trigger_verb IS
   'The directional verb that triggered role assignment (e.g., "headed to", "coming from"). NULL for proximity.';
-
 -- ============================================================
 -- 2. INDEXES
 -- ============================================================
 CREATE INDEX IF NOT EXISTS idx_span_place_mentions_span ON span_place_mentions(span_id);
 CREATE INDEX IF NOT EXISTS idx_span_place_mentions_geo_place ON span_place_mentions(geo_place_id);
 CREATE INDEX IF NOT EXISTS idx_span_place_mentions_role ON span_place_mentions(role);
-
 -- Unique constraint: one mention per span+place+role
 CREATE UNIQUE INDEX IF NOT EXISTS span_place_mentions_span_place_role_uq
   ON span_place_mentions (span_id, COALESCE(geo_place_id, '00000000-0000-0000-0000-000000000000'::uuid), role);
-
 -- ============================================================
 -- 3. RLS (service_role only for now)
 -- ============================================================
 ALTER TABLE span_place_mentions ENABLE ROW LEVEL SECURITY;
-
 -- ============================================================
 -- 4. VERB PATTERNS VIEW (reference for context-assembly)
 -- ============================================================
@@ -101,8 +93,6 @@ SELECT
     'on my way from'
   ] AS patterns,
   'Indicates caller is traveling AWAY FROM a location' AS description;
-
 COMMENT ON VIEW v_enroute_verb_patterns IS
   'Canonical verb patterns for enroute role detection. POLICY: Only these verbs trigger role assignment - never infer from proximity alone.';
-
 COMMIT;

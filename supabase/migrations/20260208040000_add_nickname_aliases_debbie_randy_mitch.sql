@@ -13,7 +13,6 @@ SET aliases = array_append(
 )
 WHERE LOWER(name) LIKE '%debbie%'
   AND NOT ('Deborah' = ANY(COALESCE(aliases, ARRAY[]::text[])));
-
 -- Randy → add "Randall" variant
 UPDATE contacts
 SET aliases = array_append(
@@ -22,7 +21,6 @@ SET aliases = array_append(
 )
 WHERE LOWER(name) LIKE '%randy%'
   AND NOT ('Randall' = ANY(COALESCE(aliases, ARRAY[]::text[])));
-
 -- Mitch → add "Mitchell" variant
 UPDATE contacts
 SET aliases = array_append(
@@ -32,7 +30,6 @@ SET aliases = array_append(
 WHERE LOWER(name) LIKE '%mitch%'
   AND LOWER(name) NOT LIKE '%mitchell%'
   AND NOT ('Mitchell' = ANY(COALESCE(aliases, ARRAY[]::text[])));
-
 -- Also add reverse: if someone is named Deborah, add Debbie
 UPDATE contacts
 SET aliases = array_append(
@@ -41,7 +38,6 @@ SET aliases = array_append(
 )
 WHERE LOWER(name) LIKE '%deborah%'
   AND NOT ('Debbie' = ANY(COALESCE(aliases, ARRAY[]::text[])));
-
 -- Randall → Randy
 UPDATE contacts
 SET aliases = array_append(
@@ -50,7 +46,6 @@ SET aliases = array_append(
 )
 WHERE LOWER(name) LIKE '%randall%'
   AND NOT ('Randy' = ANY(COALESCE(aliases, ARRAY[]::text[])));
-
 -- Mitchell → Mitch
 UPDATE contacts
 SET aliases = array_append(
