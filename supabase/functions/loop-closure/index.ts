@@ -30,7 +30,7 @@ const FUNCTION_VERSION = "v1.0.0";
 const CLOSURE_CONFIDENCE_THRESHOLD = 0.75;
 const MAX_OPEN_LOOPS_PER_PROJECT = 50;
 const MAX_TOKENS = 2048;
-const DEFAULT_MODEL = "claude-3-haiku-20240307";
+const DEFAULT_MODEL = "gpt-4o-mini";
 const DEFAULT_TIMEOUT_MS = 30000;
 
 interface LoopMatch {
@@ -216,10 +216,10 @@ Deno.serve(async (req: Request) => {
     Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!,
   );
 
-  const anthropicKey = Deno.env.get("ANTHROPIC_API_KEY");
-  if (!anthropicKey) {
+  const openaiKey = Deno.env.get("OPENAI_API_KEY");
+  if (!openaiKey) {
     return new Response(
-      JSON.stringify({ ok: false, error: "missing_anthropic_key" }),
+      JSON.stringify({ ok: false, error: "missing_openai_key" }),
       { status: 500, headers: { "Content-Type": "application/json" } },
     );
   }
@@ -289,35 +289,35 @@ Deno.serve(async (req: Request) => {
 
     const llmT0 = Date.now();
     const resp = await withTimeout(
-      fetch("https://api.anthropic.com/v1/messages", {
+      fetch("https://api.openai.com/v1/chat/completions", {
         method: "POST",
         headers: {
           "Content-Type": "application/json",
-          "x-api-key": anthropicKey,
-          "anthropic-version": "2023-06-01",
+          "Authorization": `Bearer ${openaiKey}`,
         },
         body: JSON.stringify({
           model,
           max_tokens: MAX_TOKENS,
           temperature: 0,
-          system: systemPrompt,
-          messages: [{ role: "user", content: userPrompt }],
+          messages: [
+            { role: "system", content: systemPrompt },
+            { role: "user", content: userPrompt },
+          ],
         }),
       }),
       timeoutMs,
-      "anthropic_loop_closure",
+      "openai_loop_closure",
     );
     const inference_ms = Date.now() - llmT0;
 
     if (!resp.ok) {
       const errText = await resp.text();
-      throw new Error(`anthropic_${resp.status}: ${errText.slice(0, 200)}`);
+      throw new Error(`openai_${resp.status}: ${errText.slice(0, 200)}`);
     }
 
     const apiPayload = await resp.json();
-    const textBlock = (apiPayload?.content || []).find((b: any) => b?.type === "text");
-    const rawContent = textBlock?.text || "";
-    const tokens_used = (apiPayload?.usage?.input_tokens || 0) + (apiPayload?.usage?.output_tokens || 0);
+    const rawContent = apiPayload?.choices?.[0]?.message?.content || "";
+    const tokens_used = (apiPayload?.usage?.prompt_tokens || 0) + (apiPayload?.usage?.completion_tokens || 0);
 
     // 4. Parse LLM response
     const llmResult = parseLlmJson(rawContent);
