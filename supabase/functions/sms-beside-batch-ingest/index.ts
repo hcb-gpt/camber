@@ -348,7 +348,7 @@ Deno.serve(async (req: Request) => {
 
         // 2. Insert event (UPSERT into beside_thread_events)
         await db.from("beside_thread_events").upsert({
-          beside_event_id: msg.message_id,
+          beside_event_id: `zapier_${msg.message_id}`,
           beside_room_id: threadId,
           beside_event_type: "message",
           occurred_at_utc: sentAt,
