@@ -25,6 +25,10 @@ def utc_now_iso() -> str:
     return dt.datetime.now(dt.timezone.utc).replace(microsecond=0).isoformat().replace("+00:00", "Z")
 
 
+def utc_compact_stamp() -> str:
+    return dt.datetime.now(dt.timezone.utc).strftime("%Y%m%dT%H%M%SZ")
+
+
 def maybe_unwrap_0(node: Any) -> Any:
     if isinstance(node, dict) and "_0" in node and len(node) == 1:
         return node["_0"]
@@ -183,12 +187,20 @@ def extract_event_from_room(room: Dict[str, Any]) -> Optional[Dict[str, Any]]:
     return None
 
 
-def build_ingest_stub(events: List[Dict[str, Any]]) -> Dict[str, Any]:
+def build_ingest_stub(
+    events: List[Dict[str, Any]],
+    ingest_run_id: str,
+    cache_mtime_utc: Optional[str],
+    watch_fired_at_utc: str,
+    ingest_started_at_utc: str,
+    ingest_finished_at_utc: str,
+) -> Dict[str, Any]:
     records = []
     for event in events:
         records.append(
             {
                 "source_tag": SOURCE_TAG,
+                "ingest_run_id": ingest_run_id,
                 "event_type": event["event_type"],
                 "event_id": event["event_id"],
                 "thread_id": event["thread_id"],
@@ -200,6 +212,11 @@ def build_ingest_stub(events: List[Dict[str, Any]]) -> Dict[str, Any]:
     return {
         "version": "beside_direct_read_ingest_stub_v0",
         "generated_at_utc": utc_now_iso(),
+        "ingest_run_id": ingest_run_id,
+        "cache_mtime_utc": cache_mtime_utc,
+        "watch_fired_at_utc": watch_fired_at_utc,
+        "ingest_started_at_utc": ingest_started_at_utc,
+        "ingest_finished_at_utc": ingest_finished_at_utc,
         "record_count": len(records),
         "records": records,
     }
@@ -222,6 +239,16 @@ def parse_args() -> argparse.Namespace:
         default="",
         help="Optional path to write stable ingest-stub payload JSON",
     )
+    parser.add_argument(
+        "--watch-fired-at-utc",
+        default="",
+        help="Optional watcher fire timestamp (ISO/epoch). Defaults to ingest_started_at_utc.",
+    )
+    parser.add_argument(
+        "--ingest-run-id",
+        default="",
+        help="Optional stable ingest run id. Defaults to beside_direct_read_<timestamp>.",
+    )
     return parser.parse_args()
 
 
@@ -229,6 +256,10 @@ def main() -> int:
     args = parse_args()
     input_path = Path(args.input).expanduser()
     output_path = Path(args.output).expanduser()
+    ingest_started_at_utc = utc_now_iso()
+    ingest_run_id = (args.ingest_run_id or "").strip() or f"beside_direct_read_{utc_compact_stamp()}"
+    cache_mtime_utc = normalize_timestamp_to_utc(input_path.stat().st_mtime)
+    watch_fired_at_utc = normalize_timestamp_to_utc(args.watch_fired_at_utc) or ingest_started_at_utc
 
     payload = json.loads(input_path.read_text(encoding="utf-8"))
     if not isinstance(payload, list):
@@ -258,10 +289,17 @@ def main() -> int:
         if event is not None:
             events.append(event)
 
+    ingest_finished_at_utc = utc_now_iso()
+
     extraction = {
         "version": "beside_direct_read_extract_v0",
         "source_tag": SOURCE_TAG,
         "generated_at_utc": utc_now_iso(),
+        "ingest_run_id": ingest_run_id,
+        "cache_mtime_utc": cache_mtime_utc,
+        "watch_fired_at_utc": watch_fired_at_utc,
+        "ingest_started_at_utc": ingest_started_at_utc,
+        "ingest_finished_at_utc": ingest_finished_at_utc,
         "input_path": str(input_path),
         "rooms_total": len(payload),
         "events_extracted": len(events),
@@ -275,7 +313,14 @@ def main() -> int:
     if args.ingest_stub_output:
         stub_path = Path(args.ingest_stub_output).expanduser()
         stub_path.parent.mkdir(parents=True, exist_ok=True)
-        stub = build_ingest_stub(events)
+        stub = build_ingest_stub(
+            events,
+            ingest_run_id=ingest_run_id,
+            cache_mtime_utc=cache_mtime_utc,
+            watch_fired_at_utc=watch_fired_at_utc,
+            ingest_started_at_utc=ingest_started_at_utc,
+            ingest_finished_at_utc=ingest_finished_at_utc,
+        )
         stub_path.write_text(json.dumps(stub, indent=2) + "\n", encoding="utf-8")
 
     print(
