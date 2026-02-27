@@ -204,8 +204,7 @@ async function handleQueue(
 ): Promise<Response> {
   // Fetch pending span-based review rows directly so filtering happens
   // before LIMIT (avoids empty pages with nonzero pending totals).
-  const queueSelect =
-    "id, span_id, interaction_id, context_payload, reasons, reason_codes, module, status, created_at";
+  const queueSelect = "id, span_id, interaction_id, context_payload, reasons, reason_codes, module, status, created_at";
 
   let rqData: any[] | null = null;
   let rqErr: any = null;
