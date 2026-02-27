@@ -21,19 +21,20 @@ type RedlineApiRoute =
   | { kind: "verdict" }
   | { kind: "unknown"; path: string[] };
 
+function noStoreHeaders(): Record<string, string> {
+  return {
+    "Cache-Control": "no-store, no-cache, must-revalidate, proxy-revalidate, max-age=0",
+    Pragma: "no-cache",
+    Expires: "0",
+    "Surrogate-Control": "no-store",
+  };
+}
+
 function corsHeaders(): Record<string, string> {
   return {
     "Access-Control-Allow-Origin": "*",
     "Access-Control-Allow-Headers": "authorization, x-edge-secret, content-type",
     "Access-Control-Allow-Methods": "GET, POST, OPTIONS",
-  };
-}
-
-function noStoreHeaders(): Record<string, string> {
-  return {
-    "Cache-Control": "no-store, no-cache, must-revalidate, max-age=0",
-    "Pragma": "no-cache",
-    "Expires": "0",
   };
 }
 
