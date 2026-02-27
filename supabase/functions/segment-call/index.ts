@@ -55,7 +55,7 @@
 import "jsr:@supabase/functions-js/edge-runtime.d.ts";
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
 
-const SEGMENT_CALL_VERSION = "v2.9.0";
+const SEGMENT_CALL_VERSION = "v2.9.1";
 const MAX_SEGMENT_CHARS_HARD_LIMIT = 3000;
 const MAX_HOOK_NON2XX_DIAGNOSTICS = 3;
 
@@ -635,6 +635,7 @@ Deno.serve(async (req: Request) => {
     const {
       interaction_id,
       transcript,
+      channel: requested_channel = null,
       dry_run = false,
       skip_attribution = SKIP_ATTRIBUTION_DEFAULT,
       max_segments = 10,
@@ -654,6 +655,13 @@ Deno.serve(async (req: Request) => {
         { status: 400, headers: jsonHeaders },
       );
     }
+
+    const requestedChannelNorm = typeof requested_channel === "string"
+      ? requested_channel.trim().toLowerCase()
+      : "";
+    const inferredSmsChannel = String(interaction_id).startsWith("sms_thread_") ||
+      String(interaction_id).startsWith("beside_sms_");
+    const segmentationChannel = requestedChannelNorm || (inferredSmsChannel ? "sms_thread" : "call");
 
     const edgeSecret = Deno.env.get("EDGE_SHARED_SECRET");
     if (!edgeSecret) {
@@ -876,6 +884,9 @@ Deno.serve(async (req: Request) => {
     let segmenterVersion = "fallback_trivial_v1";
     const segmenterWarnings: string[] = [];
     segmenterWarnings.push(...canonicalWarnings);
+    if (!requestedChannelNorm && inferredSmsChannel) {
+      segmenterWarnings.push("channel_inferred_sms_thread_from_interaction_id");
+    }
     if (transcriptControlCharsSanitized > 0) {
       segmenterWarnings.push(`transcript_control_chars_sanitized_${transcriptControlCharsSanitized}`);
     }
@@ -954,6 +965,7 @@ Deno.serve(async (req: Request) => {
         },
         body: JSON.stringify({
           interaction_id,
+          channel: segmentationChannel,
           transcript: spanTranscript,
           source: "segment-call",
           max_segments,
@@ -1640,6 +1652,7 @@ Deno.serve(async (req: Request) => {
           span_ids: spanIds,
           span_count: spanCount,
           segmenter_version: segmenterVersion,
+          segmentation_channel: segmentationChannel,
           segmenter_warnings: segmenterWarnings,
           parent_interaction_sync: {
             applied: parent_interaction_sync_applied,
@@ -1692,6 +1705,7 @@ Deno.serve(async (req: Request) => {
           span_ids: spanIds,
           span_count: spanCount,
           segmenter_version: segmenterVersion,
+          segmentation_channel: segmentationChannel,
           segmenter_warnings: segmenterWarnings,
           parent_interaction_sync: {
             applied: parent_interaction_sync_applied,
@@ -1761,6 +1775,7 @@ Deno.serve(async (req: Request) => {
         span_ids: spanIds,
         span_count: spanCount,
         segmenter_version: segmenterVersion,
+        segmentation_channel: segmentationChannel,
         segmenter_warnings: segmenterWarnings,
         parent_interaction_sync: {
           applied: parent_interaction_sync_applied,

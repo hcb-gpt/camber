@@ -17,7 +17,7 @@
 import "jsr:@supabase/functions-js/edge-runtime.d.ts";
 import { parseLlmJson } from "../_shared/llm_json.ts";
 
-const SEGMENT_LLM_VERSION = "segment-llm_v1.4.0";
+const SEGMENT_LLM_VERSION = "segment-llm_v1.5.0";
 
 // ============================================================
 // STRUCTURED LOGGING (per GPT-DEV-6 spec)
@@ -116,6 +116,46 @@ OUTPUT FORMAT (JSON only, no markdown):
 TRANSCRIPT:
 {TRANSCRIPT}`;
 
+const SMS_KNOWN_PROJECTS = [
+  "Hurley",
+  "Permar",
+  "Winship",
+  "Skelton",
+  "Woodbery",
+  "Moss",
+  "Young",
+];
+
+const SMS_SEGMENTATION_PROMPT = `You are an SMS thread segmenter for a construction company.
+
+Your task: Group these messages into BATCHES by project or topic.
+
+RULES:
+1. Each batch = contiguous run of messages about the same job/subject
+2. Add a boundary when the conversation pivots to a different project, vendor, or task
+3. Single-message batches are allowed when clearly a different subject
+4. Use known projects when mentioned: {KNOWN_PROJECTS}
+5. Each segment must be >= {MIN_CHARS} characters when possible
+6. Maximum {MAX_SEGMENTS} segments total
+7. Segments must be contiguous (no gaps, no overlaps)
+
+OUTPUT FORMAT (JSON only, no markdown):
+{
+  "segments": [
+    {
+      "span_index": 0,
+      "char_start": 0,
+      "char_end": <end_char>,
+      "boundary_reason": "topic_pivot|project_switch|new_subject|initial_batch",
+      "confidence": 0.0-1.0,
+      "boundary_quote": "<exact quote <=50 chars showing the pivot>"
+    }
+  ]
+}
+
+TRANSCRIPT:
+{TRANSCRIPT}`;
+
 // ============================================================
 // MAIN HANDLER
 // ============================================================
@@ -178,7 +218,9 @@ Deno.serve(async (req: Request) => {
     max_segments = DEFAULT_MAX_SEGMENTS,
     min_segment_chars = DEFAULT_MIN_SEGMENT_CHARS,
     max_segment_chars = DEFAULT_MAX_SEGMENT_CHARS,
+    channel: raw_channel = "call",
   } = body;
+  const channel = String(raw_channel || "call").trim().toLowerCase();
 
   const parsedMaxSegmentChars = Number(max_segment_chars);
   const maxSegmentChars = Number.isFinite(parsedMaxSegmentChars) &&
@@ -218,11 +260,12 @@ Deno.serve(async (req: Request) => {
   structuredLog("INFO", "segment_llm_request", requestId, interaction_id, {
     transcript_chars: transcriptLength,
     caller,
+    channel,
     params: { max_segments, min_segment_chars, max_segment_chars: maxSegmentChars },
   });
 
   console.log(
-    `[segment-llm] Processing: interaction_id=${interaction_id}, len=${transcriptLength}`,
+    `[segment-llm] Processing: interaction_id=${interaction_id}, channel=${channel}, len=${transcriptLength}`,
   );
 
   // ============================================================
@@ -261,10 +304,12 @@ Deno.serve(async (req: Request) => {
     return fallbackResponse(transcriptLength, ["config_error_no_api_key"], t0);
   }
 
-  const prompt = SEGMENTATION_PROMPT
+  const promptTemplate = channel === "sms_thread" ? SMS_SEGMENTATION_PROMPT : SEGMENTATION_PROMPT;
+  const prompt = promptTemplate
     .replace("{TRANSCRIPT}", transcript)
     .replace("{MIN_CHARS}", String(min_segment_chars))
-    .replace("{MAX_SEGMENTS}", String(max_segments));
+    .replace("{MAX_SEGMENTS}", String(max_segments))
+    .replace("{KNOWN_PROJECTS}", SMS_KNOWN_PROJECTS.join(", "));
 
   let llmResponse: any;
   try {
@@ -449,7 +494,39 @@ Deno.serve(async (req: Request) => {
     retriedOnce = true;
 
     // Stricter prompt that demands at least 2 chunks
-    const stricterPrompt = `You are a call transcript segmenter for a construction company.
+    const stricterPrompt = channel === "sms_thread"
+      ? `You are an SMS thread segmenter for a construction company.
+
+CRITICAL REQUIREMENT: For transcripts over 2000 characters, you MUST produce AT LEAST 2 batches unless the thread is genuinely single-subject with NO topic pivots.
+
+Your task: Group messages into BATCHES by project or topic.
+
+RULES:
+1. Each batch = contiguous run of messages about same job/subject
+2. For transcripts > 2000 chars: find at least ONE natural pivot where subject/project changes
+3. Single-message batches are allowed only when clearly a different subject
+4. Use known projects when mentioned: {KNOWN_PROJECTS}
+5. Each segment must be >= {MIN_CHARS} characters when possible
+6. Maximum {MAX_SEGMENTS} segments total
+7. Segments must be contiguous (no gaps, no overlaps)
+
+OUTPUT FORMAT (JSON only, no markdown):
+{
+  "segments": [
+    {
+      "span_index": 0,
+      "char_start": 0,
+      "char_end": <end_char>,
+      "boundary_reason": "topic_pivot|project_switch|new_subject|initial_batch",
+      "confidence": 0.0-1.0,
+      "boundary_quote": "<exact quote <=50 chars showing the pivot>"
+    }
+  ]
+}
+
+TRANSCRIPT:
+{TRANSCRIPT}`
+      : `You are a call transcript segmenter for a construction company.
 
 CRITICAL REQUIREMENT: For transcripts over 2000 characters, you MUST produce AT LEAST 2 segments unless the call is genuinely single-topic with NO project switches whatsoever.
 
@@ -483,7 +560,8 @@ TRANSCRIPT:
     const retryPrompt = stricterPrompt
       .replace("{TRANSCRIPT}", transcript)
       .replace("{MIN_CHARS}", String(min_segment_chars))
-      .replace("{MAX_SEGMENTS}", String(max_segments));
+      .replace("{MAX_SEGMENTS}", String(max_segments))
+      .replace("{KNOWN_PROJECTS}", SMS_KNOWN_PROJECTS.join(", "));
 
     try {
       const retryResp = await fetch("https://api.openai.com/v1/chat/completions", {
