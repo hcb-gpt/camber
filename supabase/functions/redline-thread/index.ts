@@ -1,10 +1,13 @@
 import "jsr:@supabase/functions-js/edge-runtime.d.ts";
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
 
-const FUNCTION_VERSION = "redline-thread_v2.0.1";
+const FUNCTION_VERSION = "redline-thread_v2.0.2";
 const OWNER_SMS_USER_IDS = ["+17066889158", "usr_4PCSTDQ8N161KAC4GG7AF9CR94"];
 const OUTBOUND_INFERENCE_WINDOW_MS = 30 * 60 * 1000;
 const OUTBOUND_INFERENCE_MAX_GAP_MS = 60 * 1000;
+const THREAD_SCAN_MULTIPLIER = Number(Deno.env.get("REDLINE_THREAD_SCAN_MULTIPLIER") || "4");
+const THREAD_SCAN_MIN_ITEMS = Number(Deno.env.get("REDLINE_THREAD_SCAN_MIN_ITEMS") || "200");
+const THREAD_SCAN_MAX_ITEMS = Number(Deno.env.get("REDLINE_THREAD_SCAN_MAX_ITEMS") || "1000");
 
 function corsHeaders(): Record<string, string> {
   return {
@@ -214,6 +217,12 @@ async function handleThread(
   offset: number,
   t0: number,
 ): Promise<Response> {
+  const requestedWindow = offset + (limit * (Number.isFinite(THREAD_SCAN_MULTIPLIER) ? THREAD_SCAN_MULTIPLIER : 4));
+  const scanWindow = Math.max(
+    THREAD_SCAN_MIN_ITEMS,
+    Math.min(THREAD_SCAN_MAX_ITEMS, requestedWindow),
+  );
+
   const { data: contact, error: contactErr } = await db
     .from("contacts")
     .select("id, name, phone")
@@ -224,49 +233,30 @@ async function handleThread(
     return json({ ok: false, error_code: "contact_not_found", error: contactErr?.message || "not found" }, 404);
   }
 
-  let allInteractions: any[] = [];
-  let interactionsFrom = 0;
-  const queryPageSize = 1000;
-  while (true) {
-    const interactionsTo = interactionsFrom + queryPageSize - 1;
-    const { data: page, error: intErr } = await db
-      .from("interactions")
-      .select("id, interaction_id, event_at_utc, human_summary, contact_name")
-      .eq("contact_id", contactId)
-      .not("event_at_utc", "is", null)
-      .order("event_at_utc", { ascending: false })
-      .range(interactionsFrom, interactionsTo);
+  const { data: interactionRows, count: interactionCount, error: intErr } = await db
+    .from("interactions")
+    .select("id, interaction_id, event_at_utc, human_summary, contact_name", { count: "exact" })
+    .eq("contact_id", contactId)
+    .not("event_at_utc", "is", null)
+    .order("event_at_utc", { ascending: false })
+    .range(0, scanWindow - 1);
 
-    if (intErr) {
-      return json({ ok: false, error_code: "interactions_query_failed", error: intErr.message }, 500);
-    }
-
-    if (!page || page.length === 0) break;
-    allInteractions = allInteractions.concat(page);
-    if (page.length < queryPageSize) break;
-    interactionsFrom += queryPageSize;
+  if (intErr) {
+    return json({ ok: false, error_code: "interactions_query_failed", error: intErr.message }, 500);
   }
+  const allInteractions: any[] = interactionRows || [];
 
-  let allSmsMessages: any[] = [];
-  let smsFrom = 0;
-  while (true) {
-    const smsTo = smsFrom + queryPageSize - 1;
-    const { data: page, error: smsErr } = await db
-      .from("sms_messages")
-      .select("id, sent_at, content, direction, contact_name, sender_user_id")
-      .eq("contact_phone", contact.phone)
-      .order("sent_at", { ascending: false })
-      .range(smsFrom, smsTo);
+  const { data: smsRows, count: smsCount, error: smsErr } = await db
+    .from("sms_messages")
+    .select("id, sent_at, content, direction, contact_name, sender_user_id", { count: "exact" })
+    .eq("contact_phone", contact.phone)
+    .order("sent_at", { ascending: false })
+    .range(0, scanWindow - 1);
 
-    if (smsErr) {
-      return json({ ok: false, error_code: "sms_query_failed", error: smsErr.message }, 500);
-    }
-
-    if (!page || page.length === 0) break;
-    allSmsMessages = allSmsMessages.concat(page);
-    if (page.length < queryPageSize) break;
-    smsFrom += queryPageSize;
+  if (smsErr) {
+    return json({ ok: false, error_code: "sms_query_failed", error: smsErr.message }, 500);
   }
+  const allSmsMessages: any[] = smsRows || [];
 
   const inboundSms = allSmsMessages.filter((s: any) => String(s.direction || "").toLowerCase() === "inbound");
   const outboundSms = allSmsMessages.filter((s: any) => String(s.direction || "").toLowerCase() === "outbound");
@@ -315,7 +305,11 @@ async function handleThread(
     return String(b.key).localeCompare(String(a.key));
   });
 
-  const totalCount = timeline.length;
+  const callTotal = interactionCount ?? allInteractions.length;
+  const smsTotal = smsCount ?? allSmsMessages.length;
+  const baseTotalCount = callTotal + (hasAnyInbound ? smsTotal : 0);
+  const totalCount = Math.max(baseTotalCount, timeline.length);
+  const hasMoreRows = totalCount > (offset + limit);
   const pagedTimeline = timeline.slice(offset, offset + limit);
 
   if (pagedTimeline.length === 0) {
@@ -323,7 +317,7 @@ async function handleThread(
       ok: true,
       contact: { id: contact.id, name: contact.name, phone: contact.phone },
       thread: [],
-      pagination: { limit, offset, total: totalCount },
+      pagination: { limit, offset, total: totalCount, has_more: hasMoreRows, scan_window: scanWindow },
       function_version: FUNCTION_VERSION,
       ms: Date.now() - t0,
     });
@@ -414,7 +408,13 @@ async function handleThread(
     const dedupedSpans = deduplicateSpans(rawSpans);
     const participants = extractParticipants(rawTranscript);
 
-    const interactionClaims = (claimsPerCall.get(i.interaction_id) || []).map((c: any) => {
+    const callClaimsForInteraction = claimsPerCall.get(i.interaction_id) || [];
+    const claimsBySpanId = groupBy(
+      callClaimsForInteraction.filter((c: any) => !!c.source_span_id),
+      (c: any) => c.source_span_id,
+    );
+
+    const interactionClaims = callClaimsForInteraction.map((c: any) => {
       const g = gradeMap.get(c.id);
       return {
         claim_id: c.id,
@@ -425,6 +425,7 @@ async function handleThread(
         graded_by: g?.graded_by || null,
       };
     });
+    const interactionClaimsById = new Map(interactionClaims.map((claim: any) => [claim.claim_id, claim]));
 
     return {
       type: "call",
@@ -440,9 +441,12 @@ async function handleThread(
         span_index: s.span_index,
         transcript_segment: s.transcript_segment,
         word_count: s.word_count,
-        claims: interactionClaims.filter((c: any) =>
-          callClaims.find((cc: any) => cc.id === c.claim_id && cc.source_span_id === s.id)
-        ),
+        claims: (claimsBySpanId.get(s.id) || [])
+          .map((claim: any) => {
+            const graded = interactionClaimsById.get(claim.id);
+            return graded || null;
+          })
+          .filter((claim: any) => claim !== null),
       })),
       claims: interactionClaims,
     };
@@ -465,7 +469,7 @@ async function handleThread(
     ok: true,
     contact: { id: contact.id, name: contact.name, phone: contact.phone },
     thread,
-    pagination: { limit, offset, total: totalCount },
+    pagination: { limit, offset, total: totalCount, has_more: hasMoreRows, scan_window: scanWindow },
     function_version: FUNCTION_VERSION,
     ms: Date.now() - t0,
   });
