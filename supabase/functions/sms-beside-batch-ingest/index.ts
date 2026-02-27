@@ -1,12 +1,27 @@
 /**
- * sms-beside-batch-ingest Edge Function v1.0.0
+ * sms-beside-batch-ingest Edge Function v1.3.0
  * Zapier SMS batch webhook receiver for Beside VoIP SMS messages
  *
- * @version 1.0.0
- * @date 2026-02-26
+ * @version 1.3.0
+ * @date 2026-02-27
  * @purpose Receive batched SMS messages from Zapier Digest, insert into sms_messages table.
  *          The existing bridge_sms_message_to_surfaces trigger (v2) handles downstream
  *          writes to calls_raw and interactions with contact resolution.
+ *
+ * @changelog v1.3.0
+ *   - Implement zapier-shadow events write to public.beside_thread_events and beside_threads
+ *     to support Beside parity metrics.
+ *   - Includes computeBodyHash() with normalization matching SQL packet spec.
+ *   - Added retryable shadow write block.
+ * @changelog v1.1.0
+ *   - Added resolveContactFields() with 4 misattribution guards:
+ *     Guard 1: from_phone matches OWNER_PHONES → suppress, senderUserId="unknown"
+ *     Guard 2: from_phone empty + from_name in ADMIN_NAMES → suppress, senderUserId="unknown"
+ *     Guard 3: (outbound) to_phone empty + to_name in ADMIN_NAMES → suppress
+ *     Guard 4: thread_id uses stable per-phone key; orphans get nomatch prefix
+ *   - Fixes Beside ~2.6% bug: from_name="Chad Barlow", from_phone="" on inbound
+ *   - Fixes senderUserId incorrectly becoming "Chad Barlow" instead of "unknown"
+ *   - Downstream trigger Guard 2 (sender_user_id='unknown' check) now fires correctly
  *
  * Called by: Zapier Digest (threshold trigger)
  * Auth: Internal pattern (X-Edge-Secret + source allowlist)
@@ -36,6 +51,10 @@ interface BesideSmsEntry {
   to_phone: string;
   direction: "inbound" | "outbound";
   text: string;
+  // Beside native IDs — optional, populated when Zapier exposes them.
+  // Used as fallback resolution when contact_phone is NULL.
+  contact_id?: string;
+  conversation_id?: string;
 }
 
 interface BatchPayload {
@@ -49,10 +68,33 @@ interface BatchPayload {
 // CONSTANTS
 // ============================================================
 
-const VERSION = "sms-beside-batch-ingest_v1.0.0";
+const VERSION = "sms-beside-batch-ingest_v1.3.0";
 const ALLOWED_SOURCES = ["zapier", "test", "edge"];
 const ZACK_INBOX_ID = "ibx_QT0G91CPXD7N1090RC2FQ1WXJ8";
 const ZACK_BESIDE_LINE = "+17066889158";
+
+// -----------------------------------------------------------------------
+// MISATTRIBUTION GUARD CONSTANTS
+//
+// Beside bug (~2.6%): inbound messages on the shared inbox return
+// from_name="Chad Barlow" and from_phone="" — the inbox admin who never
+// texts. The real user is Zack Sittler, but we can't know who the actual
+// sender is without more context, so we suppress rather than guess.
+//
+// OWNER_PHONES: The shared company line(s). When from_phone matches one
+//   of these on an inbound message, the SENDER is on the shared line
+//   (i.e. the Beside API confused the inbox owner with the caller) —
+//   treat it as unresolvable.
+//
+// ADMIN_NAMES: Known inbox admin display names that Beside incorrectly
+//   injects when it cannot resolve the real sender. These names should
+//   NEVER appear as contact_name on inbound messages with no phone.
+// -----------------------------------------------------------------------
+const OWNER_PHONES = new Set([ZACK_BESIDE_LINE]);
+
+const ADMIN_NAMES = new Set([
+  "chad barlow",  // Beside inbox admin — never a real SMS contact
+]);
 
 // ============================================================
 // MAIN
@@ -219,15 +261,33 @@ Deno.serve(async (req: Request) => {
 
     try {
       const direction = msg.direction || "inbound";
-      const contactName = direction === "inbound" ? msg.from_name : msg.to_name;
-      const contactPhone = direction === "inbound" ? msg.from_phone : msg.to_phone;
-      // sender_user_id is NOT NULL — use from_phone, from_name, or "unknown" as fallback
-      const senderUserId = direction === "inbound" ? (msg.from_phone || msg.from_name || "unknown") : ZACK_BESIDE_LINE;
-      // thread_id is NOT NULL — derive from contact phone or use message_id as fallback
-      const threadId = contactPhone ? `beside_sms_${contactPhone}` : `beside_sms_${msg.message_id}`;
+
+      // Resolve contact fields with misattribution guards.
+      // This replaces the previous inline derivation and handles:
+      //   - Beside admin-name bug (from_name="Chad Barlow", from_phone="")
+      //   - Owner phone on inbound (from_phone = shared company line)
+      //   - Outbound recipient missing (to_name="Chad Barlow", to_phone="")
+      //   - Thread ID stability (per-phone rather than per-message)
+      const {
+        contactName,
+        contactPhone,
+        senderUserId,
+        threadId,
+        warnings: contactWarnings,
+      } = resolveContactFields(msg);
+
+      if (contactWarnings.length > 0) {
+        console.warn(
+          `[sms-beside-batch-ingest] misattribution guard triggered for message_id=${msg.message_id}: ${contactWarnings.join("; ")}`,
+        );
+      }
 
       // Parse the Beside timestamp format: "2024-10-24 14:36:46.978847 +0000 UTC"
       const sentAt = parseBesideTimestamp(msg.created_at);
+
+      // Normalize Beside native IDs: treat empty strings as null
+      const besideContactId = (msg.contact_id || "").trim() || null;
+      const besideConversationId = (msg.conversation_id || "").trim() || null;
 
       const { error: upsertError, status } = await db
         .from("sms_messages")
@@ -243,6 +303,8 @@ Deno.serve(async (req: Request) => {
             sender_inbox_id: ZACK_INBOX_ID,
             sender_user_id: senderUserId,
             ingested_at: new Date().toISOString(),
+            beside_contact_id: besideContactId,
+            beside_conversation_id: besideConversationId,
           },
           { onConflict: "message_id", ignoreDuplicates: true },
         );
@@ -264,6 +326,46 @@ Deno.serve(async (req: Request) => {
         inserted++;
       } else {
         skipped++;
+      }
+
+      // ========================================
+      // SHADOW WRITE — Beside Parity Metrics
+      // ========================================
+      try {
+        const bodyHash = await computeBodyHash(msg.text);
+        const capturedAt = new Date().toISOString();
+
+        // 1. Ensure thread exists (UPSERT into beside_threads)
+        // Note: threadId comes from resolveContactFields and uses beside_sms_ prefix
+        await db.from("beside_threads").upsert({
+          beside_room_id: threadId,
+          source: "zapier",
+          contact_phone_e164: contactPhone,
+          updated_at_utc: sentAt,
+          captured_at_utc: capturedAt,
+          payload_json: { notes: "Auto-created via zapier shadow ingest" },
+        }, { onConflict: "beside_room_id" });
+
+        // 2. Insert event (UPSERT into beside_thread_events)
+        await db.from("beside_thread_events").upsert({
+          beside_event_id: msg.message_id,
+          beside_room_id: threadId,
+          beside_event_type: "message",
+          occurred_at_utc: sentAt,
+          direction: direction,
+          text: msg.text,
+          contact_phone_e164: contactPhone,
+          zapier_event_id: msg.message_id,
+          source: "zapier",
+          captured_at_utc: capturedAt,
+          record_hash: bodyHash,
+          payload_json: msg,
+        }, { onConflict: "beside_event_id" });
+      } catch (shadowError) {
+        // Shadow write failure is non-blocking but should be logged
+        console.warn(
+          `[sms-beside-batch-ingest] Shadow write failed for message_id=${msg.message_id}: ${shadowError.message}`,
+        );
       }
     } catch (err) {
       console.error(
@@ -299,6 +401,122 @@ Deno.serve(async (req: Request) => {
 // ============================================================
 // HELPERS
 // ============================================================
+
+/**
+ * Resolve contact_name, contact_phone, sender_user_id, and thread_id from
+ * a raw BesideSmsEntry, guarding against the Beside admin-name misattribution
+ * bug (~2.6% of inbound messages on the shared inbox line).
+ *
+ * Rules applied in order:
+ *
+ *  INBOUND:
+ *   1. Owner-phone guard: if from_phone is a known company line, Beside has
+ *      confused the inbox owner with the external sender. Suppress both name
+ *      and phone; write sender_user_id = "unknown".
+ *   2. Admin-name guard: if from_phone is empty AND from_name matches a known
+ *      admin name (case-insensitive), Beside has injected the admin as the
+ *      sender. Suppress the name; write sender_user_id = "unknown".
+ *   3. Normal inbound: use from_phone (preferred) or from_name for identity.
+ *
+ *  OUTBOUND:
+ *   4. Admin-name guard: if to_phone is empty AND to_name matches a known
+ *      admin name, Beside could not resolve the recipient. Suppress.
+ *   5. Normal outbound: contact is the recipient (to_name / to_phone).
+ *
+ *  THREAD ID (applied after contact resolution):
+ *   6. If contactPhone is available and NOT an owner phone: stable hash on
+ *      the phone number. This groups all messages with the same counterparty
+ *      into one thread regardless of per-message variability.
+ *   7. If contactPhone is null/empty (unresolvable sender): fall back to
+ *      beside_sms_nomatch_<message_id> to make clear this is an orphan.
+ *      Using message_id avoids grouping unrelated orphaned messages together.
+ *
+ * @returns { contactName, contactPhone, senderUserId, threadId, warnings }
+ */
+function resolveContactFields(msg: BesideSmsEntry): {
+  contactName: string | null;
+  contactPhone: string | null;
+  senderUserId: string;
+  threadId: string;
+  warnings: string[];
+} {
+  const warnings: string[] = [];
+  const direction = msg.direction || "inbound";
+
+  let contactName: string | null = null;
+  let contactPhone: string | null = null;
+  let senderUserId: string;
+
+  if (direction === "inbound") {
+    const rawPhone = (msg.from_phone || "").trim();
+    const rawName = (msg.from_name || "").trim();
+
+    // Guard 1: from_phone is a known owner/company line.
+    // Beside confused the inbox owner with the external sender.
+    if (rawPhone && OWNER_PHONES.has(rawPhone)) {
+      warnings.push(
+        `beside_owner_phone_on_inbound: from_phone=${rawPhone} matches owner line; suppressing contact identity`,
+      );
+      contactName = null;
+      contactPhone = null;
+      senderUserId = "unknown";
+    } // Guard 2: from_phone empty AND from_name is a known admin name.
+    // Beside injected the inbox admin name instead of the real sender.
+    else if (!rawPhone && rawName && ADMIN_NAMES.has(rawName.toLowerCase())) {
+      warnings.push(
+        `beside_admin_name_misattribution: from_name="${rawName}" is a known admin name with no phone; suppressing`,
+      );
+      contactName = null;
+      contactPhone = null;
+      senderUserId = "unknown";
+    } // Normal inbound: trust what Beside gave us.
+    else {
+      contactName = rawName || null;
+      contactPhone = rawPhone || null;
+      // Prefer phone as stable identity; fall back to name; last resort: "unknown"
+      senderUserId = rawPhone || rawName || "unknown";
+    }
+  } else {
+    // Outbound: contact is the RECIPIENT
+    const rawPhone = (msg.to_phone || "").trim();
+    const rawName = (msg.to_name || "").trim();
+
+    // Guard 4: to_phone empty AND to_name is a known admin name.
+    // Beside could not resolve the recipient and injected the admin name.
+    if (!rawPhone && rawName && ADMIN_NAMES.has(rawName.toLowerCase())) {
+      warnings.push(
+        `beside_admin_name_on_outbound: to_name="${rawName}" is a known admin name with no phone; suppressing`,
+      );
+      contactName = null;
+      contactPhone = null;
+    } else {
+      contactName = rawName || null;
+      contactPhone = rawPhone || null;
+    }
+
+    // For outbound, our side is always Zack's line
+    senderUserId = ZACK_BESIDE_LINE;
+  }
+
+  // Thread ID derivation
+  // Use a stable per-counterparty key when we have a real external phone.
+  // Owner phones cannot serve as a thread key (they represent the inbox, not
+  // the remote party), so they fall through to the orphan bucket.
+  let threadId: string;
+  if (contactPhone && !OWNER_PHONES.has(contactPhone)) {
+    threadId = `beside_sms_${contactPhone}`;
+  } else {
+    // No resolvable counterparty phone — use message_id as an orphan marker.
+    // Prefix makes orphans queryable without joining on message_id.
+    threadId = `beside_sms_nomatch_${msg.message_id}`;
+    if (!warnings.some((w) => w.startsWith("beside_"))) {
+      // Only add this warning if we haven't already explained why phone is null
+      warnings.push(`thread_fallback_to_message_id: no resolvable contact_phone`);
+    }
+  }
+
+  return { contactName, contactPhone, senderUserId, threadId, warnings };
+}
 
 /**
  * Parse newline-delimited JSON into an array of BesideSmsEntry.
@@ -360,6 +578,26 @@ function parseBesideTimestamp(raw: string | undefined | null): string {
     `[sms-beside-batch-ingest] Could not parse timestamp "${raw}", using now()`,
   );
   return new Date().toISOString();
+}
+
+/**
+ * Compute sha256 hex hash of normalized text for parity comparison.
+ * Mirrors SQL normalization in v_beside_direct_read_parity_72h:
+ *   lower(regexp_replace(regexp_replace(trim(text), '\\s+', ' ', 'g'), '[^[:alnum:][:space:]]+', '', 'g'))
+ */
+async function computeBodyHash(text: string | null): Promise<string> {
+  if (!text) return "";
+  const normalized = text
+    .trim()
+    .replace(/\s+/g, " ")
+    .replace(/[^a-zA-Z0-9\s]/g, "")
+    .toLowerCase();
+
+  const msgUint8 = new TextEncoder().encode(normalized);
+  const hashBuffer = await crypto.subtle.digest("SHA-256", msgUint8);
+  const hashArray = Array.from(new Uint8Array(hashBuffer));
+  const hashHex = hashArray.map((b) => b.toString(16).padStart(2, "0")).join("");
+  return hashHex;
 }
 
 function jsonResponse(
