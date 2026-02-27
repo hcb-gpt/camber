@@ -218,7 +218,8 @@ struct ThreadView: View {
     // MARK: - Body
 
     var body: some View {
-        ScrollViewReader { proxy in
+        let groups = displayGroups
+        return ScrollViewReader { proxy in
             ConversationThread {
                     Color.clear
                         .frame(height: 1)
@@ -231,8 +232,6 @@ struct ThreadView: View {
                                     )
                             }
                         )
-
-                    let groups = displayGroups
 
                     ContactHeader(
                         contactId: contact.contactId.uuidString,
@@ -276,122 +275,7 @@ struct ThreadView: View {
                     }
 
                     ForEach(Array(groups.enumerated()), id: \.element.id) { index, group in
-
-                        // Date separator when the calendar date changes between items.
-                        if shouldShowDateSeparator(at: index, in: groups) {
-                            DateSeparator(date: group.eventAtDate)
-                                .padding(.top, index == 0 ? 12 : 20)
-                                .padding(.bottom, 8)
-                        }
-
-                        switch group {
-                        case .callGroup(let header, let turns):
-                            CallTranscriptCard(
-                                header: header,
-                                turns: turns,
-                                contactName: header.contactName ?? contact.name,
-                                viewModel: viewModel,
-                                projectOptions: reviewProjectOptions,
-                                spanOverrides: spanOverrides,
-                                onAssignSpanProject: { span, selectedProject in
-                                    spanOverrides[span.spanId] = selectedProject
-                                    guard let queueId = span.reviewQueueId else { return }
-                                    Task {
-                                        let didResolve: Bool
-                                        if let projectId = selectedProject.projectId {
-                                            didResolve = await viewModel.resolveAttribution(
-                                                reviewQueueId: queueId,
-                                                projectId: projectId
-                                            )
-                                        } else {
-                                            didResolve = await viewModel.dismissAttribution(
-                                                reviewQueueId: queueId
-                                            )
-                                        }
-                                        if !didResolve {
-                                            spanOverrides.removeValue(forKey: span.spanId)
-                                        } else {
-                                            await MainActor.run {
-                                                triggerAssignmentHaptic()
-                                            }
-                                        }
-                                    }
-                                },
-                                onAddNote: { title, targets in
-                                    openNoteEditor(title: title, targets: targets)
-                                }
-                            )
-                            .padding(.horizontal, 16)
-                            .padding(.bottom, 12)
-
-                        case .smsGroup(let entries, let assignment):
-                            SMSStripeGroup(
-                                entries: entries,
-                                assignment: assignment,
-                                stripeColor: stripeColor(for: assignment),
-                                stripeLabel: assignment?.name,
-                                unresolvedCount: unresolvedSMSCount(in: entries),
-                                projectOptions: reviewProjectOptions,
-                                onAssignProject: { selectedProject in
-                                    for id in entries.map(\.messageId) {
-                                        smsOverrides[id] = selectedProject
-                                    }
-                                    let queueIds = entries
-                                        .compactMap { entry -> String? in
-                                            guard entry.needsAttribution else { return nil }
-                                            return entry.reviewQueueId
-                                        }
-                                    guard !queueIds.isEmpty else { return }
-                                    Task {
-                                        let didResolve: Bool
-                                        if let projectId = selectedProject.projectId {
-                                            didResolve = await viewModel.resolveAttributions(
-                                                reviewQueueIds: queueIds,
-                                                projectId: projectId
-                                            )
-                                        } else {
-                                            didResolve = await viewModel.dismissAttributions(
-                                                reviewQueueIds: queueIds
-                                            )
-                                        }
-                                        if !didResolve {
-                                            for id in entries.map(\.messageId) {
-                                                smsOverrides.removeValue(forKey: id)
-                                            }
-                                        } else {
-                                            await MainActor.run {
-                                                triggerAssignmentHaptic()
-                                            }
-                                        }
-                                    }
-                                },
-                                onOpenPicker: {
-                                    if reviewProjectOptions.isEmpty {
-                                        viewModel.showTransientError("Syncing project list…")
-                                        Task {
-                                            await viewModel.loadReviewProjectsIfNeeded()
-                                        }
-                                    }
-                                },
-                                onAddNote: {
-                                    let label = assignment?.name ?? "SMS"
-                                    let targets = entries.map {
-                                        ThreadNoteTarget(type: .sms, id: $0.messageId)
-                                    }
-                                    openNoteEditor(title: "Notes — \(label)", targets: targets)
-                                }
-                            )
-                                .padding(.horizontal, 16)
-                                .padding(.bottom, 8)
-                        case .voicemail(let entry):
-                            VoicemailCard(entry: entry)
-                                .padding(.horizontal, 16)
-                                .padding(.bottom, 12)
-                        case .aiSummary(let entry):
-                            AISummaryCard(entry: entry)
-                                .padding(.horizontal, 16)
-                                .padding(.bottom, 12)
-                        }
+                        groupView(index: index, group: group, groups: groups)
                     }
 
                     Color.clear
@@ -516,6 +400,129 @@ struct ThreadView: View {
                     }
                 }
             )
+        }
+    }
+
+    @ViewBuilder
+    private func groupView(index: Int, group: DisplayGroup, groups: [DisplayGroup]) -> some View {
+        if shouldShowDateSeparator(at: index, in: groups) {
+            DateSeparator(date: group.eventAtDate)
+                .padding(.top, index == 0 ? 12 : 20)
+                .padding(.bottom, 8)
+        }
+
+        switch group {
+        case .callGroup(let header, let turns):
+            CallTranscriptCard(
+                header: header,
+                turns: turns,
+                contactName: header.contactName ?? contact.name,
+                viewModel: viewModel,
+                projectOptions: reviewProjectOptions,
+                spanOverrides: spanOverrides,
+                onAssignSpanProject: { span, selectedProject in
+                    assignSpan(span, to: selectedProject)
+                },
+                onAddNote: { title, targets in
+                    openNoteEditor(title: title, targets: targets)
+                }
+            )
+            .padding(.horizontal, 16)
+            .padding(.bottom, 12)
+
+        case .smsGroup(let entries, let assignment):
+            SMSStripeGroup(
+                entries: entries,
+                assignment: assignment,
+                stripeColor: stripeColor(for: assignment),
+                stripeLabel: assignment?.name,
+                unresolvedCount: unresolvedSMSCount(in: entries),
+                projectOptions: reviewProjectOptions,
+                onAssignProject: { selectedProject in
+                    assignSMS(entries, to: selectedProject)
+                },
+                onOpenPicker: {
+                    if reviewProjectOptions.isEmpty {
+                        viewModel.showTransientError("Syncing project list…")
+                        Task {
+                            await viewModel.loadReviewProjectsIfNeeded()
+                        }
+                    }
+                },
+                onAddNote: {
+                    let label = assignment?.name ?? "SMS"
+                    let targets = entries.map {
+                        ThreadNoteTarget(type: .sms, id: $0.messageId)
+                    }
+                    openNoteEditor(title: "Notes — \(label)", targets: targets)
+                }
+            )
+            .padding(.horizontal, 16)
+            .padding(.bottom, 8)
+
+        case .voicemail(let entry):
+            VoicemailCard(entry: entry)
+                .padding(.horizontal, 16)
+                .padding(.bottom, 12)
+
+        case .aiSummary(let entry):
+            AISummaryCard(entry: entry)
+                .padding(.horizontal, 16)
+                .padding(.bottom, 12)
+        }
+    }
+
+    private func assignSpan(_ span: SpanEntry, to selectedProject: SMSProjectAssignment) {
+        spanOverrides[span.spanId] = selectedProject
+        guard let queueId = span.reviewQueueId else { return }
+        guard let projectId = selectedProject.projectId else {
+            spanOverrides.removeValue(forKey: span.spanId)
+            viewModel.showTransientError("Select a project before applying attribution.")
+            return
+        }
+        Task {
+            let didResolve = await viewModel.resolveAttribution(
+                reviewQueueId: queueId,
+                projectId: projectId
+            )
+            if !didResolve {
+                spanOverrides.removeValue(forKey: span.spanId)
+            } else {
+                await MainActor.run {
+                    triggerAssignmentHaptic()
+                }
+            }
+        }
+    }
+
+    private func assignSMS(_ entries: [SMSEntry], to selectedProject: SMSProjectAssignment) {
+        guard let projectId = selectedProject.projectId else {
+            viewModel.showTransientError("Select a project before applying attribution.")
+            return
+        }
+        for id in entries.map(\.messageId) {
+            smsOverrides[id] = selectedProject
+        }
+        let queueIds = entries
+            .compactMap { entry -> String? in
+                guard entry.needsAttribution else { return nil }
+                return entry.reviewQueueId
+            }
+        guard !queueIds.isEmpty else { return }
+        Task {
+            let didResolve = await viewModel.resolveAttributions(
+                reviewQueueIds: queueIds,
+                projectId: projectId
+            )
+            if !didResolve {
+                for id in entries.map(\.messageId) {
+                    smsOverrides.removeValue(forKey: id)
+                }
+            } else {
+                await MainActor.run {
+                    triggerAssignmentHaptic()
+                }
+            }
         }
     }
 
@@ -1233,26 +1240,6 @@ private struct SpanBlock: View {
     }
 
     private var resolvedProjectAssignment: SMSProjectAssignment? {
-        let id = span.projectId?.trimmingCharacters(in: .whitespacesAndNewlines)
-        let name = span.projectName?.trimmingCharacters(in: .whitespacesAndNewlines)
-
-        if let id, !id.isEmpty {
-            let displayName = (name?.isEmpty == false ? name : "Assigned Project") ?? "Assigned Project"
-            return SMSProjectAssignment(
-                projectId: id,
-                name: displayName,
-                colorIndex: stableColorIndex(seed: id)
-            )
-        }
-
-        if let name, !name.isEmpty {
-            return SMSProjectAssignment(
-                projectId: nil,
-                name: name,
-                colorIndex: stableColorIndex(seed: name)
-            )
-        }
-
         return nil
     }
 
@@ -1265,13 +1252,6 @@ private struct SpanBlock: View {
 
     private var unknownAssignment: SMSProjectAssignment {
         SMSProjectAssignment(projectId: nil, name: "Unknown Project", colorIndex: nil)
-    }
-
-    private func stableColorIndex(seed: String) -> Int {
-        let raw = seed.unicodeScalars.reduce(0) { partialResult, scalar in
-            partialResult + Int(scalar.value)
-        }
-        return abs(raw) % max(Self.spanColors.count, 1)
     }
 
     private var parsedTurns: [SpeakerTurn] {
