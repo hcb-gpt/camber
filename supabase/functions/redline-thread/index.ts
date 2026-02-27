@@ -1,7 +1,14 @@
 import "jsr:@supabase/functions-js/edge-runtime.d.ts";
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
 
-const FUNCTION_VERSION = "redline-thread_v2.8.0";
+const FUNCTION_VERSION = "redline-thread_v3.0.0";
+/**
+ * v3.0.0 - Contact-first browsing view (CEO directive)
+ * - New landing page: iOS-style contact list sorted by recency
+ * - Integrated thread detail view (calls + SMS)
+ * - Integrated triage view
+ * - Relative timestamps and blue dots for unreviewed items
+ */
 const OWNER_SMS_USER_IDS = ["+17066889158", "usr_4PCSTDQ8N161KAC4GG7AF9CR94"];
 const OUTBOUND_INFERENCE_WINDOW_MS = 30 * 60 * 1000;
 const OUTBOUND_INFERENCE_MAX_GAP_MS = 60 * 1000;
@@ -2057,475 +2064,478 @@ const _ICON_192 =
 const _ICON_512 =
   "iVBORw0KGgoAAAANSUhEUgAAAgAAAAIACAYAAAD0eNT6AAAXbUlEQVR4nO3de4yld13H8e+ZM2dmzs7s7Ozvfda2DoEAobTgqCJAgwq9qCRSsFIoBaVuTHwhuEKibap8lapS1EaldakqggNyTMBCKQWKrFwELimVSeQkmGJhJQ12cNhdh7t3zs7O3C9nTg9eHJxsdn1+w/Pn+37d99kvO/vmeZ55fs/zeJJCAUbl4h4AiBMBwDQCgGkEANMIAKYRAEwjAJhGADCNAGAaAcA0AoBpBADTCACmEQBMIwCYRgAwjQBgGgHANAKAaQQA0wgAphEATCMAmEYAMI0AYBoBwDQCgGkEANMIAKYRAEwjAJhGADCNAGAaAcA0AoBpBADTCACmEQBMIwCYRgAwjQBgGgHANAKAaQQA0wgAphEATCMAmEYAMI0AYBoBwLRC3AMk1a2lko76vpYLBXkxzTAKQ/XDUP3xWOtBoMtBoPPDoS5tb8c0UfZ4ksK4h0iabxWLOrO6qrIX17/+zjZHI/2t39f7vZ7e7XbVGo3iHim1CGCKJ2o1Pbu8HPcYuzIMQ53pdHSq1dJ/rl2Le5zU4Rxgin2F9BwZljxPD1SreuuWW/TCwYOq5fNxj5QqBDBFMg98dpaT9FC1qjOrq7qnUol7nNQggIzZn8/r1MqKHllainuUVCCADMpLeu7AAf2sVot7lMQjgAz7xfKy7vf9uMdINALIMF/Sr266SSvFYtyjJBYBZJyfy+mXBw7IPUaCAACShAAAhAQAAISEAACSEgAAkJAAAICEBAAAJCQAACAhAQAACQkAAEhIAABAQgIAABISAACQkAAAgIQEAAAkJAAAICEBAAAJCQAASEgAAEBCAgAAEhIAAJCQAACAhAQAACQkAAEhIAABAQgIAABISAACQkAAAgIQEAAAkJAAAICEBAAAJCQAASEgAAEBCAgAAEhIAAJCQAACAhAQAACQkAAEhIAABAQgIAABISAACQkAAAgIQEAAAkJAAAICEBAAAJCQAASEgAAEBCAgAAEhIAAJCQAACAhAQAACQkAAEhIAABAQgIAABISAACQkAAAgIQEAAAkJAAAICEBAAAJCQAASEgAAEBCAgAAEhIAAJCQAACAhAQAACQkAAEhIAABAQgIAABISAACQkAAAgIQEAAAkJAAAICEBAAAJCQAASEgAAEBCAgAAEhIAAJCQAACAhAQAACQkAAEhIAABAQgIAABISAACQkAAAgIQEAAAkJAAAICEBAAAJCQAASEgAAEBCAgAAEhIAAJCQAACAhAQAACQkAAEhIAABAQgIAABISAACQkAAAgIQEAAAkJAAAICEBAAAJCQAASEgAAEBCAgAAEhIAAJCQAACAhAQAACQkAAEhIAABAQgIAABISAACQkAAAgIQEAAAkJAAAICEBAAAJCQAASEgAAEBCAgAAEhIAAJCQAACAhAQAACQkAAEhIAABAQgIAABISAACQkAAAgIQEAAAkJAAAICEBAAAJCQAASEgAAEBCAgAAEhIAAJCQAACAhAQAACQkAAEhIAABAQgIAABISAACQkAAAgIQEAAAkJAAAICEBAAAJCQAASEgAAEBCAgAAEhIAAJCQAACAhAQAACQkAAEhIAABAQgIAABISAACQkAAAgIQEAAAkJAAAICEBAAAJCQAASEgAAEBCAgAAEhIAAJCQAACAhAQAACQkAAEhIAABAQgIAABISAACQkAAAgIQEAAAkJAAAICEBAAAJCQAASEgAAEBCAgAAEhIAAJCQAACAhAQAACQkAAEhIAABAQgIAABISAACQkAAAgIQEAAAkJAAAICEBAAAJCQAASEgAAEBCAgAAEhIAAJCQAACAhAQAACQkAAEhIAABAQgIAABISAACQkAAAgIQEAAAkJAAAICEBAAAJCQAASEgAAEBCAgAAEhIAAJCQAACAhAQAACQkAAEhIAABAQgIAABISAACQkAAAgIQEAAAkJAAAICEBAAAJCQAASEgAAEBCAgAAEhIAAJCQAACAhAQAACQkAAEhIAABAQgIAABISAACQkAAAgIQEAAAkJAAAICEBAAAJCQAASEgAAEBCAgAAEhIAAJCQAACAhAQAACQkAAEhIAABAQgIAABISAACQkAAAgIQEAAAkJAAAICEBAAAJCQAASEgAAEBCAgAAEhIAAJCQAACAhAQAACQkAAEhIAABAQgIAABISAACQkAAAgIQEAAAkJAAAICEBAAAJCQAASEgAAEBCAgAAEhIAAJCQAACAhAQAACQkAAEhIAABAQgIAABISAACQkAAAgIQEAAAkJAAAICEBAAAJCQAASEgAAEBCAgAAEhIAAJCQAACAhAQAACQkAAEhIAABAQgIAABISAACQkAAAgIQEAAAkJAAAICEBAAAJCQAASEgAAEBCAgAAEhIAAJCQAACAhAQAACQkAAEhIAABAQgIAABISAACQkAAAgIQEAAAkJAAAICEBAAAJCQ==";
 
-// HTML UI — single-card triage for pending review_queue items.
+// HTML UI — Modern multi-view PWA (Contacts, Thread, Triage)
 const HTML = `<!DOCTYPE html>
 <html lang="en">
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no,viewport-fit=cover" />
-  <title>Redline Triage</title>
+  <title>Redline</title>
   <style>
     :root {
       color-scheme: dark;
-      --bg: #0b0c10;
-      --surface: #151821;
-      --surface-2: #1c2130;
-      --text: #e7ebf3;
-      --muted: #98a2b3;
-      --border: #2a3144;
-      --accent: #3fb950;
-      --danger: #f85149;
-      --warning: #f2cc60;
-      --chip: #20283a;
-      --radius: 14px;
+      --bg: #000000;
+      --surface: #121212;
+      --surface-2: #1c1c1e;
+      --text: #ffffff;
+      --muted: #8e8e93;
+      --border: #2c2c2e;
+      --accent: #0a84ff;
+      --danger: #ff453a;
+      --success: #32d74b;
+      --warning: #ffd60a;
+      --radius: 12px;
       --safe-top: env(safe-area-inset-top);
       --safe-bottom: env(safe-area-inset-bottom);
     }
-    * { box-sizing: border-box; }
+    * { box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
     body {
       margin: 0;
-      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
-      background: radial-gradient(circle at top, #151a25 0%, #0b0c10 50%, #0b0c10 100%);
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+      background: var(--bg);
       color: var(--text);
-      min-height: 100dvh;
-      padding: max(12px, var(--safe-top)) 12px max(12px, var(--safe-bottom));
+      line-height: 1.4;
+      overflow-x: hidden;
     }
-    #app { max-width: 840px; margin: 0 auto; }
-    #header {
+    #app {
+      display: flex;
+      flex-direction: column;
+      min-height: 100dvh;
+      padding-top: var(--safe-top);
+      padding-bottom: var(--safe-bottom);
+    }
+    
+    /* Navigation Bar */
+    header {
+      position: sticky;
+      top: 0;
+      z-index: 100;
+      background: rgba(0, 0, 0, 0.8);
+      backdrop-filter: blur(20px);
+      -webkit-backdrop-filter: blur(20px);
+      border-bottom: 0.5px solid var(--border);
+      padding: 12px 16px;
       display: flex;
       align-items: center;
       justify-content: space-between;
-      gap: 12px;
-      margin-bottom: 10px;
+      min-height: 54px;
     }
-    #title-wrap { display: flex; flex-direction: column; gap: 4px; }
-    #title { font-size: 20px; font-weight: 700; letter-spacing: -0.02em; }
-    #subtitle { font-size: 12px; color: var(--muted); }
-    #meta {
-      display: inline-flex;
+    .nav-left, .nav-right { flex: 1; display: flex; align-items: center; }
+    .nav-right { justify-content: flex-end; }
+    .nav-center { flex: 2; text-align: center; font-weight: 700; font-size: 17px; }
+    
+    .btn-nav {
+      background: none;
+      border: none;
+      color: var(--accent);
+      font-size: 17px;
+      padding: 0;
+      cursor: pointer;
+      display: flex;
       align-items: center;
-      gap: 8px;
-      font-size: 12px;
-      color: var(--muted);
-      background: var(--surface);
-      border: 1px solid var(--border);
-      border-radius: 999px;
-      padding: 8px 10px;
-      white-space: nowrap;
+      gap: 4px;
     }
-    #card {
-      background: var(--surface);
+    .btn-nav:disabled { color: var(--muted); opacity: 0.5; }
+
+    /* Views */
+    .view { display: none; flex: 1; flex-direction: column; }
+    .view.active { display: flex; }
+
+    /* Contact List */
+    .list-container { flex: 1; }
+    .list-row {
+      display: flex;
+      padding: 12px 16px;
+      border-bottom: 0.5px solid var(--border);
+      cursor: pointer;
+      text-decoration: none;
+      color: inherit;
+      position: relative;
+    }
+    .list-row:active { background: var(--surface-2); }
+    .avatar {
+      width: 48px;
+      height: 48px;
+      border-radius: 50%;
+      background: #333;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-weight: 600;
+      font-size: 18px;
+      margin-right: 12px;
+      flex-shrink: 0;
+    }
+    .content-wrap { flex: 1; min-width: 0; }
+    .row-top { display: flex; justify-content: space-between; align-items: baseline; margin-bottom: 2px; }
+    .contact-name { font-weight: 600; font-size: 16px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+    .row-time { font-size: 14px; color: var(--muted); margin-left: 8px; flex-shrink: 0; }
+    .row-preview {
+      font-size: 14px;
+      color: var(--muted);
+      display: -webkit-box;
+      -webkit-line-clamp: 2;
+      -webkit-box-orient: vertical;
+      overflow: hidden;
+      line-height: 1.3;
+    }
+    .unread-dot {
+      width: 10px;
+      height: 10px;
+      background: var(--accent);
+      border-radius: 50%;
+      position: absolute;
+      left: 4px;
+      top: 31px;
+    }
+
+    /* Thread View */
+    .message-list { padding: 16px; display: flex; flex-direction: column; gap: 12px; }
+    .bubble {
+      max-width: 85%;
+      padding: 10px 14px;
+      border-radius: 18px;
+      font-size: 16px;
+      position: relative;
+      word-wrap: break-word;
+    }
+    .bubble.inbound {
+      align-self: flex-start;
+      background: var(--surface-2);
+      border-bottom-left-radius: 4px;
+    }
+    .bubble.outbound {
+      align-self: flex-end;
+      background: var(--accent);
+      color: white;
+      border-bottom-right-radius: 4px;
+    }
+    .bubble.call {
+      align-self: center;
+      background: transparent;
       border: 1px solid var(--border);
+      color: var(--muted);
+      font-size: 13px;
+      text-align: center;
+      border-radius: 10px;
+      max-width: 90%;
+    }
+    .bubble-meta { font-size: 11px; margin-top: 4px; opacity: 0.7; }
+    
+    /* Triage View (Existing logic preservation) */
+    #triage-card {
+      margin: 16px;
+      background: var(--surface-2);
       border-radius: var(--radius);
       padding: 16px;
-      min-height: 220px;
-    }
-    #contact-row {
       display: flex;
-      align-items: center;
-      justify-content: space-between;
-      gap: 10px;
-      margin-bottom: 8px;
+      flex-direction: column;
+      gap: 12px;
     }
-    #contact-name {
-      font-size: 17px;
-      font-weight: 650;
-      letter-spacing: -0.01em;
-    }
-    #created-at {
-      font-size: 12px;
-      color: var(--muted);
-    }
-    #chips {
-      display: flex;
-      flex-wrap: wrap;
-      gap: 6px;
-      margin-bottom: 12px;
-    }
-    .chip {
-      display: inline-flex;
-      align-items: center;
-      gap: 5px;
-      font-size: 12px;
-      color: var(--muted);
-      background: var(--chip);
-      border: 1px solid var(--border);
+    #triage-snippet {
+      background: rgba(0,0,0,0.2);
       border-radius: 8px;
-      padding: 5px 8px;
-    }
-    .chip.suggested { color: var(--accent); border-color: rgba(63,185,80,0.35); }
-    .chip.warning { color: var(--warning); border-color: rgba(242,204,96,0.35); }
-    #snippet {
-      background: var(--surface-2);
-      border: 1px solid var(--border);
-      border-radius: 10px;
       padding: 12px;
-      min-height: 110px;
-      white-space: pre-wrap;
-      line-height: 1.5;
       font-size: 15px;
-      color: #f1f3f8;
+      min-height: 120px;
+      white-space: pre-wrap;
     }
-    #actions {
-      margin-top: 12px;
-      display: grid;
-      grid-template-columns: repeat(4, minmax(0, 1fr));
-      gap: 8px;
-    }
-    button {
-      appearance: none;
-      border: 1px solid var(--border);
+    .triage-actions { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
+    .btn-triage {
+      padding: 12px;
       border-radius: 10px;
-      background: #242c40;
-      color: var(--text);
-      font-size: 14px;
+      border: none;
       font-weight: 600;
-      min-height: 44px;
+      font-size: 15px;
       cursor: pointer;
-      padding: 10px 8px;
     }
-    button:disabled { opacity: 0.45; cursor: not-allowed; }
-    #accept { background: rgba(63,185,80,0.2); border-color: rgba(63,185,80,0.55); color: #9beaac; }
-    #reject { background: rgba(248,81,73,0.18); border-color: rgba(248,81,73,0.45); color: #ffb4ae; }
-    #skip { background: rgba(152,162,179,0.12); }
-    #undo { background: rgba(242,204,96,0.14); border-color: rgba(242,204,96,0.4); color: #ffe399; }
-    #legend {
-      margin-top: 12px;
-      font-size: 12px;
-      color: var(--muted);
-      display: flex;
-      flex-wrap: wrap;
-      gap: 10px;
-    }
-    #empty {
-      text-align: center;
-      color: var(--muted);
-      padding: 46px 12px;
-      border: 1px dashed var(--border);
-      border-radius: 12px;
-      margin-top: 8px;
-      display: none;
-    }
+    .btn-accept { background: var(--success); color: black; }
+    .btn-reject { background: var(--danger); color: white; }
+    .btn-skip { background: var(--muted); color: white; }
+    .btn-undo { background: var(--warning); color: black; }
+
+    /* Utilities */
+    .loading { padding: 40px; text-align: center; color: var(--muted); }
+    .empty { padding: 40px; text-align: center; color: var(--muted); }
     #toast {
       position: fixed;
       left: 50%;
-      bottom: calc(14px + var(--safe-bottom));
+      bottom: calc(20px + var(--safe-bottom));
       transform: translateX(-50%);
-      background: rgba(12, 15, 22, 0.94);
-      border: 1px solid var(--border);
-      color: var(--text);
-      border-radius: 10px;
-      padding: 10px 12px;
-      font-size: 13px;
+      background: rgba(30, 30, 30, 0.95);
+      padding: 10px 20px;
+      border-radius: 20px;
+      font-size: 14px;
+      z-index: 1000;
       display: none;
-      z-index: 100;
-    }
-    @media (max-width: 640px) {
-      #actions { grid-template-columns: 1fr 1fr; }
-      #meta { font-size: 11px; }
     }
   </style>
 </head>
 <body>
   <div id="app">
-    <div id="header">
-      <div id="title-wrap">
-        <div id="title">Redline Triage</div>
-        <div id="subtitle">Single-item review flow (A accept, X reject, Space skip, U undo)</div>
+    <header>
+      <div class="nav-left">
+        <button id="btn-back" class="btn-nav" style="display:none">Back</button>
+        <button id="btn-refresh" class="btn-nav">Refresh</button>
       </div>
-      <div id="meta">
-        <span id="position">0 / 0</span>
-        <span>·</span>
-        <span id="pending-total">0 pending</span>
+      <div class="nav-center" id="nav-title">Redline</div>
+      <div class="nav-right">
+        <button id="btn-triage-toggle" class="btn-nav">Triage</button>
+      </div>
+    </header>
+
+    <div id="view-contacts" class="view active">
+      <div id="contact-list" class="list-container">
+        <div class="loading">Loading contacts…</div>
       </div>
     </div>
 
-    <div id="card">
-      <div id="contact-row">
-        <div id="contact-name">Loading…</div>
-        <div id="created-at"></div>
-      </div>
-      <div id="chips"></div>
-      <div id="snippet">Loading review queue…</div>
-      <div id="actions">
-        <button id="accept" type="button">Accept (A)</button>
-        <button id="reject" type="button">Reject (X)</button>
-        <button id="skip" type="button">Skip (Space)</button>
-        <button id="undo" type="button">Undo (U)</button>
-      </div>
-      <div id="legend">
-        <span>Accept assigns suggested project.</span>
-        <span>Reject resolves as no-project.</span>
-        <span>Skip moves item to back.</span>
+    <div id="view-thread" class="view">
+      <div id="message-list" class="message-list">
+        <div class="loading">Loading thread…</div>
       </div>
     </div>
 
-    <div id="empty">No pending review items right now.</div>
+    <div id="view-triage" class="view">
+      <div id="triage-card">
+        <div style="display:flex; justify-content:space-between; font-size:13px; color:var(--muted)">
+          <span id="triage-pos">0 / 0</span>
+          <span id="triage-contact">Loading…</span>
+        </div>
+        <div id="triage-snippet"></div>
+        <div id="triage-chips" style="display:flex; flex-wrap:wrap; gap:6px"></div>
+        <div class="triage-actions">
+          <button id="triage-accept" class="btn-triage btn-accept">Accept (A)</button>
+          <button id="triage-reject" class="btn-triage btn-reject">Reject (X)</button>
+          <button id="triage-skip" class="btn-triage btn-muted" style="grid-column: span 2">Skip (Space)</button>
+          <button id="triage-undo" class="btn-triage btn-warning" style="grid-column: span 2">Undo (U)</button>
+        </div>
+      </div>
+      <div id="triage-empty" class="empty" style="display:none">No pending items.</div>
+    </div>
   </div>
+
   <div id="toast"></div>
 
   <script>
-    (function () {
-      "use strict";
-
-      var BASE = window.location.origin + window.location.pathname;
-      var S = { items: [], idx: 0, totalPending: 0, busy: false, lastAction: null };
-
-      function esc(v) {
-        var d = document.createElement("div");
-        d.textContent = v == null ? "" : String(v);
-        return d.innerHTML;
-      }
-
-      function fmtDate(value) {
-        if (!value) return "";
-        var dt = new Date(value);
-        if (isNaN(dt.getTime())) return "";
-        return dt.toLocaleString("en-US", { month: "short", day: "numeric", hour: "numeric", minute: "2-digit" });
-      }
-
-      function currentItem() {
-        if (!S.items.length) return null;
-        if (S.idx < 0) S.idx = 0;
-        if (S.idx >= S.items.length) S.idx = S.items.length - 1;
-        return S.items[S.idx] || null;
-      }
+    (function() {
+      const BASE = window.location.origin + window.location.pathname;
+      const S = {
+        view: 'contacts',
+        contacts: [],
+        items: [],
+        idx: 0,
+        currentThread: null,
+        busy: false,
+        lastAction: null
+      };
 
       function toast(msg) {
-        var el = document.getElementById("toast");
-        el.textContent = msg || "";
-        el.style.display = "block";
+        const el = document.getElementById('toast');
+        el.textContent = msg;
+        el.style.display = 'block';
         clearTimeout(toast._t);
-        toast._t = setTimeout(function () { el.style.display = "none"; }, 1800);
+        toast._t = setTimeout(() => el.style.display = 'none', 2000);
       }
 
-      async function apiQueue() {
-        var res = await fetch(BASE + "?action=triage_queue&limit=200", { cache: "no-store" });
-        return await res.json();
+      function relTime(dateStr) {
+        if (!dateStr) return '';
+        const date = new Date(dateStr);
+        const now = new Date();
+        const diff = (now - date) / 1000;
+        if (diff < 60) return 'now';
+        if (diff < 3600) return Math.floor(diff / 60) + 'm';
+        if (diff < 86400) return Math.floor(diff / 3600) + 'h';
+        if (diff < 604800) return Math.floor(diff / 86400) + 'd';
+        return date.toLocaleDateString(undefined, { month: 'short', day: 'numeric' });
       }
 
-      async function apiVerdict(reviewQueueId, verdict, projectId) {
-        var body = {
-          review_queue_id: reviewQueueId,
-          verdict: verdict,
-          user_id: "chad",
-          source: "redline"
-        };
-        if (projectId) body.project_id = projectId;
-        var res = await fetch(BASE + "/redline/verdict", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          cache: "no-store",
-          body: JSON.stringify(body)
-        });
-        return await res.json();
-      }
+      function showView(viewName) {
+        S.view = viewName;
+        document.querySelectorAll('.view').forEach(v => v.classList.remove('active'));
+        document.getElementById('view-' + viewName).classList.add('active');
+        
+        const back = document.getElementById('btn-back');
+        const refresh = document.getElementById('btn-refresh');
+        const triage = document.getElementById('btn-triage-toggle');
+        const title = document.getElementById('nav-title');
 
-      async function apiUndo(reviewQueueId) {
-        var res = await fetch(BASE + "?action=undo_verdict", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          cache: "no-store",
-          body: JSON.stringify({ review_queue_id: reviewQueueId })
-        });
-        return await res.json();
-      }
-
-      function updateHeader() {
-        var pos = S.items.length ? (S.idx + 1) : 0;
-        document.getElementById("position").textContent = pos + " / " + S.items.length;
-        document.getElementById("pending-total").textContent = S.totalPending + " pending";
-      }
-
-      function renderCard(item) {
-        var contactName = item.contact_name || "Unknown contact";
-        var createdAt = fmtDate(item.created_at);
-        var reason = item.reason || "review";
-        var channel = item.channel || "unknown";
-        var module = item.module || "unset";
-        var confidence = typeof item.confidence === "number" ? Math.round(item.confidence * 100) + "%" : "n/a";
-        var suggestedName = item.suggested_project_name || null;
-        var suggestedId = item.suggested_project_id || null;
-        var snippet = item.transcript_snippet || "(no transcript snippet)";
-
-        document.getElementById("contact-name").textContent = contactName;
-        document.getElementById("created-at").textContent = createdAt;
-        document.getElementById("snippet").textContent = snippet;
-
-        var chipsHtml = "";
-        chipsHtml += '<span class="chip">reason: ' + esc(reason) + '</span>';
-        chipsHtml += '<span class="chip">channel: ' + esc(channel) + '</span>';
-        chipsHtml += '<span class="chip">module: ' + esc(module) + '</span>';
-        chipsHtml += '<span class="chip">confidence: ' + esc(confidence) + '</span>';
-        if (suggestedId) {
-          chipsHtml += '<span class="chip suggested">suggested: ' + esc(suggestedName || suggestedId) + '</span>';
-        } else {
-          chipsHtml += '<span class="chip warning">no suggested project</span>';
+        if (viewName === 'contacts') {
+          back.style.display = 'none';
+          refresh.style.display = 'block';
+          triage.style.display = 'block';
+          triage.textContent = 'Triage';
+          title.textContent = 'Redline';
+          loadContacts();
+        } else if (viewName === 'thread') {
+          back.style.display = 'block';
+          refresh.style.display = 'none';
+          triage.style.display = 'none';
+          title.textContent = S.currentThread?.name || 'Thread';
+        } else if (viewName === 'triage') {
+          back.style.display = 'block';
+          refresh.style.display = 'none';
+          triage.style.display = 'none';
+          title.textContent = 'Triage';
+          loadTriage();
         }
-        document.getElementById("chips").innerHTML = chipsHtml;
-
-        document.getElementById("accept").disabled = S.busy || !suggestedId;
-        document.getElementById("reject").disabled = S.busy;
-        document.getElementById("skip").disabled = S.busy;
-        document.getElementById("undo").disabled = S.busy || !S.lastAction;
       }
 
-      function render() {
-        updateHeader();
-        var item = currentItem();
-        var empty = document.getElementById("empty");
-        var card = document.getElementById("card");
+      async function loadContacts() {
+        const listEl = document.getElementById('contact-list');
+        const res = await fetch(BASE + '?action=contacts&refresh=1');
+        const data = await res.json();
+        if (!data.ok) return toast('Failed to load contacts');
+        S.contacts = data.contacts;
+        
+        if (S.contacts.length === 0) {
+          listEl.innerHTML = '<div class="empty">No active contacts.</div>';
+          return;
+        }
+
+        listEl.innerHTML = S.contacts.map(c => \`
+          <div class="list-row" onclick="window.app.openThread('\${c.contact_id}', '\${c.name}')">
+            \${c.ungraded_count > 0 ? '<div class="unread-dot"></div>' : ''}
+            <div class="avatar">\${(c.name || 'U')[0]}</div>
+            <div class="content-wrap">
+              <div class="row-top">
+                <div class="contact-name">\${c.name || c.phone || 'Unknown'}</div>
+                <div class="row-time">\${relTime(c.last_activity)}</div>
+              </div>
+              <div class="row-preview">\${c.last_summary || 'No messages'}</div>
+            </div>
+          </div>
+        \`).join('');
+      }
+
+      async function loadThread(contactId) {
+        const listEl = document.getElementById('message-list');
+        listEl.innerHTML = '<div class="loading">Loading messages…</div>';
+        const res = await fetch(BASE + '?contact_id=' + contactId + '&limit=100');
+        const data = await res.json();
+        if (!data.ok) return toast('Failed to load thread');
+        
+        listEl.innerHTML = data.thread.map(m => {
+          if (m.type === 'call') {
+            return \`<div class="bubble call">
+              Call \${m.direction === 'inbound' ? 'from' : 'to'} \${m.contact_name}<br/>
+              \${m.summary || 'No summary'}<br/>
+              <span class="bubble-meta">\${relTime(m.event_at)}</span>
+            </div>\`;
+          }
+          const cls = m.direction === 'inbound' ? 'inbound' : 'outbound';
+          return \`<div class="bubble \${cls}">
+            \${m.content}
+            <div class="bubble-meta">\${relTime(m.event_at)}</div>
+          </div>\`;
+        }).join('');
+        
+        window.scrollTo(0, document.body.scrollHeight);
+      }
+
+      async function loadTriage() {
+        if (S.items.length > 0) return renderTriage();
+        const res = await fetch(BASE + "?action=triage_queue&limit=200");
+        const data = await res.json();
+        if (!data.ok) return toast('Triage load failed');
+        S.items = data.items || [];
+        S.idx = 0;
+        renderTriage();
+      }
+
+      function renderTriage() {
+        const card = document.getElementById('triage-card');
+        const empty = document.getElementById('triage-empty');
+        const item = S.items[S.idx];
 
         if (!item) {
-          card.style.display = "none";
-          empty.style.display = "block";
+          card.style.display = 'none';
+          empty.style.display = 'block';
           return;
         }
-        empty.style.display = "none";
-        card.style.display = "block";
-        renderCard(item);
+        card.style.display = 'flex';
+        empty.style.display = 'none';
+
+        document.getElementById('triage-pos').textContent = (S.idx + 1) + ' / ' + S.items.length;
+        document.getElementById('triage-contact').textContent = item.contact_name;
+        document.getElementById('triage-snippet').textContent = item.transcript_snippet || '(No transcript)';
+        
+        const chips = document.getElementById('triage-chips');
+        chips.innerHTML = \`<span style="background:var(--surface); padding:4px 8px; border-radius:6px; font-size:11px">Suggested: \${item.suggested_project_name || 'None'}</span>\`;
+        
+        document.getElementById('triage-accept').disabled = !item.suggested_project_id;
       }
 
-      function removeCurrent() {
-        if (!S.items.length) return null;
-        var removed = S.items.splice(S.idx, 1)[0];
-        if (S.idx >= S.items.length) {
-          S.idx = Math.max(0, S.items.length - 1);
-        }
-        return removed;
-      }
-
-      async function doAccept() {
-        var item = currentItem();
-        if (!item || S.busy) return;
-        if (!item.suggested_project_id) {
-          toast("No suggested project for this item");
-          return;
-        }
-        S.busy = true;
-        render();
-        var result = await apiVerdict(item.review_queue_id, "assign", item.suggested_project_id);
-        S.busy = false;
-        if (!result.ok) {
-          toast("Accept failed: " + (result.error || result.error_code || "unknown"));
-          render();
-          return;
-        }
-        var removed = removeCurrent();
-        S.totalPending = Math.max(0, S.totalPending - 1);
-        S.lastAction = { kind: "accept", item: removed };
-        render();
-        toast("Accepted");
-      }
-
-      async function doReject() {
-        var item = currentItem();
+      async function triageAction(verdict) {
+        const item = S.items[S.idx];
         if (!item || S.busy) return;
         S.busy = true;
-        render();
-        var result = await apiVerdict(item.review_queue_id, "dismiss", null);
+        
+        const body = { review_queue_id: item.review_queue_id, verdict, user_id: 'chad', source: 'redline' };
+        if (verdict === 'assign') body.project_id = item.suggested_project_id;
+        
+        const res = await fetch(BASE + '/redline/verdict', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(body)
+        });
+        const data = await res.json();
         S.busy = false;
-        if (!result.ok) {
-          toast("Reject failed: " + (result.error || result.error_code || "unknown"));
-          render();
-          return;
-        }
-        var removed = removeCurrent();
-        S.totalPending = Math.max(0, S.totalPending - 1);
-        S.lastAction = { kind: "reject", item: removed };
-        render();
-        toast("Rejected");
+        if (!data.ok) return toast('Action failed');
+        
+        S.lastAction = { kind: verdict, item: S.items.splice(S.idx, 1)[0] };
+        if (S.idx >= S.items.length) S.idx = Math.max(0, S.items.length - 1);
+        renderTriage();
+        toast(verdict.toUpperCase());
       }
 
-      function doSkip() {
-        var item = currentItem();
-        if (!item || S.busy) return;
-        var from = S.idx;
-        S.items.splice(from, 1);
+      // Public API for HTML
+      window.app = {
+        openThread: (id, name) => {
+          S.currentThread = { id, name };
+          showView('thread');
+          loadThread(id);
+        }
+      };
+
+      document.getElementById('btn-back').onclick = () => showView('contacts');
+      document.getElementById('btn-refresh').onclick = () => loadContacts();
+      document.getElementById('btn-triage-toggle').onclick = () => showView('triage');
+      
+      document.getElementById('triage-accept').onclick = () => triageAction('assign');
+      document.getElementById('triage-reject').onclick = () => triageAction('dismiss');
+      document.getElementById('triage-skip').onclick = () => {
+        const item = S.items.splice(S.idx, 1)[0];
         S.items.push(item);
-        if (from >= S.items.length) S.idx = 0;
-        S.lastAction = { kind: "skip", item: item, from: from };
-        render();
-        toast("Skipped");
-      }
-
-      async function doUndo() {
+        if (S.idx >= S.items.length) S.idx = 0;
+        renderTriage();
+      };
+      document.getElementById('triage-undo').onclick = async () => {
         if (!S.lastAction || S.busy) return;
-        var last = S.lastAction;
         S.busy = true;
-        render();
-
-        if (last.kind === "skip") {
-          var pos = S.items.findIndex(function (it) { return it.review_queue_id === last.item.review_queue_id; });
-          if (pos >= 0) {
-            S.items.splice(pos, 1);
-            var target = Math.max(0, Math.min(last.from, S.items.length));
-            S.items.splice(target, 0, last.item);
-            S.idx = target;
-          }
-          S.lastAction = null;
-          S.busy = false;
-          render();
-          toast("Undo complete");
-          return;
-        }
-
-        var result = await apiUndo(last.item.review_queue_id);
+        const res = await fetch(BASE + '?action=undo_verdict', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ review_queue_id: S.lastAction.item.review_queue_id })
+        });
+        const data = await res.json();
         S.busy = false;
-        if (!result.ok) {
-          toast("Undo failed: " + (result.error || result.error_code || "unknown"));
-          render();
-          return;
-        }
-        var insertAt = Math.max(0, Math.min(S.idx, S.items.length));
-        S.items.splice(insertAt, 0, last.item);
-        S.idx = insertAt;
-        S.totalPending += 1;
+        if (!data.ok) return toast('Undo failed');
+        S.items.splice(S.idx, 0, S.lastAction.item);
         S.lastAction = null;
-        render();
-        toast("Undo complete");
-      }
+        renderTriage();
+        toast('UNDONE');
+      };
 
-      document.getElementById("accept").addEventListener("click", function () { doAccept(); });
-      document.getElementById("reject").addEventListener("click", function () { doReject(); });
-      document.getElementById("skip").addEventListener("click", function () { doSkip(); });
-      document.getElementById("undo").addEventListener("click", function () { doUndo(); });
-
-      document.addEventListener("keydown", function (e) {
-        var tag = (e.target && e.target.tagName ? e.target.tagName : "").toLowerCase();
-        if (tag === "input" || tag === "textarea" || (e.target && e.target.isContentEditable)) return;
-        if (e.repeat) return;
-        var key = (e.key || "").toLowerCase();
-        if (key === "a") { e.preventDefault(); doAccept(); return; }
-        if (key === "x") { e.preventDefault(); doReject(); return; }
-        if (key === "u") { e.preventDefault(); doUndo(); return; }
-        if (e.code === "Space" || key === " ") { e.preventDefault(); doSkip(); }
+      document.addEventListener('keydown', (e) => {
+        if (S.view !== 'triage') return;
+        if (e.key === 'a') document.getElementById('triage-accept').click();
+        if (e.key === 'x') document.getElementById('triage-reject').click();
+        if (e.key === 'u') document.getElementById('triage-undo').click();
+        if (e.code === 'Space') document.getElementById('triage-skip').click();
       });
 
-      async function init() {
-        try {
-          var data = await apiQueue();
-          if (!data.ok) {
-            document.getElementById("card").style.display = "none";
-            var empty = document.getElementById("empty");
-            empty.textContent = "Error: " + (data.error || data.error_code || "failed to load queue");
-            empty.style.display = "block";
-            return;
-          }
-          S.items = data.items || [];
-          S.totalPending = Number(data.total_pending || S.items.length || 0);
-          S.idx = 0;
-          S.lastAction = null;
-          render();
-        } catch (err) {
-          document.getElementById("card").style.display = "none";
-          var empty = document.getElementById("empty");
-          empty.textContent = "Error: " + (err && err.message ? err.message : "failed to load queue");
-          empty.style.display = "block";
-        }
-      }
-
-      init();
+      showView('contacts');
     })();
   </script>
 </body>
