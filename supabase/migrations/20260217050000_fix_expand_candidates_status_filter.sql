@@ -97,7 +97,6 @@ BEGIN
   ORDER BY m.project_id, m.match_quality DESC, m.contact_affinity DESC;
 END;
 $$;
-
 COMMENT ON FUNCTION expand_candidates_from_mentions IS
 'v5: Scans transcript for contact names with concentrated project affinity.
 Uses word-boundary regex (\m...\M) for matching.

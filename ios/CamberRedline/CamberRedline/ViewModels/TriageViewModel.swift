@@ -160,6 +160,10 @@ final class TriageViewModel {
                 uniqueKeysWithValues: response.projects.map { ($0.id, $0.name) }
             )
             calls = hydrateCalls(sortedItems)
+
+            if response.droppedItemCount > 0 {
+                error = "Skipped \(response.droppedItemCount) malformed triage item(s). Pull to retry."
+            }
         } catch {
             self.error = error.localizedDescription
         }
@@ -184,7 +188,7 @@ final class TriageViewModel {
                     interactionId: item.interactionId,
                     transcriptSegment: item.transcriptSegment,
                     projectId: item.aiGuessProjectId,
-                    confidence: item.confidence,
+                    confidence: item.confidence ?? 0,
                     reasonCodes: item.reasonCodes ?? item.reasons ?? [],
                     candidates: item.contextPayload?.candidates ?? [],
                     isMock: false

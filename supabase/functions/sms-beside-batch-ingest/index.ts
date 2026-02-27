@@ -1,13 +1,18 @@
 /**
- * sms-beside-batch-ingest Edge Function v1.1.0
+ * sms-beside-batch-ingest Edge Function v1.3.0
  * Zapier SMS batch webhook receiver for Beside VoIP SMS messages
  *
- * @version 1.1.0
- * @date 2026-02-26
+ * @version 1.3.0
+ * @date 2026-02-27
  * @purpose Receive batched SMS messages from Zapier Digest, insert into sms_messages table.
  *          The existing bridge_sms_message_to_surfaces trigger (v2) handles downstream
  *          writes to calls_raw and interactions with contact resolution.
  *
+ * @changelog v1.3.0
+ *   - Implement zapier-shadow events write to public.beside_thread_events and beside_threads
+ *     to support Beside parity metrics.
+ *   - Includes computeBodyHash() with normalization matching SQL packet spec.
+ *   - Added retryable shadow write block.
  * @changelog v1.1.0
  *   - Added resolveContactFields() with 4 misattribution guards:
  *     Guard 1: from_phone matches OWNER_PHONES → suppress, senderUserId="unknown"
@@ -63,7 +68,7 @@ interface BatchPayload {
 // CONSTANTS
 // ============================================================
 
-const VERSION = "sms-beside-batch-ingest_v1.2.0";
+const VERSION = "sms-beside-batch-ingest_v1.3.0";
 const ALLOWED_SOURCES = ["zapier", "test", "edge"];
 const ZACK_INBOX_ID = "ibx_QT0G91CPXD7N1090RC2FQ1WXJ8";
 const ZACK_BESIDE_LINE = "+17066889158";
@@ -324,6 +329,46 @@ Deno.serve(async (req: Request) => {
       } else {
         skipped++;
       }
+
+      // ========================================
+      // SHADOW WRITE — Beside Parity Metrics
+      // ========================================
+      try {
+        const bodyHash = await computeBodyHash(msg.text);
+        const capturedAt = new Date().toISOString();
+
+        // 1. Ensure thread exists (UPSERT into beside_threads)
+        // Note: threadId comes from resolveContactFields and uses beside_sms_ prefix
+        await db.from("beside_threads").upsert({
+          beside_room_id: threadId,
+          source: "zapier",
+          contact_phone_e164: contactPhone,
+          updated_at_utc: sentAt,
+          captured_at_utc: capturedAt,
+          payload_json: { notes: "Auto-created via zapier shadow ingest" },
+        }, { onConflict: "beside_room_id" });
+
+        // 2. Insert event (UPSERT into beside_thread_events)
+        await db.from("beside_thread_events").upsert({
+          beside_event_id: `zapier_${msg.message_id}`,
+          beside_room_id: threadId,
+          beside_event_type: "message",
+          occurred_at_utc: sentAt,
+          direction: direction,
+          text: msg.text,
+          contact_phone_e164: contactPhone,
+          zapier_event_id: msg.message_id,
+          source: "zapier",
+          captured_at_utc: capturedAt,
+          record_hash: bodyHash,
+          payload_json: msg,
+        }, { onConflict: "beside_event_id" });
+      } catch (shadowError) {
+        // Shadow write failure is non-blocking but should be logged
+        console.warn(
+          `[sms-beside-batch-ingest] Shadow write failed for message_id=${msg.message_id}: ${shadowError.message}`,
+        );
+      }
     } catch (err) {
       console.error(
         `[sms-beside-batch-ingest] Unexpected error for message_id=${msg.message_id}:`,
@@ -535,6 +580,26 @@ function parseBesideTimestamp(raw: string | undefined | null): string {
     `[sms-beside-batch-ingest] Could not parse timestamp "${raw}", using now()`,
   );
   return new Date().toISOString();
+}
+
+/**
+ * Compute sha256 hex hash of normalized text for parity comparison.
+ * Mirrors SQL normalization in v_beside_direct_read_parity_72h:
+ *   lower(regexp_replace(regexp_replace(trim(text), '\\s+', ' ', 'g'), '[^[:alnum:][:space:]]+', '', 'g'))
+ */
+async function computeBodyHash(text: string | null): Promise<string> {
+  if (!text) return "";
+  const normalized = text
+    .trim()
+    .replace(/\s+/g, " ")
+    .replace(/[^a-zA-Z0-9\s]/g, "")
+    .toLowerCase();
+
+  const msgUint8 = new TextEncoder().encode(normalized);
+  const hashBuffer = await crypto.subtle.digest("SHA-256", msgUint8);
+  const hashArray = Array.from(new Uint8Array(hashBuffer));
+  const hashHex = hashArray.map((b) => b.toString(16).padStart(2, "0")).join("");
+  return hashHex;
 }
 
 function jsonResponse(

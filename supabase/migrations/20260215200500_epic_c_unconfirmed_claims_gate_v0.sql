@@ -7,12 +7,10 @@
 -- 3) Enforce xref_search_journal_claims to return confirmed claims only.
 
 BEGIN;
-
 ALTER TABLE public.journal_claims
   ADD COLUMN IF NOT EXISTS claim_confirmation_state text,
   ADD COLUMN IF NOT EXISTS confirmed_at timestamptz,
   ADD COLUMN IF NOT EXISTS confirmed_by text;
-
 UPDATE public.journal_claims
 SET
   claim_confirmation_state = CASE
@@ -29,15 +27,12 @@ SET
   END
 WHERE claim_confirmation_state IS NULL
    OR claim_confirmation_state NOT IN ('confirmed', 'unconfirmed');
-
 UPDATE public.journal_claims
 SET claim_confirmation_state = 'unconfirmed'
 WHERE claim_confirmation_state IS NULL;
-
 ALTER TABLE public.journal_claims
   ALTER COLUMN claim_confirmation_state SET DEFAULT 'unconfirmed',
   ALTER COLUMN claim_confirmation_state SET NOT NULL;
-
 DO $$
 BEGIN
   IF NOT EXISTS (
@@ -52,24 +47,20 @@ BEGIN
   END IF;
 END
 $$;
-
 CREATE INDEX IF NOT EXISTS idx_journal_claims_active_confirmed_project_created
   ON public.journal_claims (project_id, created_at DESC)
   WHERE active = true AND claim_confirmation_state = 'confirmed';
-
 CREATE INDEX IF NOT EXISTS idx_journal_claims_active_confirmed_claim_project
   ON public.journal_claims (claim_project_id)
   WHERE active = true
     AND claim_confirmation_state = 'confirmed'
     AND claim_project_id IS NOT NULL;
-
 COMMENT ON COLUMN public.journal_claims.claim_confirmation_state IS
   'Contamination-control state for reusable retrieval. confirmed|unconfirmed.';
 COMMENT ON COLUMN public.journal_claims.confirmed_at IS
   'Timestamp claim transitioned to confirmed state.';
 COMMENT ON COLUMN public.journal_claims.confirmed_by IS
   'Actor or subsystem that confirmed claim (e.g., review_resolve, journal_extract_auto_assign).';
-
 CREATE OR REPLACE FUNCTION public.xref_search_journal_claims(
   query_embedding extensions.vector(1536),
   scope_contact_id uuid DEFAULT NULL,
@@ -193,14 +184,11 @@ BEGIN
   LIMIT result_limit;
 END;
 $function$;
-
 GRANT EXECUTE ON FUNCTION public.xref_search_journal_claims(
   extensions.vector(1536), uuid, text, integer, double precision, text
 ) TO service_role;
-
 COMMENT ON FUNCTION public.xref_search_journal_claims(
   extensions.vector(1536), uuid, text, integer, double precision, text
 ) IS
 'Semantic search over confirmed journal claims with optional scope filters and a low-specificity material/color guard via query_hint_text.';
-
 COMMIT;

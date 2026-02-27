@@ -1,0 +1,3 @@
+# sms-beside-batch-ingest: Zapier SMS batch webhook receiver
+# Auth: X-Edge-Secret (internal pattern), verify_jwt=false
+verify_jwt = false

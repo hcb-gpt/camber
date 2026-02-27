@@ -9,7 +9,7 @@ struct ReviewItem: Codable, Identifiable {
     let createdAt: String?
     let eventAt: String?
     let transcriptSegment: String
-    let confidence: Double
+    let confidence: Double?
     let aiGuessProjectId: String?
     let contactName: String?
     let humanSummary: String?
@@ -37,6 +37,28 @@ struct ReviewItem: Codable, Identifiable {
         case decision
     }
 
+    init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+
+        id = try container.decode(String.self, forKey: .id)
+        interactionId = try container.decode(String.self, forKey: .interactionId)
+
+        spanId = (try container.decodeIfPresent(String.self, forKey: .spanId))?.trimmedOrNil ?? ""
+        transcriptSegment = (try container.decodeIfPresent(String.self, forKey: .transcriptSegment))?.trimmedOrNil ?? ""
+
+        createdAt = try container.decodeIfPresent(String.self, forKey: .createdAt)
+        eventAt = try container.decodeIfPresent(String.self, forKey: .eventAt)
+        confidence = Self.decodeLossyDouble(from: container, key: .confidence)
+        aiGuessProjectId = (try container.decodeIfPresent(String.self, forKey: .aiGuessProjectId))?.trimmedOrNil
+        contactName = try container.decodeIfPresent(String.self, forKey: .contactName)
+        humanSummary = try container.decodeIfPresent(String.self, forKey: .humanSummary)
+        fullTranscript = try container.decodeIfPresent(String.self, forKey: .fullTranscript)
+        contextPayload = try? container.decodeIfPresent(ContextPayload.self, forKey: .contextPayload)
+        reasons = Self.decodeLossyStringArray(from: container, key: .reasons)
+        reasonCodes = Self.decodeLossyStringArray(from: container, key: .reasonCodes)
+        decision = try container.decodeIfPresent(String.self, forKey: .decision)
+    }
+
     var sortDate: Date {
         if let eventDate = parseISO8601(eventAt) {
             return eventDate
@@ -59,6 +81,34 @@ struct ReviewItem: Codable, Identifiable {
         let basicFormatter = ISO8601DateFormatter()
         basicFormatter.formatOptions = [.withInternetDateTime]
         return basicFormatter.date(from: value)
+    }
+
+    private static func decodeLossyDouble(
+        from container: KeyedDecodingContainer<CodingKeys>,
+        key: CodingKeys
+    ) -> Double? {
+        if let value = try? container.decodeIfPresent(Double.self, forKey: key) {
+            return value
+        }
+        if let value = try? container.decodeIfPresent(String.self, forKey: key) {
+            return Double(value)
+        }
+        return nil
+    }
+
+    private static func decodeLossyStringArray(
+        from container: KeyedDecodingContainer<CodingKeys>,
+        key: CodingKeys
+    ) -> [String]? {
+        if let values = try? container.decodeIfPresent([String].self, forKey: key) {
+            return values
+        }
+        if let maybeSingle = try? container.decodeIfPresent(String.self, forKey: key),
+           let single = maybeSingle.trimmedOrNil
+        {
+            return [single]
+        }
+        return nil
     }
 }
 
@@ -131,11 +181,38 @@ struct ReviewQueueResponse: Decodable {
     let items: [ReviewItem]
     let projects: [ReviewProject]
     let totalPending: Int
+    let droppedItemCount: Int
 
     enum CodingKeys: String, CodingKey {
         case ok
         case items
         case projects
         case totalPending = "total_pending"
+    }
+
+    init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        ok = try container.decodeIfPresent(Bool.self, forKey: .ok) ?? false
+        projects = try container.decodeIfPresent([ReviewProject].self, forKey: .projects) ?? []
+        totalPending = try container.decodeIfPresent(Int.self, forKey: .totalPending) ?? 0
+
+        let rawItems = try container.decodeIfPresent([LossyReviewItem].self, forKey: .items) ?? []
+        items = rawItems.compactMap(\.item)
+        droppedItemCount = rawItems.count - items.count
+    }
+}
+
+private struct LossyReviewItem: Decodable {
+    let item: ReviewItem?
+
+    init(from decoder: Decoder) throws {
+        item = try? ReviewItem(from: decoder)
+    }
+}
+
+private extension String {
+    var trimmedOrNil: String? {
+        let trimmed = trimmingCharacters(in: .whitespacesAndNewlines)
+        return trimmed.isEmpty ? nil : trimmed
     }
 }

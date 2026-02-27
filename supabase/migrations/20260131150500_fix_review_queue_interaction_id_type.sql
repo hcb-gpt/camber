@@ -10,19 +10,15 @@
 
 -- Step 1: Drop dependent view
 DROP VIEW IF EXISTS v_review_queue_spans;
-
 -- Step 2: Drop any foreign key constraint if it exists
 ALTER TABLE review_queue DROP CONSTRAINT IF EXISTS review_queue_interaction_id_fkey;
-
 -- Step 3: Change column type from uuid to text
 ALTER TABLE review_queue
   ALTER COLUMN interaction_id TYPE text
   USING interaction_id::text;
-
 -- Step 4: Add comment documenting the column
 COMMENT ON COLUMN review_queue.interaction_id IS
   'Text interaction_id (matches interactions.interaction_id format, e.g., cll_06DSX0CVZHZK72VCVW54EH9G3C)';
-
 -- Step 5: Recreate the view with updated join logic
 -- Note: interactions.interaction_id is TEXT, so we join on that instead of i.id (uuid)
 CREATE OR REPLACE VIEW v_review_queue_spans AS

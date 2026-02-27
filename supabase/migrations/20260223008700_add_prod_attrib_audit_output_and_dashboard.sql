@@ -8,7 +8,6 @@ alter table public.eval_samples
   add column if not exists reviewer_rationale_anchors jsonb not null default '[]'::jsonb,
   add column if not exists reviewer_notes text,
   add column if not exists reviewer_completed_at timestamptz;
-
 do $$
 begin
   if not exists (
@@ -25,18 +24,14 @@ begin
   end if;
 end
 $$;
-
 create index if not exists eval_samples_reviewer_verdict_idx
   on public.eval_samples (reviewer_verdict);
-
 create index if not exists eval_samples_reviewer_completed_idx
   on public.eval_samples (reviewer_completed_at desc)
   where reviewer_completed_at is not null;
-
 create index if not exists eval_samples_reviewer_failure_mode_gin_idx
   on public.eval_samples
   using gin (reviewer_failure_mode_tags);
-
 create or replace view public.v_prod_attrib_audit_dashboard_7d as
 with recent_runs as (
   select er.id
@@ -108,6 +103,5 @@ select
   tfmj.top_failure_modes
 from verdict_counts vc
 cross join top_failure_modes_json tfmj;
-
 comment on view public.v_prod_attrib_audit_dashboard_7d is
 '7-day standing audit tile: mismatch/insufficient rates and top failure modes for prod attribution samples.';

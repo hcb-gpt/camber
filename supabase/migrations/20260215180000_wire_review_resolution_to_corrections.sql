@@ -3,7 +3,6 @@
 -- Add write-through of resolved review decisions into public.corrections
 -- when that table and expected columns are present in the runtime schema.
 begin;
-
 -- Optional compatibility upgrades: enable deterministic de-dup for RPC-driven
 -- resolution writes to the existing corrections ledger.
 do $$
@@ -22,7 +21,6 @@ begin
       where idempotency_key is not null;
   end if;
 end $$;
-
 CREATE OR REPLACE FUNCTION public.resolve_review_item(
   p_review_queue_id uuid,
   p_chosen_project_id uuid,
@@ -512,10 +510,7 @@ begin
   );
 end;
 $$;
-
 comment on function public.resolve_review_item is
   'Atomic human resolution of a pending review item. Updates SSOT + audit + scheduler + claims + review_queue and appends correction events to corrections when available.';
-
 grant execute on function public.resolve_review_item to service_role;
-
 commit;

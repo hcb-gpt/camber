@@ -10,7 +10,6 @@ DROP FUNCTION IF EXISTS ci_gate_multi_span_required();
 DROP FUNCTION IF EXISTS ci_gate_no_gap();
 DROP FUNCTION IF EXISTS ci_gate_no_uncovered();
 DROP FUNCTION IF EXISTS ci_gate_no_double_covered();
-
 -- ============================================================
 -- CI GATE 1: MULTI_SPAN_REQUIRED
 -- Long transcripts (>2000 chars) must produce >1 active span
@@ -55,7 +54,6 @@ BEGIN
     v_violations;
 END;
 $$ LANGUAGE plpgsql STABLE;
-
 -- ============================================================
 -- CI GATE 2: NO_GAP
 -- Adjacent spans must have no character gaps (contiguous)
@@ -106,7 +104,6 @@ BEGIN
     v_violations;
 END;
 $$ LANGUAGE plpgsql STABLE;
-
 -- ============================================================
 -- CI GATE 3: NO_UNCOVERED
 -- Every active span must have attribution OR open/pending review
@@ -157,7 +154,6 @@ BEGIN
     v_violations;
 END;
 $$ LANGUAGE plpgsql STABLE;
-
 -- ============================================================
 -- CI GATE 4: NO_DOUBLE_COVERED
 -- Span cannot have BOTH attribution AND open/pending review
@@ -197,7 +193,6 @@ BEGIN
     v_violations;
 END;
 $$ LANGUAGE plpgsql STABLE;
-
 -- ============================================================
 -- MASTER CI RUNNER
 -- ============================================================
@@ -215,7 +210,6 @@ BEGIN
   RETURN QUERY SELECT * FROM ci_gate_no_double_covered();
 END;
 $$ LANGUAGE plpgsql STABLE;
-
 -- Comments
 COMMENT ON FUNCTION ci_gate_multi_span_required IS 'CI Gate 1: Long transcripts (>2000 chars) must have >1 span';
 COMMENT ON FUNCTION ci_gate_no_gap IS 'CI Gate 2: Adjacent spans must be contiguous (no char gaps)';

@@ -4,14 +4,12 @@
 
 ALTER TABLE public.override_log
   DROP CONSTRAINT IF EXISTS override_log_mode_check;
-
 ALTER TABLE public.override_log
   ADD CONSTRAINT override_log_mode_check
   CHECK (
     mode IS NULL
     OR mode IN ('resegment_only', 'resegment_and_reroute', 'reseed')
   );
-
 CREATE OR REPLACE VIEW public.v_interaction_primary_project AS
 WITH span_project_counts AS (
   SELECT
@@ -65,8 +63,6 @@ SELECT
 FROM public.interactions i
 LEFT JOIN primary_span_project psp
   ON psp.interaction_id = i.interaction_id;
-
 COMMENT ON VIEW public.v_interaction_primary_project IS
   'Interaction-level project attribution fallback:
   interaction.project_id first, otherwise top span-attributed project.';
-
