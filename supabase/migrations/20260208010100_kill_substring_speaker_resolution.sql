@@ -96,13 +96,10 @@ BEGIN
   ORDER BY wa.project_count DESC;
 END;
 $function$;
-
 COMMENT ON FUNCTION resolve_transcript_speakers IS
 'Resolves speaker labels to contacts. Checks aliases for exact match only.
 v3: Removed all ILIKE substring matching (partial alias, contains paths).
     Added phonetic matching via dmetaphone for first-name when last-name matches exactly.';
-
-
 -- 2) resolve_speaker_contact: remove partial alias, contains paths
 CREATE OR REPLACE FUNCTION resolve_speaker_contact(
   p_speaker_label TEXT,
@@ -233,7 +230,6 @@ BEGIN
   LIMIT 1;
 END;
 $$;
-
 COMMENT ON FUNCTION resolve_speaker_contact IS
 'Resolves a speaker label to a contact_id with is_internal flag.
 v2: Removed all substring matching (partial_alias, first_name_contains, last_name_contains).

@@ -42,5 +42,4 @@ BEGIN
     v_violations;
 END;
 $$ LANGUAGE plpgsql STABLE;
-
 COMMENT ON FUNCTION ci_gate_no_double_covered IS 'CI Gate 4: Span with resolved attribution (project_id NOT NULL) cannot also have open review';

@@ -190,4 +190,3 @@ BEGIN
   ORDER BY r.em_score DESC, r.ac_project_name, r.em_matched_alias;
 END;
 $function$;
-

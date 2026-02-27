@@ -8,7 +8,6 @@
 -- - Use to_jsonb() for defensive column access
 
 begin;
-
 -- 0) Helper updated_at trigger func (idempotent)
 create or replace function public.tg_set_updated_at()
 returns trigger language plpgsql as $$
@@ -16,22 +15,18 @@ begin
   new.updated_at = now();
   return new;
 end $$;
-
 -- 1) Add missing columns to review_queue
 alter table public.review_queue add column if not exists updated_at timestamptz;
 alter table public.review_queue add column if not exists reason_codes text[];
-
 -- Ensure updated_at has a value for existing rows
 update public.review_queue
 set updated_at = coalesce(updated_at, created_at, now())
 where updated_at is null;
-
 -- 2) Trigger for updated_at
 drop trigger if exists trg_review_queue_updated_at on public.review_queue;
 create trigger trg_review_queue_updated_at
 before update on public.review_queue
 for each row execute procedure public.tg_set_updated_at();
-
 -- 3) Replace view with reconciled version
 -- Uses attributed_at (actual column), coalesces reason_codes/reasons,
 -- and uses to_jsonb() for defensive column access
@@ -99,8 +94,6 @@ left join public.interactions i
   on i.id = coalesce(rq.interaction_id, (to_jsonb(cs)->>'interaction_id')::uuid)
 left join latest_attr la
   on la.span_id = rq.span_id;
-
 comment on view public.v_review_queue_spans is
   'Product surface for review queue. Joins review items to spans, attributions, and interactions. Uses attributed_at from span_attributions and coalesces reason_codes/reasons for back-compat.';
-
 commit;

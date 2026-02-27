@@ -37,13 +37,11 @@ BEGIN
   RETURN NEW;
 END;
 $$;
-
 DROP TRIGGER IF EXISTS trg_belief_claims_promotion_log ON public.belief_claims;
 CREATE TRIGGER trg_belief_claims_promotion_log
   AFTER INSERT ON public.belief_claims
   FOR EACH ROW
   EXECUTE FUNCTION public.write_promotion_log_from_belief_claim();
-
 INSERT INTO promotion_log (claim_id, journal_claim_id, promoted_at, run_id)
 SELECT
   bc.id,
@@ -58,8 +56,7 @@ LEFT JOIN public.promotion_log pl
 WHERE bc.journal_claim_id IS NOT NULL
   AND (bc.source_run_id IS NOT NULL OR jc.run_id IS NOT NULL)
   AND pl.id IS NULL;
-
 -- Verification query (run after migration)
 -- SELECT
 --   (SELECT COUNT(*) FROM public.belief_claims WHERE journal_claim_id IS NOT NULL) AS belief_claims_with_journal_claim,
---   (SELECT COUNT(DISTINCT claim_id) FROM public.promotion_log) AS logged_promotions;
+--   (SELECT COUNT(DISTINCT claim_id) FROM public.promotion_log) AS logged_promotions;;
