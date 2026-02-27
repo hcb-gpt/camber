@@ -50,6 +50,9 @@ final class ThreadViewModel {
     private var threadSMSChannel: RealtimeChannelV2?
     private var threadSMSTask: Task<Void, Never>?
     private var threadSMSUpdateTask: Task<Void, Never>?
+    private var threadReviewQueueChannel: RealtimeChannelV2?
+    private var threadReviewQueueTask: Task<Void, Never>?
+    private var threadReviewQueueUpdateTask: Task<Void, Never>?
     private var threadRealtimeReloadTask: Task<Void, Never>?
     private var threadFallbackRefreshTask: Task<Void, Never>?
     private var postResolveRefreshTask: Task<Void, Never>?
@@ -426,6 +429,42 @@ final class ThreadViewModel {
         }
     }
 
+    @discardableResult
+    func dismissAttribution(
+        reviewQueueId: String,
+        reloadAfterResolve: Bool = true
+    ) async -> Bool {
+        error = nil
+        do {
+            try await bootstrapService.dismiss(queueId: reviewQueueId, userId: "ios_redline")
+            if reloadAfterResolve {
+                schedulePostResolveSync()
+            }
+            return true
+        } catch {
+            showTransientError("Attribution update failed: \(error.localizedDescription)")
+            return false
+        }
+    }
+
+    @discardableResult
+    func dismissAttributions(reviewQueueIds: [String]) async -> Bool {
+        var seen = Set<String>()
+        let uniqueQueueIds = reviewQueueIds.filter { seen.insert($0).inserted }
+        guard !uniqueQueueIds.isEmpty else { return true }
+
+        do {
+            for queueId in uniqueQueueIds {
+                try await bootstrapService.dismiss(queueId: queueId, userId: "ios_redline")
+            }
+            schedulePostResolveSync()
+            return true
+        } catch {
+            showTransientError("Attribution update failed: \(error.localizedDescription)")
+            return false
+        }
+    }
+
     private func schedulePostResolveSync() {
         postResolveRefreshTask?.cancel()
         postResolveRefreshTask = Task { @MainActor [weak self] in
@@ -653,6 +692,17 @@ final class ThreadViewModel {
             schema: "public",
             table: "sms_messages"
         )
+        let reviewQueueChannel = service.client.channel("thread-review-queue-\(contactId.uuidString.lowercased())")
+        let reviewQueueInserts = reviewQueueChannel.postgresChange(
+            InsertAction.self,
+            schema: "public",
+            table: "review_queue"
+        )
+        let reviewQueueUpdates = reviewQueueChannel.postgresChange(
+            UpdateAction.self,
+            schema: "public",
+            table: "review_queue"
+        )
 
         do {
             try await interactionsChannel.subscribeWithError()
@@ -666,6 +716,15 @@ final class ThreadViewModel {
             return
         }
         stopThreadFallbackRefresh()
+        do {
+            try await reviewQueueChannel.subscribeWithError()
+            threadReviewQueueChannel = reviewQueueChannel
+        } catch {
+            if !shouldIgnoreRealtimeError(error) {
+                print("Thread review_queue realtime unavailable: \(error.localizedDescription)")
+            }
+            await service.client.removeChannel(reviewQueueChannel)
+        }
 
         threadInteractionsTask = Task { @MainActor [weak self] in
             guard let self else { return }
@@ -714,6 +773,32 @@ final class ThreadViewModel {
                 self.scheduleThreadReload(contactId: contactId)
             }
         }
+
+        if threadReviewQueueChannel != nil {
+            threadReviewQueueTask = Task { @MainActor [weak self] in
+                guard let self else { return }
+                for await insert in reviewQueueInserts {
+                    guard let record = try? insert.decodeRecord(
+                        as: RealtimeReviewQueueRecord.self,
+                        decoder: Self.realtimeDecoder
+                    ) else { continue }
+                    guard self.reviewQueueRecordMatchesCurrentThread(record) else { continue }
+                    self.scheduleThreadReload(contactId: contactId)
+                }
+            }
+
+            threadReviewQueueUpdateTask = Task { @MainActor [weak self] in
+                guard let self else { return }
+                for await update in reviewQueueUpdates {
+                    guard let record = try? update.decodeRecord(
+                        as: RealtimeReviewQueueRecord.self,
+                        decoder: Self.realtimeDecoder
+                    ) else { continue }
+                    guard self.reviewQueueRecordMatchesCurrentThread(record) else { continue }
+                    self.scheduleThreadReload(contactId: contactId)
+                }
+            }
+        }
     }
 
     func stopInteractionsSubscription() async {
@@ -729,6 +814,12 @@ final class ThreadViewModel {
         threadSMSUpdateTask?.cancel()
         threadSMSUpdateTask = nil
 
+        threadReviewQueueTask?.cancel()
+        threadReviewQueueTask = nil
+
+        threadReviewQueueUpdateTask?.cancel()
+        threadReviewQueueUpdateTask = nil
+
         threadRealtimeReloadTask?.cancel()
         threadRealtimeReloadTask = nil
         stopThreadFallbackRefresh()
@@ -740,6 +831,11 @@ final class ThreadViewModel {
 
         if let channel = threadSMSChannel {
             threadSMSChannel = nil
+            await service.client.removeChannel(channel)
+        }
+
+        if let channel = threadReviewQueueChannel {
+            threadReviewQueueChannel = nil
             await service.client.removeChannel(channel)
         }
     }
@@ -800,6 +896,43 @@ final class ThreadViewModel {
         }
 
         return false
+    }
+
+    private func reviewQueueRecordMatchesCurrentThread(_ record: RealtimeReviewQueueRecord) -> Bool {
+        guard let contact = currentContact else { return false }
+        if threadItems.isEmpty {
+            return true
+        }
+
+        if let interactionId = record.interactionId, !interactionId.isEmpty {
+            if interactionId.hasPrefix("sms_thread_") {
+                let suffix = interactionId.dropFirst("sms_thread_".count)
+                let smsThreadPhone = String(suffix.split(separator: "_").first ?? "")
+                    .filter(\.isWholeNumber)
+                let contactPhone = normalizedPhone(contact.phone)
+                if !smsThreadPhone.isEmpty, !contactPhone.isEmpty, smsThreadPhone.hasSuffix(contactPhone) {
+                    return true
+                }
+            }
+
+            if threadItems.contains(where: { item in
+                guard case .callHeader(let header) = item else { return false }
+                return header.interactionId == interactionId
+            }) {
+                return true
+            }
+        }
+
+        if let spanId = record.spanId {
+            if threadItems.contains(where: { item in
+                guard case .callHeader(let header) = item else { return false }
+                return header.spans.contains(where: { $0.spanId == spanId })
+            }) {
+                return true
+            }
+        }
+
+        return record.interactionId == nil && record.spanId == nil
     }
 
     private func normalizedPhone(_ raw: String?) -> String {
@@ -876,6 +1009,9 @@ final class ContactListViewModel {
     private var smsChannel: RealtimeChannelV2?
     private var smsTask: Task<Void, Never>?
     private var smsUpdateTask: Task<Void, Never>?
+    private var reviewQueueChannel: RealtimeChannelV2?
+    private var reviewQueueTask: Task<Void, Never>?
+    private var reviewQueueUpdateTask: Task<Void, Never>?
     private var realtimeReloadTask: Task<Void, Never>?
     private var liveRefreshTask: Task<Void, Never>?
 
@@ -928,6 +1064,17 @@ final class ContactListViewModel {
             schema: "public",
             table: "sms_messages"
         )
+        let reviewQueueChannel = service.client.channel("new-review-queue")
+        let reviewQueueInserts = reviewQueueChannel.postgresChange(
+            InsertAction.self,
+            schema: "public",
+            table: "review_queue"
+        )
+        let reviewQueueUpdates = reviewQueueChannel.postgresChange(
+            UpdateAction.self,
+            schema: "public",
+            table: "review_queue"
+        )
 
         do {
             try await channel.subscribeWithError()
@@ -947,6 +1094,15 @@ final class ContactListViewModel {
 
         interactionsChannel = channel
         self.smsChannel = smsChannel
+        do {
+            try await reviewQueueChannel.subscribeWithError()
+            self.reviewQueueChannel = reviewQueueChannel
+        } catch {
+            if !shouldIgnoreRealtimeError(error) {
+                print("Review queue realtime unavailable: \(error.localizedDescription)")
+            }
+            await service.client.removeChannel(reviewQueueChannel)
+        }
         error = nil
 
         interactionsTask = Task { @MainActor [weak self] in
@@ -976,6 +1132,22 @@ final class ContactListViewModel {
                 self.scheduleRealtimeReload()
             }
         }
+
+        if self.reviewQueueChannel != nil {
+            reviewQueueTask = Task { @MainActor [weak self] in
+                guard let self else { return }
+                for await _ in reviewQueueInserts {
+                    self.scheduleRealtimeReload()
+                }
+            }
+
+            reviewQueueUpdateTask = Task { @MainActor [weak self] in
+                guard let self else { return }
+                for await _ in reviewQueueUpdates {
+                    self.scheduleRealtimeReload()
+                }
+            }
+        }
     }
 
     func unsubscribe() async {
@@ -991,6 +1163,12 @@ final class ContactListViewModel {
         smsUpdateTask?.cancel()
         smsUpdateTask = nil
 
+        reviewQueueTask?.cancel()
+        reviewQueueTask = nil
+
+        reviewQueueUpdateTask?.cancel()
+        reviewQueueUpdateTask = nil
+
         realtimeReloadTask?.cancel()
         realtimeReloadTask = nil
 
@@ -1001,6 +1179,11 @@ final class ContactListViewModel {
 
         if let channel = smsChannel {
             smsChannel = nil
+            await service.client.removeChannel(channel)
+        }
+
+        if let channel = reviewQueueChannel {
+            reviewQueueChannel = nil
             await service.client.removeChannel(channel)
         }
     }
@@ -1053,10 +1236,6 @@ final class ContactListViewModel {
 
     private func sortNewestFirst(_ rows: [Contact]) -> [Contact] {
         rows.sorted { lhs, rhs in
-            if lhs.ungradedCount != rhs.ungradedCount {
-                return lhs.ungradedCount > rhs.ungradedCount
-            }
-
             let lhsDate = parseISO8601(lhs.lastActivity)
             let rhsDate = parseISO8601(rhs.lastActivity)
 
@@ -1131,6 +1310,16 @@ private struct RealtimeSMSRecord: Decodable {
     enum CodingKeys: String, CodingKey {
         case contactPhone = "contact_phone"
         case contactName = "contact_name"
+    }
+}
+
+private struct RealtimeReviewQueueRecord: Decodable {
+    let interactionId: String?
+    let spanId: UUID?
+
+    enum CodingKeys: String, CodingKey {
+        case interactionId = "interaction_id"
+        case spanId = "span_id"
     }
 }
 
