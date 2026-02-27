@@ -30,8 +30,6 @@ final class SupabaseService {
 
     private let anonKey =
         "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InJqaGR3aWRkZHRmZXRid3FvbG9mIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NjUxMTYwNDQsImV4cCI6MjA4MDY5MjA0NH0.m0BArfDxAMQrX2-50_IgircX_SwWLe5VccxewGmuWio"
-    private let reviewResolveAuthEmail = "redline_ios_dev3_resolver@example.com"
-    private let reviewResolveAuthPassword = "RedlineDev3!2026"
     private let threadCacheTTL: TimeInterval = 30
     private var threadCache: [ThreadCacheKey: ThreadCacheEntry] = [:]
 
@@ -261,6 +259,17 @@ final class SupabaseService {
         return uniqueQueueIds.compactMap { responsesById[$0] }
     }
 
+    // MARK: - Pipeline Heartbeat (direct Supabase query)
+
+    func fetchPipelineHeartbeat() async throws -> [PipelineHeartbeat] {
+        let rows: [PipelineHeartbeat] = try await client
+            .from("pipeline_heartbeat")
+            .select()
+            .execute()
+            .value
+        return rows
+    }
+
     // MARK: - Helpers
 
     private func cachedThreadResponse(for key: ThreadCacheKey) -> ThreadResponse? {
@@ -321,21 +330,13 @@ final class SupabaseService {
             return currentSession.accessToken
         }
 
-        if let refreshedSession = try? await client.auth.session {
+        if let refreshedSession = try? await client.auth.session, !refreshedSession.isExpired {
             return refreshedSession.accessToken
         }
 
-        do {
-            let session = try await client.auth.signIn(
-                email: reviewResolveAuthEmail,
-                password: reviewResolveAuthPassword
-            )
-            return session.accessToken
-        } catch {
-            throw ServiceError.apiError(
-                "Review resolve authentication failed: \(error.localizedDescription)"
-            )
-        }
+        throw ServiceError.apiError(
+            "Review resolve requires an authenticated user session. Sign in before resolving."
+        )
     }
 }
 
@@ -395,6 +396,39 @@ private struct ReviewResolveRequest: Encodable {
         case chosenProjectId = "chosen_project_id"
         case notes
         case source
+    }
+}
+
+// MARK: - PipelineHeartbeat
+
+struct PipelineHeartbeat: Decodable, Identifiable {
+    let pipeline: String
+    let lastEventAt: Date?
+    let stalenessMinutes: Double?
+
+    var id: String { pipeline }
+
+    enum CodingKeys: String, CodingKey {
+        case pipeline
+        case lastEventAt = "last_event_at"
+        case stalenessMinutes = "staleness_minutes"
+    }
+
+    init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        pipeline = try container.decode(String.self, forKey: .pipeline)
+
+        if let raw = try container.decodeIfPresent(String.self, forKey: .lastEventAt) {
+            let fmtFrac = ISO8601DateFormatter()
+            fmtFrac.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
+            let fmtBasic = ISO8601DateFormatter()
+            fmtBasic.formatOptions = [.withInternetDateTime]
+            lastEventAt = fmtFrac.date(from: raw) ?? fmtBasic.date(from: raw)
+        } else {
+            lastEventAt = nil
+        }
+
+        stalenessMinutes = try container.decodeIfPresent(Double.self, forKey: .stalenessMinutes)
     }
 }
 
