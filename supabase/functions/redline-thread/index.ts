@@ -202,7 +202,7 @@ async function handleProjects(db: any, t0: number): Promise<Response> {
 }
 
 // sanity endpoint
-async function handleSanity(_db: any, t0: number): Promise<Response> {
+function handleSanity(_db: any, t0: number): Response {
   return json({ ok: true, function_version: FUNCTION_VERSION, ms: Date.now() - t0 });
 }
 
@@ -1245,7 +1245,7 @@ Deno.serve(async (req: Request) => {
 
     const action = url.searchParams.get("action");
     if (action === "sanity") {
-      return await handleSanity(db, t0);
+      return handleSanity(db, t0);
     }
     if (action === "projects") {
       return await handleProjects(db, t0);
