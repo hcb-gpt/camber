@@ -153,9 +153,6 @@ agg as (
   group by 1
 )
 select
-  p.as_of_utc,
-  p.window_start_utc,
-  p.as_of_utc as window_end_utc,
   t.beside_event_type,
   coalesce(a.direct_read_total_72h, 0) as direct_read_total_72h,
   coalesce(a.matched_total_72h, 0) as matched_total_72h,
@@ -167,7 +164,11 @@ select
   coalesce(a.occurred_at_match_rate, 0) as occurred_at_match_rate,
   coalesce(a.body_hash_match_rate, 0) as body_hash_match_rate,
   p.occurred_at_tolerance_seconds,
-  p.freshness_exclusion_minutes
+  p.freshness_exclusion_minutes,
+  -- Added at end to allow CREATE OR REPLACE without renaming existing columns.
+  p.as_of_utc,
+  p.window_start_utc,
+  p.as_of_utc as window_end_utc
 from params p
 cross join types t
 left join agg a using (beside_event_type)
