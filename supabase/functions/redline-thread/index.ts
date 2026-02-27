@@ -179,6 +179,33 @@ async function handleContacts(db: any, t0: number): Promise<Response> {
   return json({ ok: true, contacts, function_version: FUNCTION_VERSION, ms: Date.now() - t0 });
 }
 
+// projects endpoint
+async function handleProjects(db: any, t0: number): Promise<Response> {
+  const { data, error } = await db
+    .from("projects")
+    .select("id, name, status, job_type")
+    .eq("status", "active")
+    .not("job_type", "is", null)
+    .order("name", { ascending: true });
+
+  if (error) {
+    return json({ ok: false, error_code: "projects_query_failed", error: error.message }, 500);
+  }
+
+  return json({
+    ok: true,
+    projects: data || [],
+    count: (data || []).length,
+    function_version: FUNCTION_VERSION,
+    ms: Date.now() - t0,
+  });
+}
+
+// sanity endpoint
+async function handleSanity(_db: any, t0: number): Promise<Response> {
+  return json({ ok: true, function_version: FUNCTION_VERSION, ms: Date.now() - t0 });
+}
+
 // thread endpoint
 async function handleThread(
   db: any,
@@ -1217,6 +1244,12 @@ Deno.serve(async (req: Request) => {
     }
 
     const action = url.searchParams.get("action");
+    if (action === "sanity") {
+      return await handleSanity(db, t0);
+    }
+    if (action === "projects") {
+      return await handleProjects(db, t0);
+    }
     if (action === "contacts") {
       return await handleContacts(db, t0);
     }
