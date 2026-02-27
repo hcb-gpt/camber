@@ -1,12 +1,12 @@
 import "jsr:@supabase/functions-js/edge-runtime.d.ts";
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
 
-const FUNCTION_VERSION = "redline-thread_v2.0.2";
+const FUNCTION_VERSION = "redline-thread_v2.0.4";
 const OWNER_SMS_USER_IDS = ["+17066889158", "usr_4PCSTDQ8N161KAC4GG7AF9CR94"];
 const OUTBOUND_INFERENCE_WINDOW_MS = 30 * 60 * 1000;
 const OUTBOUND_INFERENCE_MAX_GAP_MS = 60 * 1000;
 const THREAD_SCAN_MULTIPLIER = Number(Deno.env.get("REDLINE_THREAD_SCAN_MULTIPLIER") || "4");
-const THREAD_SCAN_MIN_ITEMS = Number(Deno.env.get("REDLINE_THREAD_SCAN_MIN_ITEMS") || "200");
+const THREAD_SCAN_MIN_ITEMS = Number(Deno.env.get("REDLINE_THREAD_SCAN_MIN_ITEMS") || "100");
 const THREAD_SCAN_MAX_ITEMS = Number(Deno.env.get("REDLINE_THREAD_SCAN_MAX_ITEMS") || "1000");
 
 function corsHeaders(): Record<string, string> {
@@ -233,29 +233,33 @@ async function handleThread(
     return json({ ok: false, error_code: "contact_not_found", error: contactErr?.message || "not found" }, 404);
   }
 
-  const { data: interactionRows, count: interactionCount, error: intErr } = await db
-    .from("interactions")
-    .select("id, interaction_id, event_at_utc, human_summary, contact_name", { count: "exact" })
-    .eq("contact_id", contactId)
-    .not("event_at_utc", "is", null)
-    .order("event_at_utc", { ascending: false })
-    .range(0, scanWindow - 1);
+  const [
+    { data: interactionRows, count: interactionCount, error: intErr },
+    { data: smsRows, count: smsCount, error: smsErr },
+  ] = await Promise.all([
+    db
+      .from("interactions")
+      .select("interaction_id, event_at_utc", { count: "planned" })
+      .eq("contact_id", contactId)
+      .not("event_at_utc", "is", null)
+      .order("event_at_utc", { ascending: false })
+      .range(0, scanWindow - 1),
+    db
+      .from("sms_messages")
+      .select("id, sent_at, direction, contact_name, sender_user_id", { count: "planned" })
+      .eq("contact_phone", contact.phone)
+      .order("sent_at", { ascending: false })
+      .range(0, scanWindow - 1),
+  ]);
 
   if (intErr) {
     return json({ ok: false, error_code: "interactions_query_failed", error: intErr.message }, 500);
   }
-  const allInteractions: any[] = interactionRows || [];
-
-  const { data: smsRows, count: smsCount, error: smsErr } = await db
-    .from("sms_messages")
-    .select("id, sent_at, content, direction, contact_name, sender_user_id", { count: "exact" })
-    .eq("contact_phone", contact.phone)
-    .order("sent_at", { ascending: false })
-    .range(0, scanWindow - 1);
-
   if (smsErr) {
     return json({ ok: false, error_code: "sms_query_failed", error: smsErr.message }, 500);
   }
+
+  const allInteractions: any[] = interactionRows || [];
   const allSmsMessages: any[] = smsRows || [];
 
   const inboundSms = allSmsMessages.filter((s: any) => String(s.direction || "").toLowerCase() === "inbound");
@@ -334,55 +338,89 @@ async function handleThread(
       .map((entry: any) => entry.key),
   );
 
-  const interactions = allInteractions.filter((i: any) => pagedCallIds.has(i.interaction_id));
-  const interactionIds = interactions.map((i: any) => i.interaction_id);
+  const interactionIds = allInteractions
+    .filter((i: any) => pagedCallIds.has(i.interaction_id))
+    .map((i: any) => i.interaction_id);
+  const interactionLightById = new Map(
+    allInteractions.map((i: any) => [i.interaction_id, i]),
+  );
   const pagedSmsMessages = smsMessages.filter((s: any) => pagedSmsIds.has(s.id));
 
-  let callsRaw: any[] = [];
+  let interactions: any[] = [];
   if (interactionIds.length > 0) {
-    const { data, error } = await db
-      .from("calls_raw")
-      .select("interaction_id, direction, transcript")
+    const { data: interactionMeta, error: interactionMetaErr } = await db
+      .from("interactions")
+      .select("interaction_id, human_summary, contact_name")
       .in("interaction_id", interactionIds);
 
-    if (error) {
-      return json({ ok: false, error_code: "calls_raw_query_failed", error: error.message }, 500);
+    if (interactionMetaErr) {
+      return json({ ok: false, error_code: "interaction_meta_query_failed", error: interactionMetaErr.message }, 500);
     }
-    callsRaw = data || [];
+
+    const interactionMetaById = new Map(
+      (interactionMeta || []).map((i: any) => [i.interaction_id, i]),
+    );
+    interactions = interactionIds.map((interactionId: string) => ({
+      ...(interactionLightById.get(interactionId) || {}),
+      ...(interactionMetaById.get(interactionId) || {}),
+    }));
+  }
+
+  let smsContentById = new Map<string, string | null>();
+  if (pagedSmsMessages.length > 0) {
+    const { data: smsContentRows, error: smsContentErr } = await db
+      .from("sms_messages")
+      .select("id, content")
+      .in("id", pagedSmsMessages.map((s: any) => s.id));
+
+    if (smsContentErr) {
+      return json({ ok: false, error_code: "sms_content_query_failed", error: smsContentErr.message }, 500);
+    }
+    smsContentById = new Map((smsContentRows || []).map((row: any) => [row.id, row.content || null]));
+  }
+
+  let callsRaw: any[] = [];
+  let spans: any[] = [];
+  let callClaims: any[] = [];
+  if (interactionIds.length > 0) {
+    const [
+      { data: callsRawData, error: callsRawErr },
+      { data: spansData, error: spansErr },
+      { data: claimData, error: claimsErr },
+    ] = await Promise.all([
+      db
+        .from("calls_raw")
+        .select("interaction_id, direction, transcript")
+        .in("interaction_id", interactionIds),
+      db
+        .from("conversation_spans")
+        .select("id, interaction_id, span_index, transcript_segment, word_count")
+        .in("interaction_id", interactionIds)
+        .eq("is_superseded", false)
+        .order("span_index", { ascending: true }),
+      db
+        .from("journal_claims")
+        .select("id, call_id, source_span_id, claim_type, claim_text, speaker_label")
+        .in("call_id", interactionIds),
+    ]);
+
+    if (callsRawErr) {
+      return json({ ok: false, error_code: "calls_raw_query_failed", error: callsRawErr.message }, 500);
+    }
+    if (spansErr) {
+      return json({ ok: false, error_code: "spans_query_failed", error: spansErr.message }, 500);
+    }
+    if (claimsErr) {
+      return json({ ok: false, error_code: "claims_query_failed", error: claimsErr.message }, 500);
+    }
+    callsRaw = callsRawData || [];
+    spans = spansData || [];
+    callClaims = claimData || [];
   }
 
   const directionMap = new Map((callsRaw || []).map((c: any) => [c.interaction_id, c.direction]));
   const transcriptMap = new Map((callsRaw || []).map((c: any) => [c.interaction_id, c.transcript]));
-
-  let spans: any[] = [];
-  if (interactionIds.length > 0) {
-    const { data, error } = await db
-      .from("conversation_spans")
-      .select("id, interaction_id, span_index, transcript_segment, word_count")
-      .in("interaction_id", interactionIds)
-      .eq("is_superseded", false)
-      .order("span_index", { ascending: true });
-
-    if (error) {
-      return json({ ok: false, error_code: "spans_query_failed", error: error.message }, 500);
-    }
-    spans = data || [];
-  }
-
   const spansPerInteraction = groupBy(spans || [], (s: any) => s.interaction_id);
-
-  let callClaims: any[] = [];
-  if (interactionIds.length > 0) {
-    const { data: claimData, error: claimsErr } = await db
-      .from("journal_claims")
-      .select("id, call_id, source_span_id, claim_type, claim_text, speaker_label")
-      .in("call_id", interactionIds);
-
-    if (claimsErr) {
-      return json({ ok: false, error_code: "claims_query_failed", error: claimsErr.message }, 500);
-    }
-    callClaims = claimData || [];
-  }
 
   const allClaimIds = callClaims.map((c: any) => c.id);
   const claimsPerCall = groupBy(callClaims, (c: any) => c.call_id);
@@ -457,7 +495,7 @@ async function handleThread(
     sms_id: s.id,
     event_at: s.sent_at,
     direction: s.direction,
-    content: s.content,
+    content: smsContentById.get(s.id) || null,
     sender_name: s.direction === "outbound" ? "Zack" : (s.contact_name || contact.name),
   }));
 
