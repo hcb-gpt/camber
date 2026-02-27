@@ -503,6 +503,15 @@ async function handleGetCutoff(db: any, t0: number): Promise<Response> {
 
 // contacts endpoint
 async function handleContacts(db: any, url: URL, t0: number): Promise<Response> {
+  const stageMs: Record<string, number> = {};
+  const timeDb = async (stage: string, fn: () => Promise<any>): Promise<any> => {
+    const start = performance.now();
+    const result = await fn();
+    stageMs[stage] = (stageMs[stage] || 0) + (performance.now() - start);
+    return result;
+  };
+  const computeStart = performance.now();
+
   const { resetApplied, cutoff } = await maybeAutoResetGradingCutoff(db);
   if (resetApplied) {
     contactsCache = null;
@@ -526,10 +535,12 @@ async function handleContacts(db: any, url: URL, t0: number): Promise<Response> 
     "contact_id, contact_name, contact_phone, call_count, sms_count, claim_count, ungraded_count, last_activity, last_snippet, last_direction, last_interaction_type";
 
   const contactsSource = "redline_contacts";
-  const { data, error } = await db
-    .from(contactsSource)
-    .select(selectColumns)
-    .order("last_activity", { ascending: false, nullsFirst: false });
+  const { data, error } = await timeDb("db_contacts", () =>
+    db
+      .from(contactsSource)
+      .select(selectColumns)
+      .order("last_activity", { ascending: false, nullsFirst: false })
+  );
 
   if (error) {
     return json({ ok: false, error_code: "contacts_query_failed", error: error.message }, 500);
@@ -562,6 +573,13 @@ async function handleContacts(db: any, url: URL, t0: number): Promise<Response> 
     contacts,
   };
 
+  const totalMs = Date.now() - t0;
+  const dbMs = Object.entries(stageMs)
+    .filter(([stage]) => stage.startsWith("db_"))
+    .reduce((sum, [, ms]) => sum + ms, 0);
+  const computeMs = Math.max(0, performance.now() - computeStart - dbMs);
+  const serverTiming = buildServerTimingHeader({ db_ms: dbMs, compute_ms: computeMs, ...stageMs }, totalMs);
+
   return json({
     ok: true,
     contacts,
@@ -570,8 +588,8 @@ async function handleContacts(db: any, url: URL, t0: number): Promise<Response> 
     grading_cutoff: cutoff,
     auto_reset_applied: resetApplied,
     function_version: FUNCTION_VERSION,
-    ms: Date.now() - t0,
-  });
+    ms: totalMs,
+  }, 200, serverTiming ? { "Server-Timing": serverTiming } : {});
 }
 
 // projects endpoint
@@ -647,10 +665,19 @@ async function handleTopCandidates(db: any, url: URL, t0: number): Promise<Respo
 }
 
 async function handleTriageQueue(db: any, url: URL, t0: number): Promise<Response> {
+  const stageMs: Record<string, number> = {};
+  const timeDb = async (stage: string, fn: () => Promise<any>): Promise<any> => {
+    const start = performance.now();
+    const result = await fn();
+    stageMs[stage] = (stageMs[stage] || 0) + (performance.now() - start);
+    return result;
+  };
+  const computeStart = performance.now();
+
   const rawLimit = parseInt(url.searchParams.get("limit") || "100", 10);
   const limit = Math.min(Math.max(Number.isNaN(rawLimit) ? 100 : rawLimit, 1), 300);
 
-  const [{ data: pendingRows, error: pendingErr }, { count: totalPending, error: totalErr }] = await Promise.all([
+  const [{ data: pendingRows, error: pendingErr }, { count: totalPending, error: totalErr }] = await timeDb("db_pending_queue", () => Promise.all([
     db
       .from("review_queue")
       .select("id, span_id, interaction_id, created_at")
@@ -661,7 +688,7 @@ async function handleTriageQueue(db: any, url: URL, t0: number): Promise<Respons
       .from("review_queue")
       .select("id", { count: "exact", head: true })
       .eq("status", "pending"),
-  ]);
+  ]));
 
   if (pendingErr) {
     return json({ ok: false, error_code: "triage_queue_query_failed", error: pendingErr.message }, 500);
@@ -693,14 +720,14 @@ async function handleTriageQueue(db: any, url: URL, t0: number): Promise<Respons
       .filter((value: string) => value.length > 0),
   )) as string[];
 
-  const { data: spanRows, error: spanErr } = await batchIn<any>(
+  const { data: spanRows, error: spanErr } = await timeDb("db_spans", () => batchIn<any>(
     spanIds,
     (chunk: string[]) =>
       db
         .from("conversation_spans")
         .select("id, interaction_id, span_index, transcript_segment")
         .in("id", chunk),
-  );
+  ));
   if (spanErr) {
     return json({ ok: false, error_code: "triage_spans_query_failed", error: spanErr.message }, 500);
   }
@@ -713,14 +740,14 @@ async function handleTriageQueue(db: any, url: URL, t0: number): Promise<Respons
     ...((spanRows || []).map((row: any) => String(row?.interaction_id || "")).filter(Boolean)),
   ])];
 
-  const { data: interactionRows, error: interactionErr } = await batchIn<any>(
+  const { data: interactionRows, error: interactionErr } = await timeDb("db_interactions", () => batchIn<any>(
     interactionIds,
     (chunk: string[]) =>
       db
         .from("interactions")
         .select("interaction_id, contact_id, contact_name, event_at_utc, channel")
         .in("interaction_id", chunk),
-  );
+  ));
   if (interactionErr) {
     return json({ ok: false, error_code: "triage_interactions_query_failed", error: interactionErr.message }, 500);
   }
@@ -728,7 +755,7 @@ async function handleTriageQueue(db: any, url: URL, t0: number): Promise<Respons
     (interactionRows || []).map((row: any) => [String(row?.interaction_id || ""), row]),
   );
 
-  const { data: attributionRows, error: attributionErr } = await batchIn<any>(
+  const { data: attributionRows, error: attributionErr } = await timeDb("db_attributions", () => batchIn<any>(
     spanIds,
     (chunk: string[]) =>
       db
@@ -736,7 +763,7 @@ async function handleTriageQueue(db: any, url: URL, t0: number): Promise<Respons
         .select("span_id, project_id, applied_project_id, confidence, attributed_at")
         .in("span_id", chunk)
         .order("attributed_at", { ascending: false }),
-  );
+  ));
   if (attributionErr) {
     return json({ ok: false, error_code: "triage_attributions_query_failed", error: attributionErr.message }, 500);
   }
@@ -752,14 +779,14 @@ async function handleTriageQueue(db: any, url: URL, t0: number): Promise<Respons
       .map((row: any) => String(row?.applied_project_id || row?.project_id || ""))
       .filter(Boolean),
   )];
-  const { data: projectRows, error: projectErr } = await batchIn<any>(
+  const { data: projectRows, error: projectErr } = await timeDb("db_projects", () => batchIn<any>(
     projectIds,
     (chunk: string[]) =>
       db
         .from("projects")
         .select("id, name")
         .in("id", chunk),
-  );
+  ));
   if (projectErr) {
     return json({ ok: false, error_code: "triage_projects_query_failed", error: projectErr.message }, 500);
   }
@@ -794,14 +821,21 @@ async function handleTriageQueue(db: any, url: URL, t0: number): Promise<Respons
     };
   });
 
+  const totalMs = Date.now() - t0;
+  const dbMs = Object.entries(stageMs)
+    .filter(([stage]) => stage.startsWith("db_"))
+    .reduce((sum, [, ms]) => sum + ms, 0);
+  const computeMs = Math.max(0, performance.now() - computeStart - dbMs);
+  const serverTiming = buildServerTimingHeader({ db_ms: dbMs, compute_ms: computeMs, ...stageMs }, totalMs);
+
   return json({
     ok: true,
     items,
     count: items.length,
     total_pending: totalPending ?? items.length,
     function_version: FUNCTION_VERSION,
-    ms: Date.now() - t0,
-  });
+    ms: totalMs,
+  }, 200, serverTiming ? { "Server-Timing": serverTiming } : {});
 }
 
 async function handleUndoVerdict(db: any, req: Request, t0: number): Promise<Response> {
@@ -1013,103 +1047,71 @@ async function handleThread(
   const scanWindow = Math.min(Math.max(offset + limit + 20, 40), 120);
   const queryPageSize = 40;
 
-  let allInteractions: any[] = [];
-  let interactionsFrom = 0;
-  let hasMoreInteractions = false;
-  while (allInteractions.length < scanWindow) {
-    const interactionsTo = interactionsFrom + queryPageSize - 1;
-    const { data: page, error: intErr } = await timeDb("db_interactions", () =>
-      db
-        .from("interactions")
-        .select("id, interaction_id, event_at_utc, human_summary, contact_name, is_shadow")
-        .eq("contact_id", contactId)
-        // Keep call-only scope while tolerating legacy call-like channel values.
-        .or("channel.eq.call,channel.eq.phone,channel.is.null")
-        .or("is_shadow.is.false,is_shadow.is.null")
-        .not("interaction_id", "like", "cll_SHADOW_%")
-        .not("event_at_utc", "is", null)
-        .order("event_at_utc", { ascending: false })
-        .range(interactionsFrom, interactionsTo)
-    );
+  // Parallel 1: Get interactions and probe for SMS
+  const [interactionsRes, inboundProbeRes] = await Promise.all([
+    timeDb("db_interactions_all", async () => {
+      let results: any[] = [];
+      let from = 0;
+      while (results.length < scanWindow) {
+        const to = from + queryPageSize - 1;
+        const { data, error } = await db
+          .from("interactions")
+          .select("id, interaction_id, event_at_utc, human_summary, contact_name, is_shadow")
+          .eq("contact_id", contactId)
+          .or("channel.eq.call,channel.eq.phone,channel.is.null")
+          .or("is_shadow.is.false,is_shadow.is.null")
+          .not("interaction_id", "like", "cll_SHADOW_%")
+          .not("event_at_utc", "is", null)
+          .order("event_at_utc", { ascending: false })
+          .range(from, to);
+        if (error) throw error;
+        if (!data || data.length === 0) break;
+        results = results.concat(data);
+        if (data.length < queryPageSize) break;
+        from += queryPageSize;
+      }
+      return results.slice(0, scanWindow);
+    }),
+    timeDb("db_sms_inbound_probe", () => {
+      let query = db.from("sms_messages").select("id").eq("direction", "inbound").limit(1);
+      if (contactPhoneVariants.length === 1) query = query.eq("contact_phone", contactPhoneVariants[0]);
+      else if (contactPhoneVariants.length > 1) query = query.in("contact_phone", contactPhoneVariants);
+      else query = query.eq("contact_phone", "__no_match__");
+      return query;
+    }),
+  ]);
 
-    if (intErr) {
-      return json({ ok: false, error_code: "interactions_query_failed", error: intErr.message }, 500);
-    }
+  const allInteractions = interactionsRes;
+  const hasInboundSms = (inboundProbeRes.data || []).length > 0;
 
-    if (!page || page.length === 0) break;
-    allInteractions = allInteractions.concat(page);
-    if (page.length < queryPageSize) break;
-    interactionsFrom += queryPageSize;
-    if (allInteractions.length >= scanWindow) {
-      hasMoreInteractions = true;
-      break;
-    }
-  }
-  if (allInteractions.length > scanWindow) {
-    allInteractions = allInteractions.slice(0, scanWindow);
-  }
-
-  let inboundProbeQuery = db
-    .from("sms_messages")
-    .select("id")
-    .eq("direction", "inbound")
-    .limit(1);
-  if (contactPhoneVariants.length === 1) {
-    inboundProbeQuery = inboundProbeQuery.eq("contact_phone", contactPhoneVariants[0]);
-  } else if (contactPhoneVariants.length > 1) {
-    inboundProbeQuery = inboundProbeQuery.in("contact_phone", contactPhoneVariants);
-  } else {
-    inboundProbeQuery = inboundProbeQuery.eq("contact_phone", "__no_contact_phone_match__");
-  }
-  const { data: inboundProbe, error: inboundProbeErr } = await timeDb(
-    "db_sms_inbound_probe",
-    () => inboundProbeQuery
-  );
-
-  if (inboundProbeErr) {
-    return json({ ok: false, error_code: "sms_inbound_probe_failed", error: inboundProbeErr.message }, 500);
-  }
-
-  const hasInboundSms = (inboundProbe || []).length > 0;
+  // Parallel 2: Get SMS messages (if needed)
   let allSmsMessages: any[] = [];
-  let hasMoreSms = false;
-
   if (hasInboundSms) {
-    let smsFrom = 0;
-    while (allSmsMessages.length < scanWindow) {
-      const smsTo = smsFrom + queryPageSize - 1;
-      let smsQuery = db
-        .from("sms_messages")
-        .select("id, sent_at, content, direction, contact_name, contact_phone, sender_user_id")
-        .order("sent_at", { ascending: false })
-        .range(smsFrom, smsTo);
-      if (contactPhoneVariants.length === 1) {
-        smsQuery = smsQuery.eq("contact_phone", contactPhoneVariants[0]);
-      } else if (contactPhoneVariants.length > 1) {
-        smsQuery = smsQuery.in("contact_phone", contactPhoneVariants);
-      } else {
-        smsQuery = smsQuery.eq("contact_phone", "__no_contact_phone_match__");
+    allSmsMessages = await timeDb("db_sms_messages_all", async () => {
+      let results: any[] = [];
+      let from = 0;
+      while (results.length < scanWindow) {
+        const to = from + queryPageSize - 1;
+        let query = db
+          .from("sms_messages")
+          .select("id, sent_at, content, direction, contact_name, contact_phone, sender_user_id")
+          .order("sent_at", { ascending: false })
+          .range(from, to);
+        if (contactPhoneVariants.length === 1) query = query.eq("contact_phone", contactPhoneVariants[0]);
+        else if (contactPhoneVariants.length > 1) query = query.in("contact_phone", contactPhoneVariants);
+        else query = query.eq("contact_phone", "__no_match__");
+        const { data, error } = await query;
+        if (error) throw error;
+        if (!data || data.length === 0) break;
+        results = results.concat(data);
+        if (data.length < queryPageSize) break;
+        from += queryPageSize;
       }
-      const { data: page, error: smsErr } = await timeDb("db_sms_messages", () => smsQuery);
-
-      if (smsErr) {
-        return json({ ok: false, error_code: "sms_query_failed", error: smsErr.message }, 500);
-      }
-
-      if (!page || page.length === 0) break;
-      allSmsMessages = allSmsMessages.concat(page);
-      if (page.length < queryPageSize) break;
-      smsFrom += queryPageSize;
-      if (allSmsMessages.length >= scanWindow) {
-        hasMoreSms = true;
-        break;
-      }
-    }
-    if (allSmsMessages.length > scanWindow) {
-      allSmsMessages = allSmsMessages.slice(0, scanWindow);
-    }
+      return results.slice(0, scanWindow);
+    });
   }
 
+  // Interleave and page
   const inboundSms = allSmsMessages.filter((s: any) => String(s.direction || "").toLowerCase() === "inbound");
   const outboundSms = allSmsMessages.filter((s: any) => String(s.direction || "").toLowerCase() === "outbound");
   const hasAnyInbound = inboundSms.length > 0;
@@ -1128,463 +1130,107 @@ async function handleThread(
       );
       if (inferredOutbound.length > 0) {
         smsMessages = smsMessages.concat(inferredOutbound);
-        smsMessages.sort((a: any, b: any) => {
-          const aTime = Date.parse(a.sent_at || "") || 0;
-          const bTime = Date.parse(b.sent_at || "") || 0;
-          if (aTime !== bTime) return bTime - aTime;
-          return String(b.id).localeCompare(String(a.id));
-        });
+        smsMessages.sort((a: any, b: any) => (Date.parse(b.sent_at) || 0) - (Date.parse(a.sent_at) || 0));
       }
     }
   }
 
   const timeline = [
-    ...allInteractions.map((i: any) => ({
-      kind: "call",
-      key: i.interaction_id,
-      event_at: i.event_at_utc,
-    })),
-    ...smsMessages
-      .filter((s: any) => !!s.sent_at)
-      .map((s: any) => ({
-        kind: "sms",
-        key: s.id,
-        event_at: s.sent_at,
-      })),
-  ].sort((a: any, b: any) => {
-    const aTime = Date.parse(a.event_at || "") || 0;
-    const bTime = Date.parse(b.event_at || "") || 0;
-    if (aTime !== bTime) return bTime - aTime;
-    return String(b.key).localeCompare(String(a.key));
-  });
+    ...allInteractions.map((i: any) => ({ kind: "call", key: i.interaction_id, event_at: i.event_at_utc })),
+    ...smsMessages.filter((s: any) => !!s.sent_at).map((s: any) => ({ kind: "sms", key: s.id, event_at: s.sent_at })),
+  ].sort((a: any, b: any) => (Date.parse(b.event_at) || 0) - (Date.parse(a.event_at) || 0));
 
   const pagedTimeline = timeline.slice(offset, offset + limit);
-  const likelyMore = hasMoreInteractions || hasMoreSms;
-  const totalCount = likelyMore
-    ? Math.max(offset + pagedTimeline.length + 1, timeline.length)
-    : offset + pagedTimeline.length;
-
   if (pagedTimeline.length === 0) {
-    return json({
-      ok: true,
-      contact: { id: contact.id, name: contact.name, phone: contact.phone },
-      thread: [],
-      pagination: { limit, offset, total: totalCount },
-      function_version: FUNCTION_VERSION,
-      ms: Date.now() - t0,
-    });
+    return json({ ok: true, contact: { id: contact.id, name: contact.name, phone: contact.phone }, thread: [], pagination: { limit, offset, total: timeline.length }, function_version: FUNCTION_VERSION, ms: Date.now() - t0 });
   }
 
-  const pagedCallIds = new Set(
-    pagedTimeline
-      .filter((entry: any) => entry.kind === "call")
-      .map((entry: any) => entry.key),
-  );
-  const pagedSmsIds = new Set(
-    pagedTimeline
-      .filter((entry: any) => entry.kind === "sms")
-      .map((entry: any) => entry.key),
-  );
+  const pagedCallIds = Array.from(new Set(pagedTimeline.filter((e: any) => e.kind === "call").map((e: any) => e.key)));
+  const pagedSmsMessages = smsMessages.filter((s: any) => pagedTimeline.some(e => e.kind === "sms" && e.key === s.id));
 
-  const interactions = allInteractions.filter((i: any) => pagedCallIds.has(i.interaction_id));
-  const interactionIds = interactions.map((i: any) => i.interaction_id);
-  const interactionAliasToCanonical = new Map<string, string>();
-  for (const interaction of interactions) {
-    if (interaction?.interaction_id) {
-      interactionAliasToCanonical.set(String(interaction.interaction_id), String(interaction.interaction_id));
-    }
-    if (interaction?.id) {
-      interactionAliasToCanonical.set(String(interaction.id), String(interaction.interaction_id));
-    }
-  }
-  const pagedSmsMessages = smsMessages.filter((s: any) => pagedSmsIds.has(s.id));
+  // Parallel 3: Fetch all details for paged items
+  const [callsRawRes, spansRes, claimsRes, pendingSmsRes] = await Promise.all([
+    pagedCallIds.length > 0 ? timeDb("db_calls_raw", () => db.from("calls_raw").select("interaction_id, direction, transcript").in("interaction_id", pagedCallIds)) : { data: [] },
+    pagedCallIds.length > 0 ? timeDb("db_conversation_spans", () => batchIn<any>(pagedCallIds, chunk => db.from("conversation_spans").select("id, interaction_id, span_index, transcript_segment, word_count").in("interaction_id", chunk).eq("is_superseded", false))) : { data: [] },
+    pagedCallIds.length > 0 ? timeDb("db_journal_claims", () => batchIn<any>(pagedCallIds, chunk => db.from("journal_claims").select("id, call_id, source_span_id, claim_type, claim_text, speaker_label").in("call_id", chunk))) : { data: [] },
+    pagedSmsMessages.length > 0 ? timeDb("db_pending_sms_reviews", () => {
+      const keys = [...new Set(pagedSmsMessages.flatMap(s => deriveSmsInteractionKeys(s, contact.phone)))];
+      return db.from("review_queue").select("id, interaction_id, created_at").eq("status", "pending").in("interaction_id", keys);
+    }) : { data: [] },
+  ]);
 
-  const pendingSmsReviewByInteractionId = new Map<string, any>();
-  const pendingSmsReviewByMessageId = new Map<string, any>();
-  const smsInteractionKeys = [
-    ...new Set(
-      pagedSmsMessages.flatMap((sms: any) => deriveSmsInteractionKeys(sms, contact.phone)),
-    ),
-  ];
+  const spanIds = (spansRes.data || []).map((s: any) => s.id);
+  const claimIds = (claimsRes.data || []).map((c: any) => c.id);
 
-  if (smsInteractionKeys.length > 0) {
-    const { data: pendingSmsReviewRows, error: pendingSmsReviewErr } = await timeDb(
-      "db_pending_sms_reviews",
-      () =>
-        db
-          .from("review_queue")
-          .select("id, interaction_id, created_at")
-          .eq("status", "pending")
-          .in("interaction_id", smsInteractionKeys)
-          .order("created_at", { ascending: false })
-    );
+  // Parallel 4: Fetch deep details
+  const [attrRes, pendingSpansRes, gradesRes] = await Promise.all([
+    spanIds.length > 0 ? timeDb("db_span_attributions", () => batchIn<any>(spanIds, chunk => db.from("span_attributions").select("span_id, project_id, applied_project_id, confidence").in("span_id", chunk))) : { data: [] },
+    spanIds.length > 0 ? timeDb("db_pending_span_reviews", () => batchIn<any>(spanIds, chunk => db.from("review_queue").select("id, span_id, interaction_id, created_at").eq("status", "pending").in("span_id", chunk))) : { data: [] },
+    claimIds.length > 0 ? timeDb("db_claim_grades", () => batchIn<any>(claimIds, chunk => db.from("claim_grades").select("claim_id, grade, correction_text, graded_by").in("claim_id", chunk))) : { data: [] },
+  ]);
 
-    if (pendingSmsReviewErr) {
-      return json(
-        { ok: false, error_code: "pending_sms_review_query_failed", error: pendingSmsReviewErr.message },
-        500,
-      );
-    }
+  // Map everything back
+  const directionMap = new Map((callsRawRes.data || []).map((c: any) => [c.interaction_id, c.direction]));
+  const transcriptMap = new Map((callsRawRes.data || []).map((c: any) => [c.interaction_id, c.transcript]));
+  const spansPerInteraction = groupBy(spansRes.data || [], (s: any) => s.interaction_id);
+  const attrBySpan = new Map((attrRes.data || []).map((a: any) => [a.span_id, a]));
+  const pendingBySpan = new Map((pendingSpansRes.data || []).map((p: any) => [p.span_id, p]));
+  const gradeByClaim = new Map((gradesRes.data || []).map((g: any) => [g.claim_id, g]));
+  const claimsByCall = groupBy(claimsRes.data || [], (c: any) => c.call_id);
+  const pendingSmsByInteraction = new Map((pendingSmsRes.data || []).map((p: any) => [p.interaction_id, p]));
 
-    for (const row of pendingSmsReviewRows || []) {
-      const interactionId = String(row?.interaction_id || "");
-      if (!interactionId) continue;
-      if (!pendingSmsReviewByInteractionId.has(interactionId)) {
-        pendingSmsReviewByInteractionId.set(interactionId, row);
-      }
-    }
+  // Project names fetch
+  const projectIds = [...new Set((attrRes.data || []).map((a: any) => a.applied_project_id || a.project_id).filter(Boolean))];
+  const projectNamesRes = projectIds.length > 0 ? await timeDb("db_projects", () => db.from("projects").select("id, name").in("id", projectIds)) : { data: [] };
+  const projectNameById = new Map((projectNamesRes.data || []).map((p: any) => [p.id, p.name]));
 
-    for (const sms of pagedSmsMessages) {
-      const matchingReview = deriveSmsInteractionKeys(sms, contact.phone)
-        .map((key) => pendingSmsReviewByInteractionId.get(key))
-        .find((value) => !!value);
-      if (matchingReview) {
-        pendingSmsReviewByMessageId.set(String(sms.id), matchingReview);
-      }
-    }
-  }
-
-  let callsRaw: any[] = [];
-  if (interactionIds.length > 0) {
-    const { data, error } = await timeDb("db_calls_raw", () =>
-      db
-        .from("calls_raw")
-        .select("interaction_id, direction, transcript")
-        .in("interaction_id", interactionIds)
-    );
-
-    if (error) {
-      return json({ ok: false, error_code: "calls_raw_query_failed", error: error.message }, 500);
-    }
-    callsRaw = data || [];
-  }
-
-  const directionMap = new Map((callsRaw || []).map((c: any) => [c.interaction_id, c.direction]));
-  const transcriptMap = new Map((callsRaw || []).map((c: any) => [c.interaction_id, c.transcript]));
-
-  let spans: any[] = [];
-  if (interactionIds.length > 0) {
-    const { data, error } = await timeDb("db_conversation_spans", () =>
-      batchIn<any>(
-        interactionIds,
-        (chunk: string[]) =>
-          db
-            .from("conversation_spans")
-            .select("id, interaction_id, span_index, transcript_segment, word_count")
-            .in("interaction_id", chunk)
-            .eq("is_superseded", false)
-            .order("span_index", { ascending: true }),
-      )
-    );
-
-    if (error) {
-      return json({ ok: false, error_code: "spans_query_failed", error: error.message }, 500);
-    }
-    spans = (data || []).sort((a: any, b: any) => {
-      const interactionCmp = String(a?.interaction_id || "").localeCompare(String(b?.interaction_id || ""));
-      if (interactionCmp !== 0) return interactionCmp;
-      return Number(a?.span_index || 0) - Number(b?.span_index || 0);
-    });
-  }
-
-  const spansPerInteraction = groupBy(spans || [], (s: any) => s.interaction_id);
-  const spanIds = (spans || [])
-    .map((span: any) => String(span.id || ""))
-    .filter((id: string) => id.length > 0);
-
-  let spanAttributionRows: any[] = [];
-  if (spanIds.length > 0) {
-    const { data, error } = await timeDb("db_span_attributions", () =>
-      batchIn<any>(
-        spanIds,
-        (chunk: string[]) =>
-          db
-            .from("span_attributions")
-            .select("span_id, project_id, applied_project_id, confidence")
-            .in("span_id", chunk),
-      )
-    );
-
-    if (error) {
-      return json({ ok: false, error_code: "span_attributions_query_failed", error: error.message }, 500);
-    }
-    spanAttributionRows = data || [];
-  }
-
-  const spanAttributionBySpanId = new Map<string, any>();
-  for (const row of spanAttributionRows) {
-    const spanId = String(row?.span_id || "");
-    if (!spanId) continue;
-    const existing = spanAttributionBySpanId.get(spanId);
-    if (!existing) {
-      spanAttributionBySpanId.set(spanId, row);
-      continue;
-    }
-
-    const score = (candidate: any) => {
-      const applied = candidate?.applied_project_id ? 1000 : 0;
-      const confidence = Number(candidate?.confidence ?? 0);
-      return applied + (Number.isFinite(confidence) ? Math.round(confidence * 100) : 0);
-    };
-    if (score(row) > score(existing)) {
-      spanAttributionBySpanId.set(spanId, row);
-    }
-  }
-
-  const spanProjectIds = [
-    ...new Set(
-      [...spanAttributionBySpanId.values()]
-        .map((row: any) => String(row?.applied_project_id || row?.project_id || ""))
-        .filter((value: string) => value.length > 0),
-    ),
-  ];
-
-  const projectNameById = new Map<string, string>();
-  if (spanProjectIds.length > 0) {
-    const { data, error } = await timeDb("db_projects", () =>
-      batchIn<any>(
-        spanProjectIds,
-        (chunk: string[]) =>
-          db
-            .from("projects")
-            .select("id, name")
-            .in("id", chunk),
-      )
-    );
-
-    if (error) {
-      return json({ ok: false, error_code: "projects_for_spans_query_failed", error: error.message }, 500);
-    }
-
-    for (const project of data || []) {
-      const id = String(project?.id || "");
-      const name = String(project?.name || "");
-      if (!id || !name) continue;
-      projectNameById.set(id, name);
-    }
-  }
-
-  let pendingReviewRows: any[] = [];
-  if (spanIds.length > 0) {
-    const { data, error } = await timeDb("db_pending_span_reviews", () =>
-      batchIn<any>(
-        spanIds,
-        (chunk: string[]) =>
-          db
-            .from("review_queue")
-            .select("id, span_id, interaction_id, created_at")
-            .eq("status", "pending")
-            .in("span_id", chunk)
-            .order("created_at", { ascending: false }),
-      )
-    );
-
-    if (error) {
-      return json({ ok: false, error_code: "pending_review_query_failed", error: error.message }, 500);
-    }
-    pendingReviewRows = (data || []).sort((a: any, b: any) => {
-      const bTs = Date.parse(String(b?.created_at || "")) || 0;
-      const aTs = Date.parse(String(a?.created_at || "")) || 0;
-      if (bTs !== aTs) return bTs - aTs;
-      return String(a?.id || "").localeCompare(String(b?.id || ""));
-    });
-  }
-
-  const pendingReviewBySpanId = new Map<string, any>();
-  for (const row of pendingReviewRows) {
-    const spanId = String(row?.span_id || "");
-    if (!spanId) continue;
-    if (!pendingReviewBySpanId.has(spanId)) {
-      pendingReviewBySpanId.set(spanId, row);
-    }
-  }
-
-  const pendingCountByInteraction = new Map<string, number>();
-  for (const row of pendingReviewRows) {
-    const rawInteraction = String(row?.interaction_id || "");
-    if (!rawInteraction) continue;
-    const interactionKey = interactionAliasToCanonical.get(rawInteraction) || rawInteraction;
-    pendingCountByInteraction.set(
-      interactionKey,
-      (pendingCountByInteraction.get(interactionKey) || 0) + 1,
-    );
-  }
-
-  let callClaims: any[] = [];
-  if (interactionIds.length > 0) {
-    const claimCallKeys = [
-      ...new Set(
-        interactions.flatMap((interaction: any) => [
-          interaction?.interaction_id ? String(interaction.interaction_id) : "",
-          interaction?.id ? String(interaction.id) : "",
-        ]).filter((value: string) => value.length > 0),
-      ),
-    ];
-    const { data: claimData, error: claimsErr } = await timeDb("db_journal_claims", () =>
-      batchIn<any>(
-        claimCallKeys,
-        (chunk: string[]) =>
-          db
-            .from("journal_claims")
-            .select("id, call_id, source_span_id, claim_type, claim_text, speaker_label")
-            .in("call_id", chunk),
-      )
-    );
-
-    if (claimsErr) {
-      return json({ ok: false, error_code: "claims_query_failed", error: claimsErr.message }, 500);
-    }
-    const dedupedClaims = new Map<string, any>();
-    for (const claim of claimData || []) {
-      if (claim?.id) {
-        dedupedClaims.set(String(claim.id), claim);
-      }
-    }
-    callClaims = [...dedupedClaims.values()];
-  }
-
-  const allClaimIds = callClaims.map((c: any) => c.id);
-  const claimsPerCall = groupBy(
-    callClaims,
-    (claim: any) => interactionAliasToCanonical.get(String(claim.call_id)) || String(claim.call_id),
-  );
-
-  let grades: any[] = [];
-  if (allClaimIds.length > 0) {
-    const { data: gradeData, error: gradesErr } = await timeDb("db_claim_grades", () =>
-      batchIn<any>(
-        allClaimIds,
-        (chunk: string[]) =>
-          db
-            .from("claim_grades")
-            .select("claim_id, grade, correction_text, graded_by")
-            .in("claim_id", chunk),
-      )
-    );
-
-    if (gradesErr) {
-      return json({ ok: false, error_code: "grades_query_failed", error: gradesErr.message }, 500);
-    }
-    grades = gradeData || [];
-  }
-
-  const gradeMap = new Map((grades || []).map((g: any) => [g.claim_id, g]));
-
-  const callEntries = interactions.map((i: any) => {
-    const rawTranscript: string | null = transcriptMap.get(i.interaction_id) || null;
-    const rawSpans = spansPerInteraction.get(i.interaction_id) || [];
-    const dedupedSpans = deduplicateSpans(rawSpans);
-    const participants = extractParticipants(rawTranscript);
-    let pendingSpanCount = 0;
-
-    const interactionClaims = (claimsPerCall.get(i.interaction_id) || []).map((c: any) => {
-      const g = gradeMap.get(c.id);
-      return {
-        claim_id: c.id,
-        source_span_id: c.source_span_id || null,
-        claim_type: c.claim_type,
-        claim_text: c.claim_text,
-        grade: g?.grade || null,
-        correction_text: g?.correction_text || null,
-        graded_by: g?.graded_by || null,
-      };
-    });
-    const interactionClaimPayload = interactionClaims.map(({ source_span_id: _sourceSpanId, ...claim }) => claim);
-    const claimsPerSpan = groupBy(
-      interactionClaims.filter((claim: any) => !!claim.source_span_id),
-      (claim: any) => String(claim.source_span_id),
-    );
-    const unscopedClaims = interactionClaims.filter((claim: any) => !claim.source_span_id);
-
+  const callEntries = allInteractions.filter((i: any) => pagedCallIds.includes(i.interaction_id)).map((i: any) => {
+    const interactionClaims = (claimsByCall.get(i.interaction_id) || []).map((c: any) => ({
+      ...c, ...gradeByClaim.get(c.id)
+    }));
     return {
       type: "call",
       interaction_id: i.interaction_id,
       event_at: i.event_at_utc,
-      direction: directionMap.get(i.interaction_id) || null,
+      direction: directionMap.get(i.interaction_id),
       summary: i.human_summary,
       contact_name: i.contact_name || contact.name,
-      raw_transcript: rawTranscript,
-      participants,
-      spans: dedupedSpans.map((s: any, index: number) => {
-        const pendingReview = pendingReviewBySpanId.get(String(s.id));
-        const attribution = spanAttributionBySpanId.get(String(s.id));
-        const projectId = String(
-          attribution?.applied_project_id || attribution?.project_id || "",
-        );
-        const projectName = projectId ? projectNameById.get(projectId) || null : null;
-        const confidenceValue = Number(attribution?.confidence);
-        if (pendingReview) pendingSpanCount += 1;
-        const scopedClaims = (claimsPerSpan.get(String(s.id)) || [])
-          .map(({ source_span_id: _sourceSpanId, ...claim }: any) => claim);
-        const fallbackUnscopedClaims = index === 0
-          ? unscopedClaims.map(({ source_span_id: _sourceSpanId, ...claim }: any) => claim)
-          : [];
+      spans: (spansPerInteraction.get(i.interaction_id) || []).map((s: any) => {
+        const attr = attrBySpan.get(s.id);
         return {
-          span_id: s.id,
-          span_index: s.span_index,
-          transcript_segment: s.transcript_segment,
-          word_count: s.word_count,
-          review_queue_id: pendingReview?.id || null,
-          needs_attribution: !!pendingReview,
-          project_id: projectId || null,
-          project_name: projectName,
-          confidence: Number.isFinite(confidenceValue) ? confidenceValue : null,
-          claims: [...scopedClaims, ...fallbackUnscopedClaims],
+          ...s,
+          review_queue_id: pendingBySpan.get(s.id)?.id,
+          project_name: projectNameById.get(attr?.applied_project_id || attr?.project_id),
+          confidence: attr?.confidence,
         };
-      }),
-      pending_attribution_count: Math.max(
-        pendingSpanCount,
-        pendingCountByInteraction.get(i.interaction_id) || 0,
-      ),
-      claims: interactionClaimPayload,
+      })
     };
   });
 
-  const smsEntries = pagedSmsMessages.map((s: any) => {
-    const pendingReview = pendingSmsReviewByMessageId.get(String(s.id));
-    return {
-      type: "sms",
-      sms_id: s.id,
-      event_at: s.sent_at,
-      direction: s.direction,
-      content: s.content,
-      sender_name: s.direction === "outbound" ? "Zack" : (s.contact_name || contact.name),
-      review_queue_id: pendingReview?.id || null,
-      needs_attribution: !!pendingReview,
-    };
-  });
+  const smsEntries = pagedSmsMessages.map((s: any) => ({
+    type: "sms",
+    sms_id: s.id,
+    event_at: s.sent_at,
+    direction: s.direction,
+    content: s.content,
+    review_queue_id: deriveSmsInteractionKeys(s, contact.phone).map(k => pendingSmsByInteraction.get(k)).find(p => !!p)?.id
+  }));
 
-  const thread = [...callEntries, ...smsEntries].sort(
-    (a, b) => new Date(a.event_at).getTime() - new Date(b.event_at).getTime(),
-  );
+  const thread = [...callEntries, ...smsEntries].sort((a, b) => new Date(a.event_at).getTime() - new Date(b.event_at).getTime());
 
   const totalMs = Date.now() - t0;
-  const dbMs = Object.entries(stageMs)
-    .filter(([stage]) => stage.startsWith("db_"))
-    .reduce((sum, [, ms]) => sum + ms, 0);
+  const dbMs = Object.entries(stageMs).filter(([s]) => s.startsWith("db_")).reduce((sum, [, ms]) => sum + ms, 0);
   const computeMs = Math.max(0, performance.now() - computeStart - dbMs);
-  const serverTiming = buildServerTimingHeader(
-    {
-      db_ms: dbMs,
-      compute_ms: computeMs,
-      db_interactions: stageMs.db_interactions || 0,
-      db_sms_messages: stageMs.db_sms_messages || 0,
-      db_calls_raw: stageMs.db_calls_raw || 0,
-      db_conversation_spans: stageMs.db_conversation_spans || 0,
-      db_journal_claims: stageMs.db_journal_claims || 0,
-      db_claim_grades: stageMs.db_claim_grades || 0,
-    },
-    totalMs,
-  );
+  const serverTiming = buildServerTimingHeader({ db_ms: dbMs, compute_ms: computeMs, ...stageMs }, totalMs);
 
   return json({
     ok: true,
     contact: { id: contact.id, name: contact.name, phone: contact.phone },
     thread,
-    pagination: { limit, offset, total: totalCount },
+    pagination: { limit, offset, total: timeline.length },
     function_version: FUNCTION_VERSION,
     ms: totalMs,
-  }, 200, serverTiming ? { "Server-Timing": serverTiming } : {});
+  }, 200, { "Server-Timing": serverTiming });
 }
 
 async function handleThreadApi(db: any, contactId: string, url: URL, t0: number): Promise<Response> {
