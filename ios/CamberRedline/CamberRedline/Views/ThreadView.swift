@@ -81,18 +81,15 @@ struct ThreadView: View {
         Color(red: 0.18, green: 0.26, blue: 0.40),
         Color(red: 0.38, green: 0.24, blue: 0.18),
     ]
-    private static let smsDummyProjects: [SMSProjectAssignment] = [
-        SMSProjectAssignment(projectId: nil, name: "Hurley Residence", colorIndex: 0),
-        SMSProjectAssignment(projectId: nil, name: "Woodbery Residence", colorIndex: 1),
-        SMSProjectAssignment(projectId: nil, name: "Winship Residence", colorIndex: 2),
-        SMSProjectAssignment(projectId: nil, name: "Moss Residence", colorIndex: 3),
-        SMSProjectAssignment(projectId: nil, name: "Young Residence", colorIndex: 4),
-    ]
     private var reviewProjectOptions: [SMSProjectAssignment] {
-        guard !viewModel.reviewProjects.isEmpty else { return [] }
-        return viewModel.reviewProjects.enumerated().map { index, project in
+        let mapped = viewModel.reviewProjects.enumerated().map { index, project in
             SMSProjectAssignment(projectId: project.id, name: project.name, colorIndex: index)
         }
+        let hasUnknown = mapped.contains(where: { $0.projectId == nil })
+        if hasUnknown {
+            return mapped
+        }
+        return [SMSProjectAssignment(projectId: nil, name: "Unknown Project", colorIndex: nil)] + mapped
     }
 
     // MARK: - Derived display groups
@@ -140,7 +137,7 @@ struct ThreadView: View {
 
             case .sms(let entry):
                 flushPending()
-                var assignment = smsProjectAssignment(for: entry, smsIndex: smsIndex)
+                var assignment = smsProjectAssignment(for: entry)
                 if let override = smsOverrides[entry.messageId] {
                     assignment = override
                 }
@@ -233,15 +230,18 @@ struct ThreadView: View {
                                 onAssignSpanProject: { span, selectedProject in
                                     spanOverrides[span.spanId] = selectedProject
                                     guard let queueId = span.reviewQueueId else { return }
-                                    guard let projectId = selectedProject.projectId else {
-                                        viewModel.showTransientError("Project selection unavailable for this span.")
-                                        return
-                                    }
                                     Task {
-                                        let didResolve = await viewModel.resolveAttribution(
-                                            reviewQueueId: queueId,
-                                            projectId: projectId
-                                        )
+                                        let didResolve: Bool
+                                        if let projectId = selectedProject.projectId {
+                                            didResolve = await viewModel.resolveAttribution(
+                                                reviewQueueId: queueId,
+                                                projectId: projectId
+                                            )
+                                        } else {
+                                            didResolve = await viewModel.dismissAttribution(
+                                                reviewQueueId: queueId
+                                            )
+                                        }
                                         if !didResolve {
                                             spanOverrides.removeValue(forKey: span.spanId)
                                         } else {
@@ -270,10 +270,6 @@ struct ThreadView: View {
                                     for id in entries.map(\.messageId) {
                                         smsOverrides[id] = selectedProject
                                     }
-                                    guard let projectId = selectedProject.projectId else {
-                                        viewModel.showTransientError("Pick a project-backed option to apply attribution.")
-                                        return
-                                    }
                                     let queueIds = entries
                                         .compactMap { entry -> String? in
                                             guard entry.needsAttribution else { return nil }
@@ -281,10 +277,17 @@ struct ThreadView: View {
                                         }
                                     guard !queueIds.isEmpty else { return }
                                     Task {
-                                        let didResolve = await viewModel.resolveAttributions(
-                                            reviewQueueIds: queueIds,
-                                            projectId: projectId
-                                        )
+                                        let didResolve: Bool
+                                        if let projectId = selectedProject.projectId {
+                                            didResolve = await viewModel.resolveAttributions(
+                                                reviewQueueIds: queueIds,
+                                                projectId: projectId
+                                            )
+                                        } else {
+                                            didResolve = await viewModel.dismissAttributions(
+                                                reviewQueueIds: queueIds
+                                            )
+                                        }
                                         if !didResolve {
                                             for id in entries.map(\.messageId) {
                                                 smsOverrides.removeValue(forKey: id)
@@ -483,16 +486,11 @@ struct ThreadView: View {
 
     // MARK: - SMS zebra striping
 
-    private func smsProjectAssignment(for entry: SMSEntry, smsIndex: Int) -> SMSProjectAssignment? {
+    private func smsProjectAssignment(for entry: SMSEntry) -> SMSProjectAssignment? {
         if entry.needsAttribution {
             return SMSProjectAssignment(projectId: nil, name: "Needs Attribution", colorIndex: nil)
         }
-
-        let contactName = contact.name.lowercased()
-        guard contactName.contains("hetzer") else { return nil }
-
-        let segmentIndex = (smsIndex / 4) % Self.smsDummyProjects.count
-        return Self.smsDummyProjects[segmentIndex]
+        return nil
     }
 
     private func smsGroupKey(for entry: SMSEntry, assignment: SMSProjectAssignment?) -> String {
@@ -911,23 +909,17 @@ private struct SpanBlock: View {
         Color(red: 0.89, green: 0.32, blue: 0.32),
     ]
 
-    private static let baseProjects: [SMSProjectAssignment] = [
-        SMSProjectAssignment(projectId: nil, name: "Hurley Residence", colorIndex: 0),
-        SMSProjectAssignment(projectId: nil, name: "Woodbery Residence", colorIndex: 1),
-        SMSProjectAssignment(projectId: nil, name: "Winship Residence", colorIndex: 2),
-        SMSProjectAssignment(projectId: nil, name: "Skelton Residence", colorIndex: 3),
-        SMSProjectAssignment(projectId: nil, name: "Moss Residence", colorIndex: 4),
-        SMSProjectAssignment(projectId: nil, name: "Young Residence", colorIndex: 5),
-    ]
-
     private var currentProject: SMSProjectAssignment {
         if let selectedAssignment {
             return selectedAssignment
         }
+        if let resolvedProject = resolvedProjectAssignment {
+            return resolvedProject
+        }
         if span.needsAttribution {
             return SMSProjectAssignment(projectId: nil, name: "Unassigned", colorIndex: nil)
         }
-        return Self.baseProjects[colorIndex % Self.baseProjects.count]
+        return SMSProjectAssignment(projectId: nil, name: "Unknown Project", colorIndex: nil)
     }
 
     private var displayProjectName: String? {
@@ -935,6 +927,30 @@ private struct SpanBlock: View {
             return nil
         }
         return currentProject.name
+    }
+
+    private var resolvedProjectAssignment: SMSProjectAssignment? {
+        let id = span.projectId?.trimmingCharacters(in: .whitespacesAndNewlines)
+        let name = span.projectName?.trimmingCharacters(in: .whitespacesAndNewlines)
+
+        if let id, !id.isEmpty {
+            let displayName = (name?.isEmpty == false ? name : "Assigned Project") ?? "Assigned Project"
+            return SMSProjectAssignment(
+                projectId: id,
+                name: displayName,
+                colorIndex: stableColorIndex(seed: id)
+            )
+        }
+
+        if let name, !name.isEmpty {
+            return SMSProjectAssignment(
+                projectId: nil,
+                name: name,
+                colorIndex: stableColorIndex(seed: name)
+            )
+        }
+
+        return nil
     }
 
     private var color: Color {
@@ -946,6 +962,13 @@ private struct SpanBlock: View {
 
     private var opensPickerOnCardTap: Bool {
         span.needsAttribution && selectedAssignment == nil
+    }
+
+    private func stableColorIndex(seed: String) -> Int {
+        let raw = seed.unicodeScalars.reduce(0) { partialResult, scalar in
+            partialResult + Int(scalar.value)
+        }
+        return abs(raw) % max(Self.spanColors.count, 1)
     }
 
     private var parsedTurns: [SpeakerTurn] {

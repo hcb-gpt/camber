@@ -112,11 +112,6 @@ final class TriageViewModel {
     }
 
     func resolveSpan(_ span: TriageSpan, to projectId: String) async {
-        if span.isMock {
-            updateMockSpan(spanId: span.spanId, interactionId: span.interactionId, projectId: projectId)
-            return
-        }
-
         do {
             _ = try await service.resolve(queueId: span.queueId, projectId: projectId)
             await refreshQueue()
@@ -215,77 +210,6 @@ final class TriageViewModel {
             return lhs.eventDate > rhs.eventDate
         }
 
-        return injectMockMultiProjectCallIfNeeded(hydrated)
-    }
-
-    private func injectMockMultiProjectCallIfNeeded(_ sourceCalls: [TriageCall]) -> [TriageCall] {
-        if sourceCalls.contains(where: { $0.hasMultipleProjects }) {
-            return sourceCalls
-        }
-
-        let firstProject = reviewProjects.first
-            ?? ReviewProject(id: "mock_project_a", name: "Hurley Residence")
-        let secondProject = reviewProjects.dropFirst().first
-            ?? ReviewProject(id: "mock_project_b", name: "Woodbery Residence")
-
-        let mockTranscript = """
-        Zack: Let's keep Hurley moving this week.
-        Contractor: We'll finish framing at Hurley by Thursday.
-        Zack: Great. Separate note: Woodbery needs the electrical walkthrough moved to Friday.
-        Contractor: Copy that. I'll coordinate both schedules today.
-        """
-
-        let mockCall = TriageCall(
-            id: "mock-multi-project-call",
-            interactionId: "mock-multi-project-call",
-            contactName: "Mock Multi-Project Call",
-            eventDate: Date().addingTimeInterval(2),
-            humanSummary: "Mocked call injected to visualize multi-project span attribution.",
-            fullTranscript: mockTranscript,
-            spans: [
-                TriageSpan(
-                    id: "mock-span-1",
-                    queueId: "mock-span-1",
-                    spanId: "mock-span-1",
-                    interactionId: "mock-multi-project-call",
-                    transcriptSegment: "We'll finish framing at Hurley by Thursday.",
-                    projectId: firstProject.id,
-                    confidence: 0.86,
-                    reasonCodes: ["mock_preview"],
-                    candidates: [
-                        Candidate(name: firstProject.name, projectId: firstProject.id, evidenceTags: ["mock"]),
-                        Candidate(name: secondProject.name, projectId: secondProject.id, evidenceTags: ["mock"])
-                    ],
-                    isMock: true
-                ),
-                TriageSpan(
-                    id: "mock-span-2",
-                    queueId: "mock-span-2",
-                    spanId: "mock-span-2",
-                    interactionId: "mock-multi-project-call",
-                    transcriptSegment: "Woodbery needs the electrical walkthrough moved to Friday.",
-                    projectId: secondProject.id,
-                    confidence: 0.81,
-                    reasonCodes: ["mock_preview"],
-                    candidates: [
-                        Candidate(name: secondProject.name, projectId: secondProject.id, evidenceTags: ["mock"]),
-                        Candidate(name: firstProject.name, projectId: firstProject.id, evidenceTags: ["mock"])
-                    ],
-                    isMock: true
-                )
-            ],
-            isMock: true
-        )
-
-        return [mockCall] + sourceCalls
-    }
-
-    private func updateMockSpan(spanId: String, interactionId: String, projectId: String) {
-        for callIndex in calls.indices {
-            guard calls[callIndex].interactionId == interactionId else { continue }
-            for spanIndex in calls[callIndex].spans.indices where calls[callIndex].spans[spanIndex].spanId == spanId {
-                calls[callIndex].spans[spanIndex].projectId = projectId
-            }
-        }
+        return hydrated
     }
 }
