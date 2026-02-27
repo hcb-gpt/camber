@@ -72,6 +72,7 @@ struct CallEntry: Codable {
     /// Participant names/labels reported by the API.
     let participants: [String]
     let spans: [SpanEntry]
+    let pendingAttributionCount: Int
     let claims: [ClaimEntry]?
 
     enum CodingKeys: String, CodingKey {
@@ -84,6 +85,7 @@ struct CallEntry: Codable {
         case rawTranscript = "raw_transcript"
         case participants
         case spans
+        case pendingAttributionCount = "pending_attribution_count"
         case claims
     }
 
@@ -97,6 +99,7 @@ struct CallEntry: Codable {
         rawTranscript: String? = nil,
         participants: [String] = [],
         spans: [SpanEntry] = [],
+        pendingAttributionCount: Int = 0,
         claims: [ClaimEntry]? = nil
     ) {
         self.interactionId = interactionId
@@ -108,6 +111,7 @@ struct CallEntry: Codable {
         self.rawTranscript = rawTranscript
         self.participants = participants
         self.spans = spans
+        self.pendingAttributionCount = pendingAttributionCount
         self.claims = claims
     }
 
@@ -122,6 +126,7 @@ struct CallEntry: Codable {
         rawTranscript = try container.decodeIfPresent(String.self, forKey: .rawTranscript)
         participants = try container.decodeIfPresent([String].self, forKey: .participants) ?? []
         spans = try container.decodeIfPresent([SpanEntry].self, forKey: .spans) ?? []
+        pendingAttributionCount = try container.decodeIfPresent(Int.self, forKey: .pendingAttributionCount) ?? 0
         claims = try container.decodeIfPresent([ClaimEntry].self, forKey: .claims)
     }
 
@@ -145,6 +150,7 @@ struct CallHeaderEntry {
     let summary: String?
     let claims: [ClaimEntry]
     let spans: [SpanEntry]
+    let pendingAttributionCount: Int
 }
 
 // MARK: - SpanEntry
@@ -153,6 +159,8 @@ struct SpanEntry: Codable, Identifiable {
     let spanId: UUID
     let spanIndex: Int
     let transcriptSegment: String?
+    let reviewQueueId: String?
+    let needsAttribution: Bool
     let claims: [ClaimEntry]
 
     var id: UUID { spanId }
@@ -161,7 +169,19 @@ struct SpanEntry: Codable, Identifiable {
         case spanId = "span_id"
         case spanIndex = "span_index"
         case transcriptSegment = "transcript_segment"
+        case reviewQueueId = "review_queue_id"
+        case needsAttribution = "needs_attribution"
         case claims
+    }
+
+    init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        spanId = try container.decode(UUID.self, forKey: .spanId)
+        spanIndex = try container.decode(Int.self, forKey: .spanIndex)
+        transcriptSegment = try container.decodeIfPresent(String.self, forKey: .transcriptSegment)
+        reviewQueueId = try container.decodeIfPresent(String.self, forKey: .reviewQueueId)
+        needsAttribution = try container.decodeIfPresent(Bool.self, forKey: .needsAttribution) ?? false
+        claims = try container.decodeIfPresent([ClaimEntry].self, forKey: .claims) ?? []
     }
 }
 
@@ -198,6 +218,8 @@ struct SMSEntry: Codable, Identifiable {
     let content: String?
     /// Display name of the sender. v2 API key is `sender_name`.
     let senderName: String?
+    let reviewQueueId: String?
+    let needsAttribution: Bool
 
     /// Stable `Identifiable` id derived from the message_id string.
     var id: String { messageId }
@@ -211,5 +233,18 @@ struct SMSEntry: Codable, Identifiable {
         case direction
         case content
         case senderName = "sender_name"
+        case reviewQueueId = "review_queue_id"
+        case needsAttribution = "needs_attribution"
+    }
+
+    init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        messageId = try container.decode(String.self, forKey: .messageId)
+        sentAt = try container.decode(String.self, forKey: .sentAt)
+        direction = try container.decodeIfPresent(String.self, forKey: .direction)
+        content = try container.decodeIfPresent(String.self, forKey: .content)
+        senderName = try container.decodeIfPresent(String.self, forKey: .senderName)
+        reviewQueueId = try container.decodeIfPresent(String.self, forKey: .reviewQueueId)
+        needsAttribution = try container.decodeIfPresent(Bool.self, forKey: .needsAttribution) ?? false
     }
 }

@@ -13,6 +13,9 @@ final class BootstrapService {
     private let session: URLSession
     private let decoder: JSONDecoder
     private let encoder: JSONEncoder
+    private var cachedReviewProjects: [ReviewProject] = []
+    private var cachedReviewProjectsAt: Date?
+    private let reviewProjectsCacheTTL: TimeInterval = 5 * 60
 
     private init() {
         session = URLSession.shared
@@ -41,6 +44,32 @@ final class BootstrapService {
             throw BootstrapServiceError.apiError("queue endpoint returned ok=false")
         }
         return decoded
+    }
+
+    // MARK: - Review Projects Cache
+
+    func fetchReviewProjects(forceRefresh: Bool = false) async throws -> [ReviewProject] {
+        if !forceRefresh,
+           !cachedReviewProjects.isEmpty,
+           let cachedAt = cachedReviewProjectsAt,
+           Date().timeIntervalSince(cachedAt) < reviewProjectsCacheTTL
+        {
+            return cachedReviewProjects
+        }
+
+        let response = try await fetchQueue(limit: 1)
+        cachedReviewProjects = response.projects
+        cachedReviewProjectsAt = Date()
+        return response.projects
+    }
+
+    func snapshotCachedReviewProjects() -> [ReviewProject] {
+        cachedReviewProjects
+    }
+
+    func reviewProjectsCacheAge() -> TimeInterval? {
+        guard let cachedAt = cachedReviewProjectsAt else { return nil }
+        return Date().timeIntervalSince(cachedAt)
     }
 
     // MARK: - Resolve
