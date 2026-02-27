@@ -75,11 +75,13 @@
  */
 import "jsr:@supabase/functions-js/edge-runtime.d.ts";
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
+import { getModelConfigCached } from "../_shared/model_config.ts";
 
-const FUNCTION_VERSION = "v1.3.2";
+const FUNCTION_VERSION = "v1.3.3";
 const PROMPT_VERSION = "journal-extract-v2";
-const MAX_TOKENS = 4096;
-const DEFAULT_MODEL = "gpt-4o-mini";
+const DEFAULT_MAX_TOKENS = 4096;
+const DEFAULT_MODEL_ID = "gpt-4o-mini";
+const DEFAULT_TEMPERATURE = 0;
 const DEFAULT_TIMEOUT_MS = 30000;
 const MAX_TRANSCRIPT_CHARS = 8000; // Cap transcript to prevent inference timeouts
 const JOURNAL_CONSOLIDATE_TIMEOUT_MS = 120000;
@@ -384,6 +386,8 @@ async function triggerLoopClosure(
 async function callLlm(
   openaiKey: string,
   model: string,
+  maxTokens: number,
+  temperature: number,
   systemPrompt: string,
   userPrompt: string,
   timeoutMs: number,
@@ -401,8 +405,8 @@ async function callLlm(
       },
       body: JSON.stringify({
         model,
-        max_tokens: MAX_TOKENS,
-        temperature: 0,
+        max_tokens: maxTokens,
+        temperature,
         messages: [
           { role: "system", content: systemPrompt },
           { role: "user", content: userPrompt },
@@ -579,6 +583,12 @@ Deno.serve(async (req: Request) => {
     Deno.env.get("SUPABASE_URL")!,
     Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!,
   );
+  const modelConfig = await getModelConfigCached(db, {
+    functionName: "journal-extract",
+    modelId: DEFAULT_MODEL_ID,
+    maxTokens: DEFAULT_MAX_TOKENS,
+    temperature: DEFAULT_TEMPERATURE,
+  });
 
   const openaiKey = Deno.env.get("OPENAI_API_KEY");
   if (!openaiKey) {
@@ -588,7 +598,7 @@ Deno.serve(async (req: Request) => {
     );
   }
 
-  const model = Deno.env.get("JOURNAL_EXTRACT_MODEL") || DEFAULT_MODEL;
+  const model = modelConfig.modelId;
   const timeoutMs = Number(Deno.env.get("JOURNAL_EXTRACT_TIMEOUT_MS")) || DEFAULT_TIMEOUT_MS;
   const dry_run = body.dry_run === true;
   const skip_attribution = body.skip_attribution === true;
@@ -764,7 +774,15 @@ Deno.serve(async (req: Request) => {
     let retried = false;
 
     // ── ATTEMPT 1: Normal extraction ──────────────────────────────
-    const result1 = await callLlm(openaiKey, model, SYSTEM_PROMPT, userPrompt, timeoutMs);
+    const result1 = await callLlm(
+      openaiKey,
+      model,
+      modelConfig.maxTokens,
+      modelConfig.temperature,
+      SYSTEM_PROMPT,
+      userPrompt,
+      timeoutMs,
+    );
     tokens_used = result1.tokens_used;
     inference_ms = result1.inference_ms;
 
@@ -784,7 +802,15 @@ Deno.serve(async (req: Request) => {
       const retryPrompt =
         `TRANSCRIPT SEGMENT (span_id: ${span_id}, interaction: ${interaction_id}):\n"""\n${promptTranscript}\n"""\n\nExtract all project-relevant claims. Output ONLY valid JSON — no markdown, no code fences, no comments.`;
 
-      const result2 = await callLlm(openaiKey, model, RETRY_SYSTEM_PROMPT, retryPrompt, timeoutMs);
+      const result2 = await callLlm(
+        openaiKey,
+        model,
+        modelConfig.maxTokens,
+        modelConfig.temperature,
+        RETRY_SYSTEM_PROMPT,
+        retryPrompt,
+        timeoutMs,
+      );
       tokens_used += result2.tokens_used;
       inference_ms += result2.inference_ms;
 
