@@ -31,6 +31,22 @@ private struct ThreadNoteContext: Identifiable {
     let targets: [ThreadNoteTarget]
 }
 
+private struct VoicemailModel: Identifiable {
+    let id: String
+    let from: String
+    let eventAt: Date
+    let durationSec: Int
+    let transcript: String?
+}
+
+private struct AISummaryModel: Identifiable {
+    let id: String
+    let scopeLabel: String
+    let createdAt: Date
+    let title: String
+    let body: String
+}
+
 /// Internal grouping produced by ThreadView to support collapsible call cards
 /// that own their associated speaker turns. SMS items remain standalone.
 private enum DisplayGroup: Identifiable {
@@ -38,6 +54,10 @@ private enum DisplayGroup: Identifiable {
     case callGroup(header: CallHeaderEntry, turns: [SpeakerTurn])
     /// A contiguous SMS stripe group (same project assignment).
     case smsGroup(entries: [SMSEntry], assignment: SMSProjectAssignment?)
+    /// Dedicated voicemail card path (future-proofed for Beside parity).
+    case voicemail(entry: VoicemailModel)
+    /// Dedicated AI summary card path (future-proofed for Beside parity).
+    case aiSummary(entry: AISummaryModel)
 
     var id: String {
         switch self {
@@ -45,6 +65,10 @@ private enum DisplayGroup: Identifiable {
             return "cg-\(header.interactionId)"
         case .smsGroup(let entries, _):
             return "sms-group-\(entries.first?.messageId ?? UUID().uuidString)"
+        case .voicemail(let entry):
+            return "voicemail-\(entry.id)"
+        case .aiSummary(let entry):
+            return "ai-summary-\(entry.id)"
         }
     }
 
@@ -56,6 +80,10 @@ private enum DisplayGroup: Identifiable {
         case .smsGroup(let entries, _):
             guard let entry = entries.first else { return nil }
             return ThreadItem.sms(entry).eventAtDate
+        case .voicemail(let entry):
+            return entry.eventAt
+        case .aiSummary(let entry):
+            return entry.createdAt
         }
     }
 }
@@ -125,8 +153,29 @@ struct ThreadView: View {
             case .callHeader(let header):
                 flushSmsGroup()
                 flushPending()
-                pendingHeader = header
-                pendingTurns = []
+                let normalizedChannel = header.channel?.trimmingCharacters(in: .whitespacesAndNewlines).lowercased() ?? ""
+                if normalizedChannel.contains("voicemail") {
+                    let voicemail = VoicemailModel(
+                        id: header.interactionId,
+                        from: header.contactName ?? contact.name,
+                        eventAt: ThreadItem.callHeader(header).eventAtDate ?? .now,
+                        durationSec: 0,
+                        transcript: header.summary
+                    )
+                    groups.append(.voicemail(entry: voicemail))
+                } else if normalizedChannel.contains("summary") || normalizedChannel.contains("recap") {
+                    let summary = AISummaryModel(
+                        id: header.interactionId,
+                        scopeLabel: "Call Recap",
+                        createdAt: ThreadItem.callHeader(header).eventAtDate ?? .now,
+                        title: "AI Summary",
+                        body: header.summary ?? "No summary available."
+                    )
+                    groups.append(.aiSummary(entry: summary))
+                } else {
+                    pendingHeader = header
+                    pendingTurns = []
+                }
 
             case .speakerTurn(let turn):
                 // Accumulate turns under the current pending call header.
@@ -170,8 +219,7 @@ struct ThreadView: View {
 
     var body: some View {
         ScrollViewReader { proxy in
-            ScrollView {
-                LazyVStack(spacing: 0) {
+            ConversationThread {
                     Color.clear
                         .frame(height: 1)
                         .background(
@@ -185,6 +233,24 @@ struct ThreadView: View {
                         )
 
                     let groups = displayGroups
+
+                    ContactHeader(
+                        contactId: contact.contactId.uuidString,
+                        displayName: contact.name,
+                        avatarSeed: contact.name,
+                        presence: nil,
+                        unreadCount: contact.ungradedCount,
+                        phone: contact.phone,
+                        onCall: {
+                            viewModel.showTransientError("Call action not wired in Redline yet.")
+                        },
+                        onInfo: {
+                            viewModel.showTransientError("Contact details panel is coming soon.")
+                        }
+                    )
+                    .padding(.horizontal, 16)
+                    .padding(.top, 12)
+                    .padding(.bottom, 10)
 
                     if viewModel.isLoadingOlderThread {
                         ProgressView()
@@ -213,14 +279,14 @@ struct ThreadView: View {
 
                         // Date separator when the calendar date changes between items.
                         if shouldShowDateSeparator(at: index, in: groups) {
-                            DateSeparatorRow(date: group.eventAtDate)
+                            DateSeparator(date: group.eventAtDate)
                                 .padding(.top, index == 0 ? 12 : 20)
                                 .padding(.bottom, 8)
                         }
 
                         switch group {
                         case .callGroup(let header, let turns):
-                            CallCard(
+                            CallTranscriptCard(
                                 header: header,
                                 turns: turns,
                                 contactName: header.contactName ?? contact.name,
@@ -317,6 +383,14 @@ struct ThreadView: View {
                             )
                                 .padding(.horizontal, 16)
                                 .padding(.bottom, 8)
+                        case .voicemail(let entry):
+                            VoicemailCard(entry: entry)
+                                .padding(.horizontal, 16)
+                                .padding(.bottom, 12)
+                        case .aiSummary(let entry):
+                            AISummaryCard(entry: entry)
+                                .padding(.horizontal, 16)
+                                .padding(.bottom, 12)
                         }
                     }
 
@@ -326,7 +400,6 @@ struct ThreadView: View {
 
                     // Bottom breathing room so content clears the home indicator.
                     Color.clear.frame(height: 20)
-                }
             }
             .coordinateSpace(name: "thread-scroll")
             .background(Color.black)
@@ -473,6 +546,8 @@ struct ThreadView: View {
                     }
                 )
                 return partial + max(0, pendingQueueIds.count - optimisticResolvedQueueIds.count)
+            case .voicemail, .aiSummary:
+                return partial
             }
         }
     }
@@ -555,7 +630,7 @@ private struct ThreadTopOffsetPreferenceKey: PreferenceKey {
 
 /// Centered date + time label displayed between items when the date changes.
 /// Formats: "Today 5:29 PM" · "Yesterday 8:39 AM" · "Monday at 5:29 PM" · "Feb 25 10:00 AM"
-private struct DateSeparatorRow: View {
+private struct DateSeparator: View {
     let date: Date?
 
     private static let timeFormatter: DateFormatter = {
@@ -609,11 +684,208 @@ private struct DateSeparatorRow: View {
     }
 }
 
+private struct ConversationThread<Content: View>: View {
+    @ViewBuilder let content: () -> Content
+
+    var body: some View {
+        ScrollView {
+            LazyVStack(spacing: 0) {
+                content()
+            }
+        }
+    }
+}
+
+private struct ContactHeader: View {
+    let contactId: String
+    let displayName: String
+    let avatarSeed: String
+    let presence: String?
+    let unreadCount: Int
+    let phone: String?
+    let onCall: () -> Void
+    let onInfo: () -> Void
+
+    @Environment(\.horizontalSizeClass) private var horizontalSizeClass
+
+    private var initials: String {
+        let parts = displayName
+            .split(separator: " ")
+            .prefix(2)
+            .map { String($0.prefix(1)).uppercased() }
+        return parts.isEmpty ? "?" : parts.joined()
+    }
+
+    var body: some View {
+        HStack(spacing: 12) {
+            Circle()
+                .fill(Color(red: 0.20, green: 0.20, blue: 0.24))
+                .frame(width: horizontalSizeClass == .compact ? 38 : 44, height: horizontalSizeClass == .compact ? 38 : 44)
+                .overlay(
+                    Text(initials)
+                        .font(.caption)
+                        .fontWeight(.semibold)
+                        .foregroundStyle(.white)
+                )
+
+            VStack(alignment: .leading, spacing: 2) {
+                Text(displayName)
+                    .font(.headline)
+                    .foregroundStyle(.white)
+                    .lineLimit(1)
+                HStack(spacing: 8) {
+                    if let phone, !phone.isEmpty {
+                        Text(phone)
+                    } else {
+                        Text("ID \(contactId.prefix(6))…")
+                    }
+                    if unreadCount > 0 {
+                        Text("\(unreadCount) pending")
+                            .fontWeight(.semibold)
+                            .foregroundStyle(Color(red: 0.95, green: 0.62, blue: 0.23))
+                    }
+                    if let presence, !presence.isEmpty {
+                        Text(presence)
+                    }
+                }
+                .font(.caption)
+                .foregroundStyle(Color(.systemGray2))
+            }
+
+            Spacer()
+
+            HStack(spacing: 8) {
+                Button(action: onCall) {
+                    Image(systemName: "phone.fill")
+                        .font(.subheadline)
+                        .foregroundStyle(.white)
+                        .frame(width: 32, height: 32)
+                        .background(Color(red: 0.16, green: 0.50, blue: 0.94), in: Circle())
+                }
+                .buttonStyle(.plain)
+
+                Button(action: onInfo) {
+                    Image(systemName: "info.circle")
+                        .font(.title3)
+                        .foregroundStyle(Color(.systemGray2))
+                        .frame(width: 32, height: 32)
+                }
+                .buttonStyle(.plain)
+            }
+        }
+        .padding(.horizontal, 12)
+        .padding(.vertical, 10)
+        .background(Color(red: 0.09, green: 0.09, blue: 0.10), in: RoundedRectangle(cornerRadius: 14, style: .continuous))
+    }
+}
+
+private enum SpanOverlayAction {
+    case confirm
+    case reject
+    case correct
+    case comment
+}
+
+private struct SpanOverlay: View {
+    let targetType: String
+    let targetId: String
+    let onAction: (SpanOverlayAction) -> Void
+
+    var body: some View {
+        HStack(spacing: 10) {
+            Button("Confirm") { onAction(.confirm) }
+            Button("Reject") { onAction(.reject) }
+            Button("Correct") { onAction(.correct) }
+            Button("Comment") { onAction(.comment) }
+            Spacer()
+            Text("\(targetType):\(targetId.prefix(6))")
+                .font(.caption2)
+                .foregroundStyle(Color(.systemGray3))
+        }
+        .font(.caption2)
+        .foregroundStyle(Color(.systemGray2))
+        .buttonStyle(.plain)
+        .padding(.top, 6)
+    }
+}
+
+private struct MessageBubble: View {
+    let entry: SMSEntry
+    let showTimestamp: Bool
+
+    var body: some View {
+        SMSBubble(entry: entry, showTimestamp: showTimestamp)
+    }
+}
+
+private struct VoicemailCard: View {
+    let entry: VoicemailModel
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            HStack(spacing: 8) {
+                Image(systemName: "waveform")
+                    .foregroundStyle(Color(red: 0.29, green: 0.56, blue: 0.89))
+                Text("Voicemail")
+                    .font(.subheadline)
+                    .fontWeight(.semibold)
+                    .foregroundStyle(.white)
+                Spacer()
+                Text("\(entry.durationSec)s")
+                    .font(.caption)
+                    .foregroundStyle(Color(.systemGray2))
+            }
+            Text("From \(entry.from)")
+                .font(.caption)
+                .foregroundStyle(Color(.systemGray2))
+            if let transcript = entry.transcript, !transcript.isEmpty {
+                Text(transcript)
+                    .font(.caption)
+                    .foregroundStyle(Color(.systemGray))
+                    .lineLimit(4)
+            } else {
+                Text("Transcript unavailable.")
+                    .font(.caption)
+                    .foregroundStyle(Color(.systemGray3))
+            }
+        }
+        .padding(14)
+        .background(Color(red: 0.11, green: 0.11, blue: 0.118), in: RoundedRectangle(cornerRadius: 14, style: .continuous))
+    }
+}
+
+private struct AISummaryCard: View {
+    let entry: AISummaryModel
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            HStack(spacing: 8) {
+                Image(systemName: "sparkles")
+                    .foregroundStyle(Color(red: 0.95, green: 0.62, blue: 0.23))
+                Text(entry.title)
+                    .font(.subheadline)
+                    .fontWeight(.semibold)
+                    .foregroundStyle(.white)
+                Spacer()
+                Text(entry.scopeLabel)
+                    .font(.caption2)
+                    .foregroundStyle(Color(.systemGray2))
+            }
+            Text(entry.body)
+                .font(.caption)
+                .foregroundStyle(Color(.systemGray))
+                .lineLimit(6)
+        }
+        .padding(14)
+        .background(Color(red: 0.11, green: 0.11, blue: 0.118), in: RoundedRectangle(cornerRadius: 14, style: .continuous))
+    }
+}
+
 // MARK: - Call Card
 
 /// Call card that shows the header, participants, summary, a collapsible
 /// transcript (speaker bubbles), and claims. Transcript is COLLAPSED by default.
-private struct CallCard: View {
+private struct CallTranscriptCard: View {
     let header: CallHeaderEntry
     let turns: [SpeakerTurn]
     /// Resolved contact name ("Zack ↔ <contactName>").
@@ -625,7 +897,25 @@ private struct CallCard: View {
     let onAddNote: (String, [ThreadNoteTarget]) -> Void
 
     @State private var transcriptExpanded = false
-    @State private var claimsExpanded = false
+    @State private var claimsExpanded: Bool
+
+    init(header: CallHeaderEntry, turns: [SpeakerTurn], contactName: String,
+         viewModel: ThreadViewModel, projectOptions: [SMSProjectAssignment],
+         spanOverrides: [UUID: SMSProjectAssignment],
+         onAssignSpanProject: @escaping (SpanEntry, SMSProjectAssignment) -> Void,
+         onAddNote: @escaping (String, [ThreadNoteTarget]) -> Void) {
+        self.header = header
+        self.turns = turns
+        self.contactName = contactName
+        self.viewModel = viewModel
+        self.projectOptions = projectOptions
+        self.spanOverrides = spanOverrides
+        self.onAssignSpanProject = onAssignSpanProject
+        self.onAddNote = onAddNote
+        // Auto-expand claims when there are ungraded claims
+        let hasUngraded = header.claims.contains { $0.grade == nil || $0.grade!.isEmpty }
+        _claimsExpanded = State(initialValue: hasUngraded)
+    }
 
     private var isInbound: Bool {
         header.direction?.lowercased() == "inbound"
@@ -829,12 +1119,25 @@ private struct CallCard: View {
                         claimsExpanded.toggle()
                     }
                 } label: {
+                    let ungradedCount = header.claims.filter { $0.grade == nil || $0.grade!.isEmpty }.count
                     HStack(spacing: 6) {
                         Text("Claims (\(header.claims.count))")
                             .font(.caption)
                             .fontWeight(.semibold)
                             .foregroundStyle(.secondary)
                             .textCase(.uppercase)
+
+                        if ungradedCount > 0 {
+                            Text("\(ungradedCount) to grade")
+                                .font(.caption2)
+                                .fontWeight(.semibold)
+                                .foregroundStyle(.white)
+                                .padding(.horizontal, 8)
+                                .padding(.vertical, 2)
+                                .background(Color.red.opacity(0.7))
+                                .clipShape(Capsule())
+                        }
+
                         Spacer()
                         Image(systemName: claimsExpanded ? "chevron.up" : "chevron.down")
                             .font(.caption2)
@@ -960,8 +1263,8 @@ private struct SpanBlock: View {
         return Self.spanColors[colorIndex % Self.spanColors.count]
     }
 
-    private var opensPickerOnCardTap: Bool {
-        span.needsAttribution && selectedAssignment == nil
+    private var unknownAssignment: SMSProjectAssignment {
+        SMSProjectAssignment(projectId: nil, name: "Unknown Project", colorIndex: nil)
     }
 
     private func stableColorIndex(seed: String) -> Int {
@@ -978,33 +1281,50 @@ private struct SpanBlock: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 4) {
-            // Header: always visible (project marker and chevron).
+            // Header: project marker + expand chevron. Tap always expands.
             HStack(spacing: 6) {
                 Circle()
                     .fill(color)
                     .frame(width: 8, height: 8)
                 if let displayProjectName {
-                    if span.needsAttribution {
-                        Text(displayProjectName)
-                            .font(.caption)
-                            .fontWeight(.semibold)
-                            .foregroundStyle(color)
-                    } else {
-                        Button {
-                            showProjectSheet = true
-                        } label: {
-                            Text(displayProjectName)
-                                .font(.caption)
-                                .fontWeight(.semibold)
-                                .foregroundStyle(color)
-                        }
-                        .buttonStyle(.plain)
-                    }
+                    Text(displayProjectName)
+                        .font(.caption)
+                        .fontWeight(.semibold)
+                        .foregroundStyle(color)
                 }
                 Spacer()
+
+                // Visible "Assign" button when attribution is needed
+                if span.needsAttribution && selectedAssignment == nil {
+                    Button {
+                        showProjectSheet = true
+                    } label: {
+                        HStack(spacing: 4) {
+                            Image(systemName: "folder.badge.questionmark")
+                                .font(.caption2)
+                            Text("Assign")
+                                .font(.caption2)
+                                .fontWeight(.semibold)
+                        }
+                        .foregroundStyle(.white)
+                        .padding(.horizontal, 10)
+                        .padding(.vertical, 5)
+                        .background(Color(red: 0.95, green: 0.62, blue: 0.23).opacity(0.85))
+                        .clipShape(Capsule())
+                    }
+                    .buttonStyle(.plain)
+                }
+
                 Image(systemName: isExpanded ? "chevron.up" : "chevron.down")
                     .font(.caption2)
                     .foregroundStyle(Color(.systemGray3))
+            }
+            .contentShape(Rectangle())
+            .onTapGesture {
+                // Tap on header always expands/collapses — consistent behavior
+                withAnimation(.easeInOut(duration: 0.2)) {
+                    isExpanded.toggle()
+                }
             }
 
             if isExpanded {
@@ -1024,13 +1344,56 @@ private struct SpanBlock: View {
                     }
                     .padding(.top, 4)
                 }
+
+                // Reassign button at bottom of expanded span (for already-assigned spans)
+                if !span.needsAttribution || selectedAssignment != nil {
+                    Button {
+                        showProjectSheet = true
+                    } label: {
+                        HStack(spacing: 4) {
+                            Image(systemName: "arrow.triangle.2.circlepath")
+                                .font(.caption2)
+                            Text("Reassign Project")
+                                .font(.caption2)
+                        }
+                        .foregroundStyle(Color(.systemGray2))
+                        .padding(.top, 6)
+                    }
+                    .buttonStyle(.plain)
+                }
             } else if let segment = span.transcriptSegment, !segment.isEmpty {
-                // Compressed: 3-line text preview.
+                // Compressed: 3-line text preview. Tappable to expand.
                 Text(segment)
                     .font(.caption)
                     .foregroundStyle(Color(.systemGray))
                     .lineLimit(3)
+                    .contentShape(Rectangle())
+                    .onTapGesture {
+                        withAnimation(.easeInOut(duration: 0.2)) {
+                            isExpanded.toggle()
+                        }
+                    }
             }
+
+            SpanOverlay(
+                targetType: "span",
+                targetId: span.spanId.uuidString,
+                onAction: { action in
+                    switch action {
+                    case .confirm:
+                        onSelectProject(currentProject.projectId == nil ? unknownAssignment : currentProject)
+                    case .reject:
+                        onSelectProject(unknownAssignment)
+                    case .correct:
+                        showProjectSheet = true
+                    case .comment:
+                        onAddNote(
+                            "Notes — Conversation segment",
+                            [ThreadNoteTarget(type: .span, id: span.spanId.uuidString)]
+                        )
+                    }
+                }
+            )
         }
         .padding(10)
         .background(color.opacity(currentProject.colorIndex == nil ? 0.16 : 0.10))
@@ -1040,16 +1403,6 @@ private struct SpanBlock: View {
                 .frame(width: 3)
         }
         .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
-        .contentShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
-        .onTapGesture {
-            if opensPickerOnCardTap {
-                showProjectSheet = true
-            } else {
-                withAnimation(.easeInOut(duration: 0.2)) {
-                    isExpanded.toggle()
-                }
-            }
-        }
         .sheet(isPresented: $showProjectSheet) {
             ProjectAssignmentSheet(
                 title: "Assign Project",
@@ -1084,6 +1437,10 @@ private struct SMSStripeGroup: View {
     let onAddNote: () -> Void
 
     @State private var showProjectSheet = false
+
+    private var unknownAssignment: SMSProjectAssignment {
+        SMSProjectAssignment(projectId: nil, name: "Unknown Project", colorIndex: nil)
+    }
 
     private var stripeShape: RoundedRectangle {
         RoundedRectangle(cornerRadius: 12, style: .continuous)
@@ -1125,9 +1482,30 @@ private struct SMSStripeGroup: View {
                     HStack(spacing: 6) {
                         Image(systemName: "exclamationmark.triangle.fill")
                             .font(.caption2)
-                        Text("\(unresolvedCount) missing attribution\(unresolvedCount == 1 ? "" : "s")")
+                        Text("\(unresolvedCount) unassigned")
                             .font(.caption2)
                             .fontWeight(.semibold)
+
+                        Spacer()
+
+                        Button {
+                            onOpenPicker()
+                            showProjectSheet = true
+                        } label: {
+                            HStack(spacing: 4) {
+                                Image(systemName: "folder.badge.questionmark")
+                                    .font(.caption2)
+                                Text("Assign")
+                                    .font(.caption2)
+                                    .fontWeight(.semibold)
+                            }
+                            .foregroundStyle(.white)
+                            .padding(.horizontal, 10)
+                            .padding(.vertical, 5)
+                            .background(Color(red: 0.95, green: 0.62, blue: 0.23).opacity(0.85))
+                            .clipShape(Capsule())
+                        }
+                        .buttonStyle(.plain)
                     }
                     .foregroundStyle(Color(red: 0.95, green: 0.62, blue: 0.23))
                     .padding(.horizontal, 10)
@@ -1135,14 +1513,34 @@ private struct SMSStripeGroup: View {
                 }
 
                 ForEach(Array(entries.enumerated()), id: \.element.id) { idx, entry in
-                    SMSBubble(entry: entry, showTimestamp: true)
-                        .contentShape(Rectangle())
-                        .onTapGesture {
-                            guard entry.needsAttribution else { return }
-                            onOpenPicker()
-                            showProjectSheet = true
-                        }
+                    MessageBubble(entry: entry, showTimestamp: true)
                         .padding(.bottom, bubbleSpacing(at: idx))
+                }
+
+                if let first = entries.first {
+                    SpanOverlay(
+                        targetType: "sms",
+                        targetId: first.messageId,
+                        onAction: { action in
+                            switch action {
+                            case .confirm:
+                                if let assignment {
+                                    onAssignProject(assignment)
+                                } else {
+                                    showProjectSheet = true
+                                }
+                            case .reject:
+                                onAssignProject(unknownAssignment)
+                            case .correct:
+                                onOpenPicker()
+                                showProjectSheet = true
+                            case .comment:
+                                onAddNote()
+                            }
+                        }
+                    )
+                    .padding(.horizontal, 10)
+                    .padding(.bottom, 6)
                 }
             }
         }

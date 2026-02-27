@@ -5,6 +5,7 @@ struct ContactListView: View {
     var threadViewModel: ThreadViewModel
 
     @State private var searchText = ""
+    @State private var showSyncStatus = false
     @State private var showResetConfirmation = false
 
     private var filteredContacts: [Contact] {
@@ -17,14 +18,7 @@ struct ContactListView: View {
 
     var body: some View {
         NavigationStack {
-            List(filteredContacts) { contact in
-                NavigationLink(value: contact) {
-                    ContactRow(contact: contact)
-                }
-                .listRowBackground(Color(white: 0.06))
-                .listRowSeparatorTint(Color(white: 0.13))
-            }
-            .listStyle(.plain)
+            ContactList(contacts: filteredContacts)
             .searchable(
                 text: $searchText,
                 placement: .navigationBarDrawer(displayMode: .always),
@@ -49,14 +43,28 @@ struct ContactListView: View {
             .toolbarBackground(.visible, for: .navigationBar)
             .toolbar {
                 ToolbarItem(placement: .topBarTrailing) {
-                    Button {
-                        showResetConfirmation = true
+                    Menu {
+                        Button {
+                            showSyncStatus = true
+                        } label: {
+                            Label("Pipeline Status", systemImage: "heart.text.square")
+                        }
+                        Button(role: .destructive) {
+                            showResetConfirmation = true
+                        } label: {
+                            Label("Reset Grading Clock", systemImage: "clock.arrow.circlepath")
+                        }
                     } label: {
                         Image(systemName: "clock.arrow.circlepath")
                             .font(.system(size: 15, weight: .medium))
                             .foregroundStyle(Color(white: 0.5))
                     }
                 }
+            }
+            .sheet(isPresented: $showSyncStatus) {
+                SyncStatusView()
+                    .presentationDetents([.medium, .large])
+                    .presentationDragIndicator(.visible)
             }
             .confirmationDialog("Reset grading clock?", isPresented: $showResetConfirmation, titleVisibility: .visible) {
                 Button("Reset to now", role: .destructive) {
@@ -97,6 +105,21 @@ struct ContactListView: View {
             }
         }
         .preferredColorScheme(.dark)
+    }
+}
+
+private struct ContactList: View {
+    let contacts: [Contact]
+
+    var body: some View {
+        List(contacts) { contact in
+            NavigationLink(value: contact) {
+                ContactRow(contact: contact)
+            }
+            .listRowBackground(Color(white: 0.06))
+            .listRowSeparatorTint(Color(white: 0.13))
+        }
+        .listStyle(.plain)
     }
 }
 
