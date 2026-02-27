@@ -110,12 +110,12 @@ end;
 $$;
 
 comment on function public.refresh_redline_top_candidates() is
-  'On-demand refresh for public.redline_top_candidates materialized view.';
+  'On-demand refresh for public.redline_top_candidates materialized view (non-concurrent).';
 
 grant select on public.redline_top_candidates to service_role;
 grant execute on function public.refresh_redline_top_candidates() to service_role;
 
--- Schedule: every 15 minutes
+-- Schedule: every 15 minutes (concurrent refresh to avoid read blocking)
 do $do$
 begin
   if exists (select 1 from pg_extension where extname = 'pg_cron') then
@@ -128,7 +128,7 @@ begin
         perform cron.schedule(
           'redline_top_candidates_refresh_15min',
           '*/15 * * * *',
-          $$select public.refresh_redline_top_candidates();$$
+          $$refresh materialized view concurrently public.redline_top_candidates;$$
         );
       end if;
     exception

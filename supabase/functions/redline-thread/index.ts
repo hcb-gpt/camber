@@ -1,11 +1,14 @@
 import "jsr:@supabase/functions-js/edge-runtime.d.ts";
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
 
-const FUNCTION_VERSION = "redline-thread_v2.5.0";
+const FUNCTION_VERSION = "redline-thread_v2.5.2";
 const OWNER_SMS_USER_IDS = ["+17066889158", "usr_4PCSTDQ8N161KAC4GG7AF9CR94"];
 const OUTBOUND_INFERENCE_WINDOW_MS = 30 * 60 * 1000;
 const OUTBOUND_INFERENCE_MAX_GAP_MS = 60 * 1000;
 const IN_QUERY_BATCH_SIZE = 200;
+const CONTACTS_CACHE_TTL_MS = 15_000;
+
+let contactsCache: { expiresAt: number; contacts: any[] } | null = null;
 
 function corsHeaders(): Record<string, string> {
   return {
@@ -133,6 +136,29 @@ function deriveSmsInteractionKeys(row: any, fallbackPhone: string | null): strin
   return keys;
 }
 
+function deriveContactLastSummary(row: any): string | null {
+  const snippet = String(row?.last_snippet || "").trim();
+  if (snippet) return snippet;
+  if (!row?.last_activity) return null;
+
+  const interactionType = String(row?.last_interaction_type || "").toLowerCase();
+  const direction = String(row?.last_direction || "").toLowerCase();
+
+  if (interactionType === "call") {
+    if (direction === "inbound") return "Incoming phone call";
+    if (direction === "outbound") return "Outgoing phone call";
+    return "Phone call";
+  }
+
+  if (interactionType === "sms") {
+    if (direction === "inbound") return "Incoming text message";
+    if (direction === "outbound") return "Outgoing text message";
+    return "Text message";
+  }
+
+  return "Recent activity";
+}
+
 function isLikelyOwnerOutboundCandidate(row: any): boolean {
   if (String(row?.direction || "").toLowerCase() !== "outbound") {
     return false;
@@ -242,12 +268,26 @@ async function handleGetCutoff(db: any, t0: number): Promise<Response> {
 }
 
 // contacts endpoint
-async function handleContacts(db: any, t0: number): Promise<Response> {
+async function handleContacts(db: any, url: URL, t0: number): Promise<Response> {
+  const forceRefresh = isTruthy(url.searchParams.get("refresh"));
+  if (!forceRefresh && contactsCache && contactsCache.expiresAt > Date.now()) {
+    return json({
+      ok: true,
+      contacts: contactsCache.contacts,
+      cached: true,
+      source: "memory_cache",
+      function_version: FUNCTION_VERSION,
+      ms: Date.now() - t0,
+    });
+  }
+
+  const selectColumns =
+    "contact_id, contact_name, contact_phone, call_count, sms_count, claim_count, ungraded_count, last_activity, last_snippet, last_direction, last_interaction_type";
+
+  const contactsSource = "redline_contacts";
   const { data, error } = await db
-    .from("redline_contacts")
-    .select(
-      "contact_id, contact_name, contact_phone, call_count, sms_count, claim_count, ungraded_count, last_activity, last_snippet, last_direction, last_interaction_type",
-    )
+    .from(contactsSource)
+    .select(selectColumns)
     .order("last_activity", { ascending: false, nullsFirst: false });
 
   if (error) {
@@ -264,7 +304,7 @@ async function handleContacts(db: any, t0: number): Promise<Response> {
       claim_count: Number(row.claim_count ?? 0),
       ungraded_count: Number(row.ungraded_count ?? 0),
       last_activity: row.last_activity || null,
-      last_summary: row.last_snippet || null,
+      last_summary: deriveContactLastSummary(row),
       last_direction: row.last_direction || null,
       last_interaction_type: row.last_interaction_type || null,
     }))
@@ -276,7 +316,19 @@ async function handleContacts(db: any, t0: number): Promise<Response> {
       return String(a.name || "").localeCompare(String(b.name || ""));
     });
 
-  return json({ ok: true, contacts, function_version: FUNCTION_VERSION, ms: Date.now() - t0 });
+  contactsCache = {
+    expiresAt: Date.now() + CONTACTS_CACHE_TTL_MS,
+    contacts,
+  };
+
+  return json({
+    ok: true,
+    contacts,
+    cached: false,
+    source: contactsSource,
+    function_version: FUNCTION_VERSION,
+    ms: Date.now() - t0,
+  });
 }
 
 // top candidates endpoint
@@ -347,10 +399,13 @@ async function handleThread(
     return json({ ok: false, error_code: "contact_not_found", error: contactErr?.message || "not found" }, 404);
   }
 
+  const scanWindow = Math.min(Math.max(offset + limit + 20, 40), 120);
+  const queryPageSize = 40;
+
   let allInteractions: any[] = [];
   let interactionsFrom = 0;
-  const queryPageSize = 1000;
-  while (true) {
+  let hasMoreInteractions = false;
+  while (allInteractions.length < scanWindow) {
     const interactionsTo = interactionsFrom + queryPageSize - 1;
     const { data: page, error: intErr } = await db
       .from("interactions")
@@ -371,27 +426,57 @@ async function handleThread(
     allInteractions = allInteractions.concat(page);
     if (page.length < queryPageSize) break;
     interactionsFrom += queryPageSize;
+    if (allInteractions.length >= scanWindow) {
+      hasMoreInteractions = true;
+      break;
+    }
+  }
+  if (allInteractions.length > scanWindow) {
+    allInteractions = allInteractions.slice(0, scanWindow);
   }
 
+  const { data: inboundProbe, error: inboundProbeErr } = await db
+    .from("sms_messages")
+    .select("id")
+    .eq("contact_phone", contact.phone)
+    .eq("direction", "inbound")
+    .limit(1);
+
+  if (inboundProbeErr) {
+    return json({ ok: false, error_code: "sms_inbound_probe_failed", error: inboundProbeErr.message }, 500);
+  }
+
+  const hasInboundSms = (inboundProbe || []).length > 0;
   let allSmsMessages: any[] = [];
-  let smsFrom = 0;
-  while (true) {
-    const smsTo = smsFrom + queryPageSize - 1;
-    const { data: page, error: smsErr } = await db
-      .from("sms_messages")
-      .select("id, sent_at, content, direction, contact_name, contact_phone, sender_user_id")
-      .eq("contact_phone", contact.phone)
-      .order("sent_at", { ascending: false })
-      .range(smsFrom, smsTo);
+  let hasMoreSms = false;
 
-    if (smsErr) {
-      return json({ ok: false, error_code: "sms_query_failed", error: smsErr.message }, 500);
+  if (hasInboundSms) {
+    let smsFrom = 0;
+    while (allSmsMessages.length < scanWindow) {
+      const smsTo = smsFrom + queryPageSize - 1;
+      const { data: page, error: smsErr } = await db
+        .from("sms_messages")
+        .select("id, sent_at, content, direction, contact_name, contact_phone, sender_user_id")
+        .eq("contact_phone", contact.phone)
+        .order("sent_at", { ascending: false })
+        .range(smsFrom, smsTo);
+
+      if (smsErr) {
+        return json({ ok: false, error_code: "sms_query_failed", error: smsErr.message }, 500);
+      }
+
+      if (!page || page.length === 0) break;
+      allSmsMessages = allSmsMessages.concat(page);
+      if (page.length < queryPageSize) break;
+      smsFrom += queryPageSize;
+      if (allSmsMessages.length >= scanWindow) {
+        hasMoreSms = true;
+        break;
+      }
     }
-
-    if (!page || page.length === 0) break;
-    allSmsMessages = allSmsMessages.concat(page);
-    if (page.length < queryPageSize) break;
-    smsFrom += queryPageSize;
+    if (allSmsMessages.length > scanWindow) {
+      allSmsMessages = allSmsMessages.slice(0, scanWindow);
+    }
   }
 
   const inboundSms = allSmsMessages.filter((s: any) => String(s.direction || "").toLowerCase() === "inbound");
@@ -442,8 +527,11 @@ async function handleThread(
     return String(b.key).localeCompare(String(a.key));
   });
 
-  const totalCount = timeline.length;
   const pagedTimeline = timeline.slice(offset, offset + limit);
+  const likelyMore = hasMoreInteractions || hasMoreSms;
+  const totalCount = likelyMore
+    ? Math.max(offset + pagedTimeline.length + 1, timeline.length)
+    : offset + pagedTimeline.length;
 
   if (pagedTimeline.length === 0) {
     return json({
@@ -1531,7 +1619,7 @@ Deno.serve(async (req: Request) => {
       return await handleTopCandidates(db, url, t0);
     }
     if (action === "contacts") {
-      return await handleContacts(db, t0);
+      return await handleContacts(db, url, t0);
     }
     if (action === "reset_clock") {
       return await handleResetClock(db, t0);
@@ -1542,8 +1630,8 @@ Deno.serve(async (req: Request) => {
 
     const contactId = url.searchParams.get("contact_id");
     if (contactId) {
-      const rawLimit = parseInt(url.searchParams.get("limit") || "50", 10);
-      const limit = Math.min(Math.max(isNaN(rawLimit) ? 50 : rawLimit, 1), 200);
+      const rawLimit = parseInt(url.searchParams.get("limit") || "20", 10);
+      const limit = Math.min(Math.max(isNaN(rawLimit) ? 20 : rawLimit, 1), 200);
       const rawOffset = parseInt(url.searchParams.get("offset") || "0", 10);
       const offset = Math.max(isNaN(rawOffset) ? 0 : rawOffset, 0);
       return await handleThread(db, contactId, limit, offset, t0);
