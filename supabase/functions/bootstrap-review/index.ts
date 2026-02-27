@@ -1,14 +1,15 @@
 import "jsr:@supabase/functions-js/edge-runtime.d.ts";
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
 
-const FUNCTION_VERSION = "bootstrap-review_v1.0.0";
+const FUNCTION_VERSION = "bootstrap-review_v1.1.0";
+type ReviewQueueSource = "pipeline" | "redline";
 
 // ─── Helpers ─────────────────────────────────────────────────────────
 
 function corsHeaders(): Record<string, string> {
   return {
     "Access-Control-Allow-Origin": "*",
-    "Access-Control-Allow-Headers": "authorization, x-edge-secret, content-type",
+    "Access-Control-Allow-Headers": "authorization, x-edge-secret, x-source, content-type",
     "Access-Control-Allow-Methods": "GET, POST, OPTIONS",
   };
 }
@@ -35,10 +36,42 @@ function isValidUUID(str: string): boolean {
     .test(str);
 }
 
+function normalizeReviewQueueSource(
+  raw: unknown,
+  fallback: ReviewQueueSource = "pipeline",
+): ReviewQueueSource {
+  const normalized = String(raw || "").trim().toLowerCase();
+  if (normalized === "redline") return "redline";
+  if (normalized === "pipeline") return "pipeline";
+  return fallback;
+}
+
+function isMissingReviewQueueSourceColumnError(message: string): boolean {
+  return /column .*source.* does not exist/i.test(message);
+}
+
+async function tagReviewQueueSource(
+  db: any,
+  reviewQueueId: string,
+  source: ReviewQueueSource,
+  ctx: string,
+): Promise<void> {
+  const { error } = await db
+    .from("review_queue")
+    .update({ source })
+    .eq("id", reviewQueueId);
+  if (!error) return;
+  if (isMissingReviewQueueSourceColumnError(error.message)) {
+    console.warn(`[${ctx}] review_queue.source column missing; skipped source tag (${source})`);
+    return;
+  }
+  console.warn(`[${ctx}] review_queue source tag warning: ${error.message}`);
+}
+
 // ─── Queue endpoint ──────────────────────────────────────────────────
 
 async function handleQueue(
-  db: ReturnType<typeof createClient>,
+  db: any,
   limit: number,
   t0: number,
 ): Promise<Response> {
@@ -133,10 +166,10 @@ async function handleQueue(
     );
 
     items = rqData.map((rq: any) => {
-      const span = spanMap.get(rq.span_id) || {};
-      const attr = attrMap.get(rq.span_id) || {};
-      const interaction = interactionMap.get(rq.interaction_id) || {};
-      const call = callMap.get(rq.interaction_id) || {};
+      const span: any = spanMap.get(rq.span_id) || {};
+      const attr: any = attrMap.get(rq.span_id) || {};
+      const interaction: any = interactionMap.get(rq.interaction_id) || {};
+      const call: any = callMap.get(rq.interaction_id) || {};
       return {
         id: rq.id,
         span_id: rq.span_id,
@@ -192,7 +225,7 @@ async function handleQueue(
 // ─── Resolve endpoint ────────────────────────────────────────────────
 
 async function handleResolve(
-  db: ReturnType<typeof createClient>,
+  db: any,
   req: Request,
   t0: number,
 ): Promise<Response> {
@@ -206,7 +239,7 @@ async function handleResolve(
     );
   }
 
-  const { review_queue_id, project_id, notes, user_id } = body;
+  const { review_queue_id, project_id, notes, user_id, source } = body;
 
   if (!review_queue_id || !isValidUUID(review_queue_id)) {
     return json({
@@ -222,6 +255,9 @@ async function handleResolve(
       error: "project_id required (uuid)",
     }, 400);
   }
+
+  const writeSource = normalizeReviewQueueSource(source, "pipeline");
+  await tagReviewQueueSource(db, review_queue_id, writeSource, "bootstrap-review:resolve");
 
   const { data, error } = await db.rpc("resolve_review_item", {
     p_review_queue_id: review_queue_id,
@@ -285,7 +321,7 @@ async function handleResolve(
 // ─── Dismiss endpoint (NONE button — marks review as dismissed) ──────
 
 async function handleDismiss(
-  db: ReturnType<typeof createClient>,
+  db: any,
   req: Request,
   t0: number,
 ): Promise<Response> {
@@ -296,11 +332,14 @@ async function handleDismiss(
     return json({ ok: false, error_code: "invalid_json" }, 400);
   }
 
-  const { review_queue_id, user_id } = body;
+  const { review_queue_id, user_id, source } = body;
 
   if (!review_queue_id || !isValidUUID(review_queue_id)) {
     return json({ ok: false, error_code: "missing_review_queue_id" }, 400);
   }
+
+  const writeSource = normalizeReviewQueueSource(source, "pipeline");
+  await tagReviewQueueSource(db, review_queue_id, writeSource, "bootstrap-review:dismiss");
 
   const { error } = await db
     .from("review_queue")
@@ -336,7 +375,7 @@ async function handleDismiss(
 // ─── Undo endpoint ───────────────────────────────────────────────────
 
 async function handleUndo(
-  db: ReturnType<typeof createClient>,
+  db: any,
   req: Request,
   t0: number,
 ): Promise<Response> {
@@ -347,11 +386,14 @@ async function handleUndo(
     return json({ ok: false, error_code: "invalid_json" }, 400);
   }
 
-  const { review_queue_id } = body;
+  const { review_queue_id, source } = body;
 
   if (!review_queue_id || !isValidUUID(review_queue_id)) {
     return json({ ok: false, error_code: "missing_review_queue_id" }, 400);
   }
+
+  const writeSource = normalizeReviewQueueSource(source, "pipeline");
+  await tagReviewQueueSource(db, review_queue_id, writeSource, "bootstrap-review:undo");
 
   // Check if item was resolved within last 30 seconds (generous server-side window)
   const { data: item, error: fetchErr } = await db
@@ -1060,7 +1102,7 @@ function buildHtmlPage(): string {
         var r = await fetch(BASE + "?action=resolve", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ review_queue_id: qid, project_id: pid, user_id: "chad" })
+          body: JSON.stringify({ review_queue_id: qid, project_id: pid, user_id: "chad", source: "pipeline" })
         });
         return await r.json();
       }
@@ -1069,7 +1111,7 @@ function buildHtmlPage(): string {
         var r = await fetch(BASE + "?action=dismiss", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ review_queue_id: qid, user_id: "chad_bootstrap" })
+          body: JSON.stringify({ review_queue_id: qid, user_id: "chad_bootstrap", source: "pipeline" })
         });
         return await r.json();
       }
@@ -1078,7 +1120,7 @@ function buildHtmlPage(): string {
         var r = await fetch(BASE + "?action=undo", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ review_queue_id: qid })
+          body: JSON.stringify({ review_queue_id: qid, source: "pipeline" })
         });
         return await r.json();
       }
