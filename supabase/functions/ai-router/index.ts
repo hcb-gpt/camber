@@ -1081,6 +1081,9 @@ async function upsertReviewQueue(
         span_id: payload.span_id,
         interaction_id: payload.interaction_id,
         status: "pending",
+        // SSOT routing dimension used by triage surfaces (v_needs_triage).
+        // Without this, DB guardrails can reject inserts and items become unroutable.
+        module: "attribution",
         reason_codes: payload.reasons,
         reasons: payload.reasons,
         context_payload: payload.context_payload,
