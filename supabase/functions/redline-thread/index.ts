@@ -1,7 +1,7 @@
 import "jsr:@supabase/functions-js/edge-runtime.d.ts";
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
 
-const FUNCTION_VERSION = "redline-thread_v2.0.2";
+const FUNCTION_VERSION = "redline-thread_v2.1.0";
 const OWNER_SMS_USER_IDS = ["+17066889158", "usr_4PCSTDQ8N161KAC4GG7AF9CR94"];
 const OUTBOUND_INFERENCE_WINDOW_MS = 30 * 60 * 1000;
 const OUTBOUND_INFERENCE_MAX_GAP_MS = 60 * 1000;
@@ -591,7 +591,49 @@ const HTML = `<!DOCTYPE html>
     #contact-header { display: none; padding: 12px 16px 4px; max-width: 800px; margin: 0 auto; }
     #contact-header-name { font-size: 20px; font-weight: 700; }
     #contact-header-meta { font-size: 13px; color: #8E8E93; margin-top: 2px; }
-    #thread-container { max-width: 800px; margin: 0 auto; padding: 8px 16px 120px; }
+    #thread-container { max-width: 1200px; margin: 0 auto; padding: 8px 16px 120px; }
+    .thread-layout { display: flex; gap: 16px; align-items: flex-start; }
+    .thread-main { flex: 1; min-width: 0; }
+    .decision-rail {
+      width: 260px; flex-shrink: 0; position: sticky; top: 68px;
+      background: #1C1C1E; border-radius: 14px; border: 0.5px solid #38383A;
+      padding: 12px; max-height: calc(100dvh - 92px); overflow-y: auto;
+    }
+    .decision-rail h3 {
+      font-size: 13px; font-weight: 600; color: #8E8E93;
+      margin-bottom: 8px; text-transform: uppercase; letter-spacing: 0.4px;
+    }
+    .decision-row {
+      padding: 9px 10px; border-radius: 10px; background: #2C2C2E;
+      margin-bottom: 6px; font-size: 13px; line-height: 1.35;
+    }
+    .decision-row:last-child { margin-bottom: 0; }
+    .decision-row-time { color: #8E8E93; font-size: 11px; margin-top: 4px; }
+    .triage-pane {
+      background: #1C1C1E; border-radius: 14px; border: 0.5px solid #38383A;
+      padding: 12px; margin-bottom: 10px;
+    }
+    .triage-header {
+      display: flex; flex-wrap: wrap; gap: 8px; align-items: center;
+      justify-content: space-between; margin-bottom: 8px;
+    }
+    .triage-order-label, .triage-progress-label {
+      font-size: 12px; color: #8E8E93; background: #2C2C2E;
+      border-radius: 999px; padding: 5px 9px;
+    }
+    .triage-claim-text { font-size: 14px; line-height: 1.45; margin: 8px 0 10px; color: #fff; }
+    .triage-empty { color: #8E8E93; font-size: 13px; }
+    .triage-actions { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 8px; }
+    .triage-btn {
+      border: none; border-radius: 10px; padding: 10px 8px; font-size: 13px;
+      font-weight: 600; min-height: 44px; cursor: pointer;
+    }
+    .triage-btn.accept { background: #30D158; color: #000; }
+    .triage-btn.reject { background: #FF453A; color: #fff; }
+    .triage-btn.skip { background: #2C2C2E; color: #fff; }
+    .triage-btn.undo { background: #0A84FF; color: #fff; }
+    .triage-status { margin-top: 8px; color: #8E8E93; font-size: 12px; min-height: 15px; }
+    .claim-item.current-claim { outline: 2px solid #0A84FF; }
     .date-separator {
       text-align: center; color: #8E8E93; font-size: 12px; font-weight: 500;
       padding: 18px 0 6px; letter-spacing: 0.2px;
@@ -713,6 +755,11 @@ const HTML = `<!DOCTYPE html>
       #top-bar { flex-wrap: wrap; }
       #top-bar h1 { flex: 0 0 auto; }
     }
+    @media (max-width: 980px) {
+      .thread-layout { flex-direction: column; }
+      .decision-rail { width: 100%; position: static; max-height: none; }
+      .triage-actions { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+    }
   </style>
 </head>
 <body>
@@ -753,6 +800,10 @@ const HTML = `<!DOCTYPE html>
       var currentClaimId = null;
       var allContacts = [];
       var selectedContactId = null;
+      var triageQueue = [];
+      var triageCursor = 0;
+      var triageHistory = [];
+      var triageStatusText = "";
 
       function escText(t) {
         var d = document.createElement("div");
@@ -847,6 +898,175 @@ const HTML = `<!DOCTYPE html>
 
       function formatTime(ds) {
         return new Date(ds).toLocaleTimeString("en-US", { hour: "numeric", minute: "2-digit" });
+      }
+
+      function formatRelativeTime(ts) {
+        var d = new Date(ts);
+        if (isNaN(d.getTime())) return "";
+        return d.toLocaleTimeString("en-US", { hour: "numeric", minute: "2-digit" });
+      }
+
+      function isInputElement(el) {
+        if (!el) return false;
+        var tag = (el.tagName || "").toLowerCase();
+        return tag === "input" || tag === "textarea" || el.isContentEditable;
+      }
+
+      function normalizeQueue(threadItems) {
+        var queue = [];
+        threadItems.forEach(function (item) {
+          if (item.type !== "call") return;
+          (item.claims || []).forEach(function (claim) {
+            queue.push({
+              claim_id: claim.claim_id,
+              claim_text: claim.claim_text || "",
+              claim_type: claim.claim_type || "",
+              event_at: item.event_at,
+              contact_name: item.contact_name || "",
+              grade: claim.grade || null,
+            });
+          });
+        });
+        queue.sort(function (a, b) {
+          var ap = a.grade ? 1 : 0;
+          var bp = b.grade ? 1 : 0;
+          if (ap !== bp) return ap - bp; // unresolved first (confidence proxy)
+          var at = Date.parse(a.event_at || "") || 0;
+          var bt = Date.parse(b.event_at || "") || 0;
+          return bt - at;
+        });
+        return queue;
+      }
+
+      function updateClaimHighlight() {
+        document.querySelectorAll(".claim-item.current-claim").forEach(function (el) {
+          el.classList.remove("current-claim");
+        });
+        var current = triageQueue[triageCursor];
+        if (!current) return;
+        var target = document.querySelector('.claim-item[data-claim-id="' + current.claim_id + '"]');
+        if (target) target.classList.add("current-claim");
+      }
+
+      function renderDecisionRail() {
+        var list = document.getElementById("decision-rail-list");
+        if (!list) return;
+        list.textContent = "";
+        if (triageHistory.length === 0) {
+          var empty = document.createElement("div");
+          empty.className = "decision-row";
+          empty.textContent = "No decisions yet.";
+          list.appendChild(empty);
+          return;
+        }
+        triageHistory.slice(0, 10).forEach(function (entry) {
+          var row = document.createElement("div");
+          row.className = "decision-row";
+          var actionWord = entry.action === "confirm"
+            ? "Accepted"
+            : entry.action === "reject"
+            ? "Rejected"
+            : entry.action === "skip"
+            ? "Skipped"
+            : "Undid";
+          row.textContent = actionWord + ": " + (entry.claim_text || "").slice(0, 100);
+          var t = document.createElement("div");
+          t.className = "decision-row-time";
+          t.textContent = formatRelativeTime(entry.at);
+          row.appendChild(t);
+          list.appendChild(row);
+        });
+      }
+
+      function renderTriagePane(main) {
+        var existing = document.getElementById("triage-pane");
+        if (existing) existing.remove();
+
+        var pane = document.createElement("div");
+        pane.id = "triage-pane";
+        pane.className = "triage-pane";
+
+        var hdr = document.createElement("div");
+        hdr.className = "triage-header";
+        var order = document.createElement("div");
+        order.className = "triage-order-label";
+        order.textContent = "Queue: lowest confidence first (ungraded-first proxy)";
+        var progress = document.createElement("div");
+        progress.className = "triage-progress-label";
+        var total = triageQueue.length;
+        var currentN = total === 0 ? 0 : Math.min(triageCursor + 1, total);
+        progress.textContent = "Progress " + currentN + "/" + total;
+        hdr.appendChild(order);
+        hdr.appendChild(progress);
+        pane.appendChild(hdr);
+
+        var current = triageQueue[triageCursor];
+        if (!current) {
+          var empty = document.createElement("div");
+          empty.className = "triage-empty";
+          empty.textContent = "No claims available for triage.";
+          pane.appendChild(empty);
+        } else {
+          var text = document.createElement("div");
+          text.className = "triage-claim-text";
+          text.textContent = (current.claim_type ? "[" + current.claim_type + "] " : "") + current.claim_text;
+          pane.appendChild(text);
+
+          var actions = document.createElement("div");
+          actions.className = "triage-actions";
+          [
+            { cls: "accept", label: "A Accept", action: "triage-accept" },
+            { cls: "reject", label: "X Reject", action: "triage-reject" },
+            { cls: "skip", label: "Space Skip", action: "triage-skip" },
+            { cls: "undo", label: "U Undo", action: "triage-undo" },
+          ].forEach(function (cfg) {
+            var b = document.createElement("button");
+            b.className = "triage-btn " + cfg.cls;
+            b.setAttribute("data-action", cfg.action);
+            b.textContent = cfg.label;
+            actions.appendChild(b);
+          });
+          pane.appendChild(actions);
+        }
+
+        var status = document.createElement("div");
+        status.className = "triage-status";
+        status.id = "triage-status";
+        status.textContent = triageStatusText;
+        pane.appendChild(status);
+        main.prepend(pane);
+      }
+
+      function findNextQueueIndex(startIdx) {
+        for (var i = startIdx + 1; i < triageQueue.length; i++) {
+          if (!triageQueue[i].grade) return i;
+        }
+        for (var j = 0; j < triageQueue.length; j++) {
+          if (!triageQueue[j].grade) return j;
+        }
+        return Math.min(startIdx + 1, Math.max(0, triageQueue.length - 1));
+      }
+
+      function indexByClaimId(claimId) {
+        for (var i = 0; i < triageQueue.length; i++) {
+          if (triageQueue[i].claim_id === claimId) return i;
+        }
+        return -1;
+      }
+
+      function applyClaimGradeDom(claimId, grade) {
+        var item = document.querySelector('.claim-item[data-claim-id="' + claimId + '"]');
+        if (!item) return;
+        item.classList.remove("graded-confirm", "graded-reject", "graded-correct");
+        var oldBadge = item.querySelector(".claim-badge");
+        if (oldBadge) oldBadge.remove();
+        if (grade) {
+          item.classList.add("graded-" + grade);
+          var badge = document.createElement("span");
+          badge.className = "claim-badge";
+          badge.textContent = grade === "confirm" ? "✅" : grade === "reject" ? "❌" : "✏️";
+          item.appendChild(badge);
+        }
       }
 
       var searchInput = document.getElementById("contact-search");
@@ -980,6 +1200,22 @@ const HTML = `<!DOCTYPE html>
 
       function renderThread(data, container) {
         container.textContent = "";
+        var layout = document.createElement("div");
+        layout.className = "thread-layout";
+        var main = document.createElement("div");
+        main.className = "thread-main";
+        var rail = document.createElement("aside");
+        rail.className = "decision-rail";
+        var railTitle = document.createElement("h3");
+        railTitle.textContent = "Last 10 Decisions";
+        var railList = document.createElement("div");
+        railList.id = "decision-rail-list";
+        rail.appendChild(railTitle);
+        rail.appendChild(railList);
+        layout.appendChild(main);
+        layout.appendChild(rail);
+        container.appendChild(layout);
+
         var hdr = document.getElementById("contact-header");
         document.getElementById("contact-header-name").textContent = data.contact.name;
         document.getElementById("contact-header-meta").textContent =
@@ -990,9 +1226,20 @@ const HTML = `<!DOCTYPE html>
           var es = document.createElement("div");
           es.className = "empty-state";
           es.textContent = "No messages found";
-          container.appendChild(es);
+          main.appendChild(es);
+          renderDecisionRail();
           return;
         }
+
+        triageQueue = normalizeQueue(data.thread);
+        triageCursor = 0;
+        for (var idx = 0; idx < triageQueue.length; idx++) {
+          if (!triageQueue[idx].grade) {
+            triageCursor = idx;
+            break;
+          }
+        }
+        renderTriagePane(main);
 
         var gradeStats = { confirm: 0, reject: 0, correct: 0, ungraded: 0 };
         data.thread.forEach(function (item) {
@@ -1021,7 +1268,7 @@ const HTML = `<!DOCTYPE html>
             si.appendChild(document.createTextNode(s.count + s.label));
             statsDiv.appendChild(si);
           });
-          container.appendChild(statsDiv);
+          main.appendChild(statsDiv);
         }
 
         var lastDateKey = "";
@@ -1032,13 +1279,15 @@ const HTML = `<!DOCTYPE html>
             var sep = document.createElement("div");
             sep.className = "date-separator";
             sep.textContent = formatDateSep(eventDate);
-            container.appendChild(sep);
+            main.appendChild(sep);
             lastDateKey = dateKey;
           }
-          if (item.type === "call") container.appendChild(buildCallCard(item, data.contact));
-          else if (item.type === "sms") container.appendChild(buildSmsItem(item));
+          if (item.type === "call") main.appendChild(buildCallCard(item, data.contact));
+          else if (item.type === "sms") main.appendChild(buildSmsItem(item));
         });
 
+        updateClaimHighlight();
+        renderDecisionRail();
         window.scrollTo(0, document.body.scrollHeight);
       }
 
@@ -1199,6 +1448,84 @@ const HTML = `<!DOCTYPE html>
         }
       }
 
+      async function submitGradeForClaim(claimId, grade, correctionText) {
+        var res = await fetch(BASE_URL, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ claim_id: claimId, grade: grade, correction_text: correctionText || null, graded_by: "chad" }),
+        });
+        var data = await res.json();
+        if (!data.ok) throw new Error(data.error || "Failed to save grade");
+      }
+
+      async function runTriageAction(action) {
+        var current = triageQueue[triageCursor];
+        if (!current) return;
+        var prevGrade = current.grade || null;
+        try {
+          if (action === "confirm" || action === "reject") {
+            await submitGradeForClaim(current.claim_id, action, null);
+            current.grade = action;
+            applyClaimGradeDom(current.claim_id, action);
+          }
+
+          triageHistory.unshift({
+            action: action,
+            claim_id: current.claim_id,
+            claim_text: current.claim_text,
+            prev_grade: prevGrade,
+            at: new Date().toISOString(),
+          });
+          triageHistory = triageHistory.slice(0, 10);
+
+          triageCursor = findNextQueueIndex(triageCursor);
+          triageStatusText = action === "skip"
+            ? "Skipped claim."
+            : (action === "confirm" ? "Accepted claim." : "Rejected claim.");
+          var main = document.querySelector(".thread-main");
+          if (main) renderTriagePane(main);
+          updateClaimHighlight();
+          renderDecisionRail();
+        } catch (e) {
+          triageStatusText = "Action failed: " + e.message;
+          var mainFail = document.querySelector(".thread-main");
+          if (mainFail) renderTriagePane(mainFail);
+        }
+      }
+
+      async function undoTriageAction() {
+        if (triageHistory.length === 0) {
+          triageStatusText = "Nothing to undo.";
+          var mainEmpty = document.querySelector(".thread-main");
+          if (mainEmpty) renderTriagePane(mainEmpty);
+          return;
+        }
+
+        var last = triageHistory.shift();
+        var idx = indexByClaimId(last.claim_id);
+        if (idx >= 0) triageCursor = idx;
+
+        if ((last.action === "confirm" || last.action === "reject") && last.prev_grade) {
+          try {
+            await submitGradeForClaim(last.claim_id, last.prev_grade, null);
+            triageQueue[triageCursor].grade = last.prev_grade;
+            applyClaimGradeDom(last.claim_id, last.prev_grade);
+            triageStatusText = "Undid last decision.";
+          } catch (e) {
+            triageStatusText = "Undo failed: " + e.message;
+          }
+        } else if (last.action === "skip") {
+          triageStatusText = "Undid skip.";
+        } else {
+          triageStatusText = "Undo returned focus to prior claim.";
+        }
+
+        var main = document.querySelector(".thread-main");
+        if (main) renderTriagePane(main);
+        updateClaimHighlight();
+        renderDecisionRail();
+      }
+
       document.addEventListener("click", function (e) {
         if (e.target.closest(".search-container")) return;
         var claimItem = e.target.closest(".claim-item");
@@ -1220,10 +1547,33 @@ const HTML = `<!DOCTYPE html>
         if (action === "grade-show-correct") { document.getElementById("correction-area").style.display = "block"; return; }
         if (action === "grade-submit-correct") { submitGrade("correct"); return; }
         if (action === "grade-cancel") { closeGradeSheet(); return; }
+        if (action === "triage-accept") { runTriageAction("confirm"); return; }
+        if (action === "triage-reject") { runTriageAction("reject"); return; }
+        if (action === "triage-skip") { runTriageAction("skip"); return; }
+        if (action === "triage-undo") { undoTriageAction(); return; }
       });
 
       document.getElementById("grade-overlay").addEventListener("click", function (e) {
         if (e.target === this) closeGradeSheet();
+      });
+
+      document.addEventListener("keydown", function (e) {
+        if (document.getElementById("grade-overlay").classList.contains("open")) return;
+        if (isInputElement(e.target)) return;
+        var key = (e.key || "").toLowerCase();
+        if (key === "a") {
+          e.preventDefault();
+          runTriageAction("confirm");
+        } else if (key === "x") {
+          e.preventDefault();
+          runTriageAction("reject");
+        } else if (e.key === " " || key === "spacebar") {
+          e.preventDefault();
+          runTriageAction("skip");
+        } else if (key === "u") {
+          e.preventDefault();
+          undoTriageAction();
+        }
       });
 
       loadContacts();
