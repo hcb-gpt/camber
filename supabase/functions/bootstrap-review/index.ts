@@ -1,7 +1,7 @@
 import "jsr:@supabase/functions-js/edge-runtime.d.ts";
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
 
-const FUNCTION_VERSION = "bootstrap-review_v1.1.0";
+const FUNCTION_VERSION = "bootstrap-review_v1.1.2";
 type ReviewQueueSource = "pipeline" | "redline";
 
 // ─── Helpers ─────────────────────────────────────────────────────────
@@ -68,6 +68,67 @@ async function tagReviewQueueSource(
   console.warn(`[${ctx}] review_queue source tag warning: ${error.message}`);
 }
 
+async function fetchReviewProjects(db: any): Promise<any[]> {
+  const inactiveStatuses = new Set([
+    "archived",
+    "closed",
+    "completed",
+    "done",
+    "inactive",
+    "on_hold",
+    "on hold",
+    "paused",
+    "prospect",
+    "pipeline",
+    "cancelled",
+    "canceled",
+  ]);
+
+  const excludedProjectNames = new Set([
+    "Business Development & Networking",
+    "Overhead / Internal Operations",
+  ]);
+
+  const pickerLabelBySourceName = new Map<string, string>([
+    ["Hurley Residence", "Hurley Residence"],
+    ["Moss Residence", "Moss Residence"],
+    ["Permar Residence", "Permar Home"],
+    ["Permar Home", "Permar Home"],
+    ["Skelton Residence", "Skelton Residence"],
+    ["Winship Residence", "Winship Residence"],
+    ["Woodbery Residence", "Woodbery Residence"],
+    ["Young Residence", "Young Residence"],
+  ]);
+
+  const { data: withStatus, error: withStatusErr } = await db
+    .from("projects")
+    .select("id, name, status")
+    .order("name");
+
+  if (!withStatusErr && withStatus) {
+    return withStatus
+      .filter((project: any) => {
+        const name = String(project?.name || "").trim();
+        if (excludedProjectNames.has(name)) return false;
+        const status = String(project?.status || "").trim().toLowerCase();
+        if (status && inactiveStatuses.has(status)) return false;
+        return pickerLabelBySourceName.has(name);
+      })
+      .map((project: any) => ({
+        id: project.id,
+        name: pickerLabelBySourceName.get(String(project?.name || "").trim()) || project.name,
+      }));
+  }
+
+  const { data: fallback, error: fallbackErr } = await db
+    .from("projects")
+    .select("id, name")
+    .order("name");
+
+  if (fallbackErr) return [];
+  return fallback || [];
+}
+
 // ─── Queue endpoint ──────────────────────────────────────────────────
 
 async function handleQueue(
@@ -102,14 +163,11 @@ async function handleQueue(
     }
 
     if (!rqData || rqData.length === 0) {
-      const { data: projects } = await db
-        .from("projects")
-        .select("id, name")
-        .order("name");
+      const projects = await fetchReviewProjects(db);
       return json({
         ok: true,
         items: [],
-        projects: projects || [],
+        projects,
         total_pending: 0,
         function_version: FUNCTION_VERSION,
         ms: Date.now() - t0,
@@ -206,16 +264,13 @@ async function handleQueue(
     .select("id", { count: "exact", head: true })
     .eq("status", "pending");
 
-  // Fetch all projects
-  const { data: projects } = await db
-    .from("projects")
-    .select("id, name")
-    .order("name");
+  // Fetch active projects for attribution picker.
+  const projects = await fetchReviewProjects(db);
 
   return json({
     ok: true,
     items,
-    projects: projects || [],
+    projects,
     total_pending: totalPending || 0,
     function_version: FUNCTION_VERSION,
     ms: Date.now() - t0,
