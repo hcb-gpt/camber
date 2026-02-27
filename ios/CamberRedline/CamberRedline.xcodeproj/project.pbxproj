@@ -30,7 +30,6 @@
 		A1B2C3D4E5F60005AABBCC03 /* BootstrapService.swift in Sources */ = {isa = PBXBuildFile; fileRef = A1B2C3D4E5F60006AABBCC03 /* BootstrapService.swift */; };
 		A1B2C3D4E5F60007AABBCC04 /* TriageViewModel.swift in Sources */ = {isa = PBXBuildFile; fileRef = A1B2C3D4E5F60008AABBCC04 /* TriageViewModel.swift */; };
 		A1B2C3D4E5F60009AABBCC05 /* TriageView.swift in Sources */ = {isa = PBXBuildFile; fileRef = A1B2C3D4E5F6000AAABBCC05 /* TriageView.swift */; };
-		A2B3C4D5E6F7A8B9C0D1E2F3 /* Assets.xcassets in Resources */ = {isa = PBXBuildFile; fileRef = F1A2B3C4D5E6F7A8B9C0D1E2 /* Assets.xcassets */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXFileReference section */
@@ -57,7 +56,6 @@
 		A1B2C3D4E5F60006AABBCC03 /* BootstrapService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BootstrapService.swift; sourceTree = "<group>"; };
 		A1B2C3D4E5F60008AABBCC04 /* TriageViewModel.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TriageViewModel.swift; sourceTree = "<group>"; };
 		A1B2C3D4E5F6000AAABBCC05 /* TriageView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TriageView.swift; sourceTree = "<group>"; };
-		F1A2B3C4D5E6F7A8B9C0D1E2 /* Assets.xcassets */ = {isa = PBXFileReference; lastKnownFileType = folder.assetcatalog; path = Assets.xcassets; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
 /* Begin PBXFrameworksBuildPhase section */
@@ -70,17 +68,6 @@
 			runOnlyForDeploymentPostprocessing = 0;
 		};
 /* End PBXFrameworksBuildPhase section */
-
-/* Begin PBXResourcesBuildPhase section */
-		B3C4D5E6F7A8B9C0D1E2F3A4 /* Resources */ = {
-			isa = PBXResourcesBuildPhase;
-			buildActionMask = 2147483647;
-			files = (
-				A2B3C4D5E6F7A8B9C0D1E2F3 /* Assets.xcassets in Resources */,
-			);
-			runOnlyForDeploymentPostprocessing = 0;
-		};
-/* End PBXResourcesBuildPhase section */
 
 /* Begin PBXGroup section */
 		46E176F410BCCCB75B44DF99 /* Views */ = {
@@ -104,7 +91,6 @@
 		4CBF2260079024E63D8ABDC0 /* CamberRedline */ = {
 			isa = PBXGroup;
 			children = (
-				F1A2B3C4D5E6F7A8B9C0D1E2 /* Assets.xcassets */,
 				FF5BA52015DDCF6F215FA113 /* CamberRedlineApp.swift */,
 				C32672D30BE75E53A0CBB17B /* Models */,
 				99BF2C7EF9F55A8850309EB3 /* Services */,
@@ -170,7 +156,6 @@
 			buildPhases = (
 				926888D8F0B8A01F55E0FCF6 /* Sources */,
 				56C7ADADFB21BBCBD91D3760 /* Frameworks */,
-				B3C4D5E6F7A8B9C0D1E2F3A4 /* Resources */,
 			);
 			buildRules = (
 			);

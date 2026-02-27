@@ -1,7 +1,7 @@
 import "jsr:@supabase/functions-js/edge-runtime.d.ts";
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
 
-const FUNCTION_VERSION = "bootstrap-review_v1.1.2";
+const FUNCTION_VERSION = "bootstrap-review_v1.1.4";
 type ReviewQueueSource = "pipeline" | "redline";
 
 // ─── Helpers ─────────────────────────────────────────────────────────
@@ -127,6 +127,17 @@ async function fetchReviewProjects(db: any): Promise<any[]> {
 
   if (fallbackErr) return [];
   return fallback || [];
+}
+
+async function handleProjects(db: any, t0: number): Promise<Response> {
+  const projects = await fetchReviewProjects(db);
+  return json({
+    ok: true,
+    projects,
+    count: projects.length,
+    function_version: FUNCTION_VERSION,
+    ms: Date.now() - t0,
+  });
 }
 
 // ─── Queue endpoint ──────────────────────────────────────────────────
@@ -340,6 +351,36 @@ async function handleResolve(
     return json({ ...result, ms: Date.now() - t0 }, status);
   }
 
+  const [projectNameRes, queueContextRes] = await Promise.all([
+    db
+      .from("projects")
+      .select("name")
+      .eq("id", project_id)
+      .maybeSingle(),
+    db
+      .from("review_queue")
+      .select("interaction_id")
+      .eq("id", review_queue_id)
+      .maybeSingle(),
+  ]);
+  const chosenProjectName = projectNameRes.data?.name || null;
+  const resolvedInteractionId = queueContextRes.data?.interaction_id || result.interaction_id || null;
+
+  let pendingForInteraction = 0;
+  if (resolvedInteractionId) {
+    const { count } = await db
+      .from("review_queue")
+      .select("id", { count: "exact", head: true })
+      .eq("status", "pending")
+      .eq("interaction_id", resolvedInteractionId);
+    pendingForInteraction = count || 0;
+  }
+
+  const { count: totalPendingAfterResolve } = await db
+    .from("review_queue")
+    .select("id", { count: "exact", head: true })
+    .eq("status", "pending");
+
   // Sync journal_claims contamination-control (same pattern as review-resolve)
   if (result.span_id && isValidUUID(String(result.span_id))) {
     const { error: claimErr } = await db
@@ -368,6 +409,11 @@ async function handleResolve(
 
   return json({
     ...result,
+    chosen_project_id: project_id,
+    chosen_project_name: chosenProjectName,
+    interaction_id: resolvedInteractionId,
+    pending_remaining_for_interaction: pendingForInteraction,
+    total_pending: totalPendingAfterResolve || 0,
     function_version: FUNCTION_VERSION,
     ms: Date.now() - t0,
   });
@@ -1579,6 +1625,9 @@ Deno.serve(async (req: Request) => {
         100,
       );
       return await handleQueue(db, limit, t0);
+    }
+    if (action === "projects") {
+      return await handleProjects(db, t0);
     }
 
     // Default: serve HTML UI

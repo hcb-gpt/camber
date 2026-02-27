@@ -59,6 +59,7 @@ const DEFAULT_MIN_SEGMENT_CHARS = 200;
 const DEFAULT_MAX_SEGMENT_CHARS = 8000;
 const DEFAULT_TARGET_SEGMENT_CHARS = 5000;
 const PROJECT_ANCHOR_TERMS = ["woodberry", "sparta"];
+type SegmentationChannel = "call" | "sms_thread";
 
 // ============================================================
 // TYPES
@@ -84,7 +85,7 @@ interface SegmentLLMOutput {
 // ============================================================
 // LLM PROMPT
 // ============================================================
-const SEGMENTATION_PROMPT = `You are a call transcript segmenter for a construction company.
+const CALL_SEGMENTATION_PROMPT = `You are a call transcript segmenter for a construction company.
 
 Your task: Identify boundaries where the conversation switches from one PROJECT to another.
 
@@ -116,28 +117,17 @@ OUTPUT FORMAT (JSON only, no markdown):
 TRANSCRIPT:
 {TRANSCRIPT}`;
 
-const SMS_KNOWN_PROJECTS = [
-  "Hurley",
-  "Permar",
-  "Winship",
-  "Skelton",
-  "Woodbery",
-  "Moss",
-  "Young",
-];
-
 const SMS_SEGMENTATION_PROMPT = `You are an SMS thread segmenter for a construction company.
 
-Your task: Group these messages into BATCHES by project or topic.
+Your task: Identify boundaries where the thread switches to a different project/work context.
 
 RULES:
-1. Each batch = contiguous run of messages about the same job/subject
-2. Add a boundary when the conversation pivots to a different project, vendor, or task
-3. Single-message batches are allowed when clearly a different subject
-4. Use known projects when mentioned: {KNOWN_PROJECTS}
-5. Each segment must be >= {MIN_CHARS} characters when possible
-6. Maximum {MAX_SEGMENTS} segments total
-7. Segments must be contiguous (no gaps, no overlaps)
+1. Split when there is a clear project switch, scheduling block shift, issue/resolution shift, or major participant intent shift
+2. Do NOT split for brief acknowledgements, short confirmations, emojis, or duplicate follow-ups within the same topic
+3. Keep multi-message exchanges on the same project together
+4. Each segment must be >= {MIN_CHARS} characters (merge smaller ones into previous)
+5. Maximum {MAX_SEGMENTS} segments total
+6. Segments must be contiguous (no gaps, no overlaps)
 
 OUTPUT FORMAT (JSON only, no markdown):
 {
@@ -146,15 +136,95 @@ OUTPUT FORMAT (JSON only, no markdown):
       "span_index": 0,
       "char_start": 0,
       "char_end": <end_char>,
-      "boundary_reason": "topic_pivot|project_switch|new_subject|initial_batch",
+      "boundary_reason": "thread_start|topic_shift|project_switch|time_gap|participant_shift",
       "confidence": 0.0-1.0,
-      "boundary_quote": "<exact quote <=50 chars showing the pivot>"
+      "boundary_quote": "<exact quote <=50 chars showing the switch>"
     }
   ]
 }
 
 TRANSCRIPT:
 {TRANSCRIPT}`;
+
+const CALL_SEGMENTATION_RETRY_PROMPT = `You are a call transcript segmenter for a construction company.
+
+CRITICAL REQUIREMENT: For transcripts over 2000 characters, you MUST produce AT LEAST 2 segments unless the call is genuinely single-topic with NO project switches whatsoever.
+
+Your task: Identify boundaries where the conversation switches from one PROJECT to another.
+
+RULES:
+1. A "project" is a specific construction job (e.g., "Johnson Residence", "Smith Project", "the Hurley job")
+2. For transcripts > 2000 chars: find at least ONE natural break point (topic shift, pause, speaker change on different topic)
+3. If truly single-topic: return 1 segment with high confidence, but this should be rare for long calls
+4. Each segment must be >= {MIN_CHARS} characters (merge smaller ones into previous)
+5. Maximum {MAX_SEGMENTS} segments total
+6. Segments must be contiguous (no gaps, no overlaps)
+
+OUTPUT FORMAT (JSON only, no markdown):
+{
+  "segments": [
+    {
+      "span_index": 0,
+      "char_start": 0,
+      "char_end": <end_char>,
+      "boundary_reason": "initial_project|topic_shift|project_switch|natural_break",
+      "confidence": 0.0-1.0,
+      "boundary_quote": "<exact quote <=50 chars showing the switch>"
+    }
+  ]
+}
+
+TRANSCRIPT:
+{TRANSCRIPT}`;
+
+const SMS_SEGMENTATION_RETRY_PROMPT = `You are an SMS thread segmenter for a construction company.
+
+CRITICAL REQUIREMENT: For long SMS threads over 2000 characters, produce AT LEAST 2 segments unless all messages clearly remain in one continuous topic.
+
+Your task: Identify boundaries where the thread switches project/work context.
+
+RULES:
+1. Prefer boundaries at project switches, scheduling windows, issue handoffs, or substantial context changes
+2. Avoid splitting short acknowledgements, repetitive check-ins, or minor wording changes
+3. If truly single-topic: return 1 segment with high confidence, but this should be rare for long threads
+4. Each segment must be >= {MIN_CHARS} characters (merge smaller ones into previous)
+5. Maximum {MAX_SEGMENTS} segments total
+6. Segments must be contiguous (no gaps, no overlaps)
+
+OUTPUT FORMAT (JSON only, no markdown):
+{
+  "segments": [
+    {
+      "span_index": 0,
+      "char_start": 0,
+      "char_end": <end_char>,
+      "boundary_reason": "thread_start|topic_shift|project_switch|time_gap|participant_shift",
+      "confidence": 0.0-1.0,
+      "boundary_quote": "<exact quote <=50 chars showing the switch>"
+    }
+  ]
+}
+
+TRANSCRIPT:
+{TRANSCRIPT}`;
+
+function normalizeSegmentationChannel(
+  rawChannel: unknown,
+  interactionId: string | null,
+): SegmentationChannel {
+  const normalized = String(rawChannel || "").trim().toLowerCase();
+  if (
+    normalized === "sms_thread" || normalized === "sms" ||
+    normalized === "text" || normalized === "text_message"
+  ) {
+    return "sms_thread";
+  }
+  const iid = String(interactionId || "").toLowerCase();
+  if (iid.startsWith("sms_thread_") || iid.startsWith("beside_sms_")) {
+    return "sms_thread";
+  }
+  return "call";
+}
 
 // ============================================================
 // MAIN HANDLER
@@ -215,12 +285,11 @@ Deno.serve(async (req: Request) => {
   const {
     interaction_id,
     transcript,
+    channel,
     max_segments = DEFAULT_MAX_SEGMENTS,
     min_segment_chars = DEFAULT_MIN_SEGMENT_CHARS,
     max_segment_chars = DEFAULT_MAX_SEGMENT_CHARS,
-    channel: raw_channel = "call",
   } = body;
-  const channel = String(raw_channel || "call").trim().toLowerCase();
 
   const parsedMaxSegmentChars = Number(max_segment_chars);
   const maxSegmentChars = Number.isFinite(parsedMaxSegmentChars) &&
@@ -255,17 +324,18 @@ Deno.serve(async (req: Request) => {
   const transcriptLength = transcript.length;
   const requestId = req.headers.get("x-request-id") || crypto.randomUUID();
   const caller = provenanceSource;
+  const segmentationChannel = normalizeSegmentationChannel(channel, interaction_id);
 
   // Structured log: segment_llm_request
   structuredLog("INFO", "segment_llm_request", requestId, interaction_id, {
     transcript_chars: transcriptLength,
     caller,
-    channel,
+    channel: segmentationChannel,
     params: { max_segments, min_segment_chars, max_segment_chars: maxSegmentChars },
   });
 
   console.log(
-    `[segment-llm] Processing: interaction_id=${interaction_id}, channel=${channel}, len=${transcriptLength}`,
+    `[segment-llm] Processing: interaction_id=${interaction_id}, len=${transcriptLength}`,
   );
 
   // ============================================================
@@ -304,12 +374,11 @@ Deno.serve(async (req: Request) => {
     return fallbackResponse(transcriptLength, ["config_error_no_api_key"], t0);
   }
 
-  const promptTemplate = channel === "sms_thread" ? SMS_SEGMENTATION_PROMPT : SEGMENTATION_PROMPT;
+  const promptTemplate = segmentationChannel === "sms_thread" ? SMS_SEGMENTATION_PROMPT : CALL_SEGMENTATION_PROMPT;
   const prompt = promptTemplate
     .replace("{TRANSCRIPT}", transcript)
     .replace("{MIN_CHARS}", String(min_segment_chars))
-    .replace("{MAX_SEGMENTS}", String(max_segments))
-    .replace("{KNOWN_PROJECTS}", SMS_KNOWN_PROJECTS.join(", "));
+    .replace("{MAX_SEGMENTS}", String(max_segments));
 
   let llmResponse: any;
   try {
@@ -493,75 +562,13 @@ Deno.serve(async (req: Request) => {
     warnings.push("single_span_retry_attempt");
     retriedOnce = true;
 
-    // Stricter prompt that demands at least 2 chunks
-    const stricterPrompt = channel === "sms_thread"
-      ? `You are an SMS thread segmenter for a construction company.
-
-CRITICAL REQUIREMENT: For transcripts over 2000 characters, you MUST produce AT LEAST 2 batches unless the thread is genuinely single-subject with NO topic pivots.
-
-Your task: Group messages into BATCHES by project or topic.
-
-RULES:
-1. Each batch = contiguous run of messages about same job/subject
-2. For transcripts > 2000 chars: find at least ONE natural pivot where subject/project changes
-3. Single-message batches are allowed only when clearly a different subject
-4. Use known projects when mentioned: {KNOWN_PROJECTS}
-5. Each segment must be >= {MIN_CHARS} characters when possible
-6. Maximum {MAX_SEGMENTS} segments total
-7. Segments must be contiguous (no gaps, no overlaps)
-
-OUTPUT FORMAT (JSON only, no markdown):
-{
-  "segments": [
-    {
-      "span_index": 0,
-      "char_start": 0,
-      "char_end": <end_char>,
-      "boundary_reason": "topic_pivot|project_switch|new_subject|initial_batch",
-      "confidence": 0.0-1.0,
-      "boundary_quote": "<exact quote <=50 chars showing the pivot>"
-    }
-  ]
-}
-
-TRANSCRIPT:
-{TRANSCRIPT}`
-      : `You are a call transcript segmenter for a construction company.
-
-CRITICAL REQUIREMENT: For transcripts over 2000 characters, you MUST produce AT LEAST 2 segments unless the call is genuinely single-topic with NO project switches whatsoever.
-
-Your task: Identify boundaries where the conversation switches from one PROJECT to another.
-
-RULES:
-1. A "project" is a specific construction job (e.g., "Johnson Residence", "Smith Project", "the Hurley job")
-2. For transcripts > 2000 chars: find at least ONE natural break point (topic shift, pause, speaker change on different topic)
-3. If truly single-topic: return 1 segment with high confidence, but this should be rare for long calls
-4. Each segment must be >= {MIN_CHARS} characters (merge smaller ones into previous)
-5. Maximum {MAX_SEGMENTS} segments total
-6. Segments must be contiguous (no gaps, no overlaps)
-
-OUTPUT FORMAT (JSON only, no markdown):
-{
-  "segments": [
-    {
-      "span_index": 0,
-      "char_start": 0,
-      "char_end": <end_char>,
-      "boundary_reason": "initial_project|topic_shift|project_switch|natural_break",
-      "confidence": 0.0-1.0,
-      "boundary_quote": "<exact quote <=50 chars showing the switch>"
-    }
-  ]
-}
-
-TRANSCRIPT:
-{TRANSCRIPT}`;
-
-    const retryPrompt = stricterPrompt
+    const stricterPromptTemplate = segmentationChannel === "sms_thread"
+      ? SMS_SEGMENTATION_RETRY_PROMPT
+      : CALL_SEGMENTATION_RETRY_PROMPT;
+    const retryPrompt = stricterPromptTemplate
       .replace("{TRANSCRIPT}", transcript)
       .replace("{MIN_CHARS}", String(min_segment_chars))
-      .replace("{MAX_SEGMENTS}", String(max_segments))
-      .replace("{KNOWN_PROJECTS}", SMS_KNOWN_PROJECTS.join(", "));
+      .replace("{MAX_SEGMENTS}", String(max_segments));
 
     try {
       const retryResp = await fetch("https://api.openai.com/v1/chat/completions", {
@@ -706,6 +713,7 @@ TRANSCRIPT:
     JSON.stringify({
       ok: true,
       segmenter_version: SEGMENT_LLM_VERSION,
+      segmentation_channel: segmentationChannel,
       segments,
       warnings,
       ms: durationMs,

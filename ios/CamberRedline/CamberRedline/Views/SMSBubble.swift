@@ -3,12 +3,13 @@ import SwiftUI
 struct SMSBubble: View {
     let entry: SMSEntry
     var showTimestamp: Bool = true
+    var senderName: String? = nil
 
     private var isOutbound: Bool {
         entry.direction?.lowercased() == "outbound"
     }
 
-    private static let timeFormatter: DateFormatter = {
+    nonisolated(unsafe) private static let timeFormatter: DateFormatter = {
         let f = DateFormatter()
         f.timeStyle = .short
         return f
@@ -51,6 +52,14 @@ struct SMSBubble: View {
             if isOutbound { Spacer(minLength: 60) }
 
             VStack(alignment: isOutbound ? .trailing : .leading, spacing: 2) {
+                // Sender name label — #8E8E93, shown above inbound bubbles only
+                if !isOutbound, let name = senderName, !name.isEmpty {
+                    Text(name)
+                        .font(.caption2)
+                        .foregroundStyle(Color(red: 0.557, green: 0.557, blue: 0.576)) // #8E8E93
+                        .padding(.horizontal, 4)
+                }
+
                 Text(entry.content ?? "")
                     .font(.body)
                     .foregroundStyle(.white)
