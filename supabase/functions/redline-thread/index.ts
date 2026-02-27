@@ -517,11 +517,22 @@ async function handleContacts(db: any, url: URL, t0: number): Promise<Response> 
   const selectColumns =
     "contact_id, contact_name, contact_phone, call_count, sms_count, claim_count, ungraded_count, last_activity, last_snippet, last_direction, last_interaction_type";
 
-  const contactsSource = "redline_contacts";
-  const { data, error } = await db
-    .from(contactsSource)
+  const primaryContactsSource = "redline_contacts_matview";
+  const fallbackContactsSource = "redline_contacts";
+
+  let contactsSource = primaryContactsSource;
+  let { data, error } = await db
+    .from(primaryContactsSource)
     .select(selectColumns)
     .order("last_activity", { ascending: false, nullsFirst: false });
+
+  if (error) {
+    contactsSource = fallbackContactsSource;
+    ({ data, error } = await db
+      .from(fallbackContactsSource)
+      .select(selectColumns)
+      .order("last_activity", { ascending: false, nullsFirst: false }));
+  }
 
   if (error) {
     return json({ ok: false, error_code: "contacts_query_failed", error: error.message }, 500);
