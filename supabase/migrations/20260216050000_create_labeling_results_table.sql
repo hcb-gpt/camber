@@ -47,14 +47,12 @@ CREATE TABLE IF NOT EXISTS public.labeling_results (
 
   UNIQUE(span_id, batch_run_id)
 );
-
 CREATE INDEX IF NOT EXISTS idx_labeling_results_span ON public.labeling_results(span_id);
 CREATE INDEX IF NOT EXISTS idx_labeling_results_batch ON public.labeling_results(batch_run_id);
 CREATE INDEX IF NOT EXISTS idx_labeling_results_pass ON public.labeling_results(pass_number);
 CREATE INDEX IF NOT EXISTS idx_labeling_results_source ON public.labeling_results(label_source);
 CREATE INDEX IF NOT EXISTS idx_labeling_results_decision ON public.labeling_results(label_decision)
   WHERE label_decision IN ('review','unlabeled');
-
 COMMENT ON TABLE public.labeling_results IS
   'World-model labeling pipeline output. One label per span per batch run. '
   'Separate from span_attributions (production SSOT) per Stopline 1.';

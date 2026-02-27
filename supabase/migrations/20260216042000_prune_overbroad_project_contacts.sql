@@ -26,10 +26,8 @@
 
 -- Step 1: Delete data_inferred spray rows
 DELETE FROM public.project_contacts WHERE source = 'data_inferred';
-
 -- Step 2: Delete null-source spray rows
 DELETE FROM public.project_contacts WHERE source IS NULL;
-
 -- Step 3: Refresh contact_fanout from interaction + affinity data
 WITH refreshed AS (
     SELECT

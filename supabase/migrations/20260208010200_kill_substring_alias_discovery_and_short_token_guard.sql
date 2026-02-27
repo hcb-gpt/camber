@@ -67,12 +67,9 @@ BEGIN
     ORDER BY pm.name, pm.candidate;
 END;
 $$ LANGUAGE plpgsql;
-
 COMMENT ON FUNCTION suggest_alias_additions(text) IS
 'Analyzes sample text to suggest potential new aliases based on fuzzy matching.
 v2: Removed ILIKE substring matching. Now uses exact component match or Levenshtein (min 4 chars).';
-
-
 -- 2) check_alias_collision: replace ILIKE '%x%' with exact match
 CREATE OR REPLACE FUNCTION check_alias_collision(proposed_alias text)
 RETURNS TABLE (
@@ -102,12 +99,9 @@ BEGIN
     WHERE LOWER(ca) = LOWER(proposed_alias);
 END;
 $$ LANGUAGE plpgsql;
-
 COMMENT ON FUNCTION check_alias_collision(text) IS
 'Before adding a new alias, check if it would collide with existing contacts.
 v2: Exact match only (no substring). Checks name components individually.';
-
-
 -- 3) Phase 2: Short-token guard on find_fuzzy_alias_matches phonetic paths
 -- Add LENGTH(search_term) > 3 guard to soundex/metaphone paths
 CREATE OR REPLACE FUNCTION find_fuzzy_alias_matches(
@@ -194,7 +188,6 @@ BEGIN
   ORDER BY m.score DESC, m.alias;
 END;
 $$;
-
 COMMENT ON FUNCTION find_fuzzy_alias_matches IS
 'Find project aliases matching a search term using multiple strategies.
 v3: Added short-token guard (LENGTH > 3) on all fuzzy/phonetic paths.

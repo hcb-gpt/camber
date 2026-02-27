@@ -4,24 +4,19 @@
 
 ALTER TABLE public.journal_claims
 ADD COLUMN IF NOT EXISTS source_span_id UUID;
-
 ALTER TABLE public.journal_claims
 ADD COLUMN IF NOT EXISTS extraction_model_id TEXT,
 ADD COLUMN IF NOT EXISTS extraction_prompt_version TEXT;
-
 ALTER TABLE public.journal_claims
 ADD COLUMN IF NOT EXISTS claim_project_id_norm UUID
 GENERATED ALWAYS AS (
   COALESCE(claim_project_id, '00000000-0000-0000-0000-000000000000'::uuid)
 ) STORED;
-
 CREATE INDEX IF NOT EXISTS idx_journal_claims_source_span_id
 ON public.journal_claims (source_span_id);
-
 CREATE UNIQUE INDEX IF NOT EXISTS idx_journal_claims_unique_active_dedup
 ON public.journal_claims (call_id, claim_type, claim_text, claim_project_id_norm)
 WHERE active = true;
-
 CREATE OR REPLACE FUNCTION public.insert_journal_claims_dedup(p_rows jsonb)
 RETURNS bigint
 LANGUAGE plpgsql

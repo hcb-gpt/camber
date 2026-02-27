@@ -73,13 +73,10 @@ LEFT JOIN LATERAL (
     AND cs.is_superseded IS NOT TRUE
 ) span_counts ON true
 WHERE cr.is_shadow IS NOT TRUE;
-
 COMMENT ON VIEW v_call_ledger IS
   'Flat, one-row-per-call view joining calls_raw → spans → attributions → projects → contacts. '
   'Start here for call-level queries. Excludes shadow rows by default. '
   'project_name and project_id come from span_attributions (v4 SSOT), not interactions.project_id (deprecated).';
-
-
 -- ============================================================
 -- 2. v_morning_manifest — fix broken CTEs
 -- ============================================================
@@ -167,8 +164,6 @@ WHERE p.status = 'active'
     OR COALESCE(rc.pending_reviews, (0)::bigint) > 0)
 ORDER BY COALESCE(cc.new_calls, (0)::bigint) DESC,
   COALESCE(bc.new_claims, (0)::bigint) DESC;
-
-
 -- ============================================================
 -- 3. v_interactions_routing — fix deprecated project_id
 -- ============================================================
@@ -198,8 +193,6 @@ SELECT
 FROM interactions i
 LEFT JOIN v_call_primary_project cpp ON cpp.interaction_id = i.interaction_id
 WHERE i.context_receipt IS NOT NULL;
-
-
 -- ============================================================
 -- 4. v_interaction_primary_project — drop deprecated columns
 -- ============================================================
@@ -254,7 +247,6 @@ SELECT
   psp.latest_attributed_at AS span_top_project_last_attributed_at
 FROM interactions i
 LEFT JOIN primary_span_project psp ON psp.interaction_id = i.interaction_id;
-
 COMMENT ON VIEW v_interaction_primary_project IS
   'Per-interaction primary project from span_attributions. '
   'Deprecated columns interaction_project_id and primary_project_source removed 2026-02-19.';

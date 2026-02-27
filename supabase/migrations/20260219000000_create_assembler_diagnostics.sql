@@ -19,7 +19,6 @@ CREATE TABLE assembler_diagnostics (
   tool_call_log JSONB,
   created_at TIMESTAMPTZ DEFAULT NOW()
 );
-
 CREATE INDEX idx_assembler_diag_span ON assembler_diagnostics(span_id);
 CREATE INDEX idx_assembler_diag_verdict ON assembler_diagnostics(auditor_verdict)
   WHERE auditor_verdict IS NOT NULL;

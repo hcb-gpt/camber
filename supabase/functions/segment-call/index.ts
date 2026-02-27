@@ -48,14 +48,19 @@
  * - Supersede metadata: sets superseded_at + superseded_by_action_id on old spans for audit trail.
  * - Ensures rerun of same interaction_id produces incrementing generations with no FK errors.
  *
+ * v2.9.2:
+ * - Tightens reseed guard scope: block resegment when any attribution exists on any span generation
+ *   for the interaction (including superseded spans), preventing duplicate span trees on reruns.
+ *
  * Auth (internal gate; verify_jwt=false):
  * - X-Edge-Secret == EDGE_SHARED_SECRET, OR
  * - JWT + ALLOWED_EMAILS verified via auth.getUser() (debug path)
  */
 import "jsr:@supabase/functions-js/edge-runtime.d.ts";
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
+import { checkReseedGuard } from "./reseed_guard.ts";
 
-const SEGMENT_CALL_VERSION = "v2.9.0";
+const SEGMENT_CALL_VERSION = "v2.9.2";
 const MAX_SEGMENT_CHARS_HARD_LIMIT = 3000;
 const MAX_HOOK_NON2XX_DIAGNOSTICS = 3;
 
@@ -635,6 +640,7 @@ Deno.serve(async (req: Request) => {
     const {
       interaction_id,
       transcript,
+      channel: requested_channel = null,
       dry_run = false,
       skip_attribution = SKIP_ATTRIBUTION_DEFAULT,
       max_segments = 10,
@@ -654,6 +660,11 @@ Deno.serve(async (req: Request) => {
         { status: 400, headers: jsonHeaders },
       );
     }
+
+    const requestedChannelNorm = typeof requested_channel === "string" ? requested_channel.trim().toLowerCase() : "";
+    const inferredSmsChannel = String(interaction_id).startsWith("sms_thread_") ||
+      String(interaction_id).startsWith("beside_sms_");
+    const segmentationChannel = requestedChannelNorm || (inferredSmsChannel ? "sms_thread" : "call");
 
     const edgeSecret = Deno.env.get("EDGE_SHARED_SECRET");
     if (!edgeSecret) {
@@ -803,70 +814,38 @@ Deno.serve(async (req: Request) => {
     }
 
     // ============================================================
-    // 2) RESEED RULE (409 IF ANY ATTRIBUTIONS EXIST ON ACTIVE SPANS)
+    // 2) RESEED RULE (409 IF ANY ATTRIBUTIONS EXIST ON ANY SPANS FOR INTERACTION)
     // ============================================================
-    const { data: existingSpans, error: spansErr } = await db
-      .from("conversation_spans")
-      .select("id")
-      .eq("interaction_id", interaction_id)
-      .eq("is_superseded", false);
-
-    if (spansErr) {
+    const reseedGuard = await checkReseedGuard(db, interaction_id);
+    if (reseedGuard.error) {
+      const [reason, detail] = reseedGuard.error.split(":", 2);
       await logDiagnostic("DB_WRITE_FAILED", {
-        reason: "conversation_spans_query_failed",
+        reason: reason || "reseed_guard_query_failed",
         interaction_id,
-        detail: spansErr.message,
+        detail: detail || reseedGuard.error,
       });
       return new Response(
         JSON.stringify({
           ok: false,
           error: "db_error",
           error_code: "db_error",
-          detail: spansErr.message,
+          detail: reseedGuard.error,
           version: SEGMENT_CALL_VERSION,
         }),
         { status: 500, headers: jsonHeaders },
       );
     }
-
-    if (existingSpans && existingSpans.length > 0) {
-      const existingSpanIds = existingSpans.map((s: any) => s.id);
-      const { data: existingAttribs, error: attribErr } = await db
-        .from("span_attributions")
-        .select("id")
-        .in("span_id", existingSpanIds)
-        .limit(1);
-
-      if (attribErr) {
-        await logDiagnostic("DB_WRITE_FAILED", {
-          reason: "span_attributions_query_failed",
+    if (reseedGuard.blocked) {
+      return new Response(
+        JSON.stringify({
+          ok: false,
+          error: "already_attributed",
+          error_code: "already_attributed",
           interaction_id,
-          detail: attribErr.message,
-        });
-        return new Response(
-          JSON.stringify({
-            ok: false,
-            error: "db_error",
-            error_code: "db_error",
-            detail: attribErr.message,
-            version: SEGMENT_CALL_VERSION,
-          }),
-          { status: 500, headers: jsonHeaders },
-        );
-      }
-
-      if (existingAttribs && existingAttribs.length > 0) {
-        return new Response(
-          JSON.stringify({
-            ok: false,
-            error: "already_attributed",
-            error_code: "already_attributed",
-            interaction_id,
-            version: SEGMENT_CALL_VERSION,
-          }),
-          { status: 409, headers: jsonHeaders },
-        );
-      }
+          version: SEGMENT_CALL_VERSION,
+        }),
+        { status: 409, headers: jsonHeaders },
+      );
     }
 
     // ============================================================
@@ -876,6 +855,9 @@ Deno.serve(async (req: Request) => {
     let segmenterVersion = "fallback_trivial_v1";
     const segmenterWarnings: string[] = [];
     segmenterWarnings.push(...canonicalWarnings);
+    if (!requestedChannelNorm && inferredSmsChannel) {
+      segmenterWarnings.push("channel_inferred_sms_thread_from_interaction_id");
+    }
     if (transcriptControlCharsSanitized > 0) {
       segmenterWarnings.push(`transcript_control_chars_sanitized_${transcriptControlCharsSanitized}`);
     }
@@ -954,6 +936,7 @@ Deno.serve(async (req: Request) => {
         },
         body: JSON.stringify({
           interaction_id,
+          channel: segmentationChannel,
           transcript: spanTranscript,
           source: "segment-call",
           max_segments,
@@ -1640,6 +1623,7 @@ Deno.serve(async (req: Request) => {
           span_ids: spanIds,
           span_count: spanCount,
           segmenter_version: segmenterVersion,
+          segmentation_channel: segmentationChannel,
           segmenter_warnings: segmenterWarnings,
           parent_interaction_sync: {
             applied: parent_interaction_sync_applied,
@@ -1692,6 +1676,7 @@ Deno.serve(async (req: Request) => {
           span_ids: spanIds,
           span_count: spanCount,
           segmenter_version: segmenterVersion,
+          segmentation_channel: segmentationChannel,
           segmenter_warnings: segmenterWarnings,
           parent_interaction_sync: {
             applied: parent_interaction_sync_applied,
@@ -1761,6 +1746,7 @@ Deno.serve(async (req: Request) => {
         span_ids: spanIds,
         span_count: spanCount,
         segmenter_version: segmenterVersion,
+        segmentation_channel: segmentationChannel,
         segmenter_warnings: segmenterWarnings,
         parent_interaction_sync: {
           applied: parent_interaction_sync_applied,

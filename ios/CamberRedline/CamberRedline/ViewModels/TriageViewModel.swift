@@ -184,7 +184,7 @@ final class TriageViewModel {
                     interactionId: item.interactionId,
                     transcriptSegment: item.transcriptSegment,
                     projectId: item.aiGuessProjectId,
-                    confidence: item.confidence,
+                    confidence: item.confidence ?? 0,
                     reasonCodes: item.reasonCodes ?? item.reasons ?? [],
                     candidates: item.contextPayload?.candidates ?? [],
                     isMock: false

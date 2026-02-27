@@ -71,7 +71,8 @@ struct SMSBubble: View {
                 if showTimestamp {
                     Text(formattedTime)
                         .font(.caption2)
-                        .foregroundStyle(.secondary)
+                        .foregroundStyle(Color(.systemGray3))
+                        .opacity(0.55)
                         .padding(.horizontal, 4)
                 }
             }

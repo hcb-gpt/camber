@@ -15,7 +15,6 @@ ALTER TABLE public.project_facts
   ADD COLUMN IF NOT EXISTS embedding extensions.vector(1536),
   ADD COLUMN IF NOT EXISTS embedding_model text,
   ADD COLUMN IF NOT EXISTS embedding_version text;
-
 COMMENT ON COLUMN public.project_facts.search_text IS
   'M2-0: Auto-generated search text for hybrid retrieval (FTS, trigram, vector). '
   'Combines fact_kind + extracted fact_payload fields (feature, value, notes). '
@@ -26,18 +25,15 @@ COMMENT ON COLUMN public.project_facts.embedding_model IS
   'Model used to generate embedding (e.g., text-embedding-3-small).';
 COMMENT ON COLUMN public.project_facts.embedding_version IS
   'Version tag for embedding generation (e.g., v1). Bump on re-embed.';
-
 -- 2) Partial B-tree index (interim, until HNSW rollout)
 --    Covers the common query path: filter by project, then scan embeddings.
 CREATE INDEX IF NOT EXISTS idx_project_facts_embedded
   ON public.project_facts (project_id)
   WHERE embedding IS NOT NULL;
-
 COMMENT ON INDEX public.idx_project_facts_embedded IS
   'Partial index for vector search over project_facts. '
   'Covers rows with non-null embeddings. '
   'HNSW vector index deferred until >1000 embedded rows.';
-
 -- 3) HNSW rollout gate (DO NOT APPLY until conditions met)
 --
 -- ROLLOUT GATE: Do NOT create HNSW until:
@@ -77,4 +73,4 @@ COMMENT ON INDEX public.idx_project_facts_embedded IS
 --   AND pf.as_of_at  <= $t_call
 --   AND pf.observed_at <= $t_call
 -- ORDER BY pf.embedding <=> $span_embedding
--- LIMIT 20;
+-- LIMIT 20;;

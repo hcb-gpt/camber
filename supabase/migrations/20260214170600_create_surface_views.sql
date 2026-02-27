@@ -56,7 +56,6 @@ SELECT
   END AS risk_flag
 FROM projects p
 ORDER BY last_interaction_at DESC NULLS LAST;
-
 DROP VIEW IF EXISTS public.v_needs_triage;
 CREATE VIEW public.v_needs_triage AS
 WITH latest_sa AS (
@@ -133,4 +132,3 @@ SELECT
 FROM journal_review_queue jrq
 LEFT JOIN projects p_j ON p_j.id = jrq.project_id
 WHERE jrq.status != 'resolved';
-

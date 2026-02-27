@@ -1,14 +1,15 @@
 import "jsr:@supabase/functions-js/edge-runtime.d.ts";
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
 
-const FUNCTION_VERSION = "bootstrap-review_v1.0.0";
+const FUNCTION_VERSION = "bootstrap-review_v1.1.4";
+type ReviewQueueSource = "pipeline" | "redline";
 
 // ─── Helpers ─────────────────────────────────────────────────────────
 
 function corsHeaders(): Record<string, string> {
   return {
     "Access-Control-Allow-Origin": "*",
-    "Access-Control-Allow-Headers": "authorization, x-edge-secret, content-type",
+    "Access-Control-Allow-Headers": "authorization, x-edge-secret, x-source, content-type",
     "Access-Control-Allow-Methods": "GET, POST, OPTIONS",
   };
 }
@@ -35,10 +36,114 @@ function isValidUUID(str: string): boolean {
     .test(str);
 }
 
+function normalizeReviewQueueSource(
+  raw: unknown,
+  fallback: ReviewQueueSource = "pipeline",
+): ReviewQueueSource {
+  const normalized = String(raw || "").trim().toLowerCase();
+  if (normalized === "redline") return "redline";
+  if (normalized === "pipeline") return "pipeline";
+  return fallback;
+}
+
+function isMissingReviewQueueSourceColumnError(message: string): boolean {
+  return /column .*source.* does not exist/i.test(message);
+}
+
+async function tagReviewQueueSource(
+  db: any,
+  reviewQueueId: string,
+  source: ReviewQueueSource,
+  ctx: string,
+): Promise<void> {
+  const { error } = await db
+    .from("review_queue")
+    .update({ source })
+    .eq("id", reviewQueueId);
+  if (!error) return;
+  if (isMissingReviewQueueSourceColumnError(error.message)) {
+    console.warn(`[${ctx}] review_queue.source column missing; skipped source tag (${source})`);
+    return;
+  }
+  console.warn(`[${ctx}] review_queue source tag warning: ${error.message}`);
+}
+
+async function fetchReviewProjects(db: any): Promise<any[]> {
+  const inactiveStatuses = new Set([
+    "archived",
+    "closed",
+    "completed",
+    "done",
+    "inactive",
+    "on_hold",
+    "on hold",
+    "paused",
+    "prospect",
+    "pipeline",
+    "cancelled",
+    "canceled",
+  ]);
+
+  const excludedProjectNames = new Set([
+    "Business Development & Networking",
+    "Overhead / Internal Operations",
+  ]);
+
+  const pickerLabelBySourceName = new Map<string, string>([
+    ["Hurley Residence", "Hurley Residence"],
+    ["Moss Residence", "Moss Residence"],
+    ["Permar Residence", "Permar Home"],
+    ["Permar Home", "Permar Home"],
+    ["Skelton Residence", "Skelton Residence"],
+    ["Winship Residence", "Winship Residence"],
+    ["Woodbery Residence", "Woodbery Residence"],
+    ["Young Residence", "Young Residence"],
+  ]);
+
+  const { data: withStatus, error: withStatusErr } = await db
+    .from("projects")
+    .select("id, name, status")
+    .order("name");
+
+  if (!withStatusErr && withStatus) {
+    return withStatus
+      .filter((project: any) => {
+        const name = String(project?.name || "").trim();
+        if (excludedProjectNames.has(name)) return false;
+        const status = String(project?.status || "").trim().toLowerCase();
+        if (status && inactiveStatuses.has(status)) return false;
+        return pickerLabelBySourceName.has(name);
+      })
+      .map((project: any) => ({
+        id: project.id,
+        name: pickerLabelBySourceName.get(String(project?.name || "").trim()) || project.name,
+      }));
+  }
+
+  const { data: fallback, error: fallbackErr } = await db
+    .from("projects")
+    .select("id, name")
+    .order("name");
+
+  if (fallbackErr) return [];
+  return fallback || [];
+}
+
+async function handleProjects(db: any, t0: number): Promise<Response> {
+  const projects = await fetchReviewProjects(db);
+  return json({
+    ok: true,
+    projects,
+    count: projects.length,
+    function_version: FUNCTION_VERSION,
+    ms: Date.now() - t0,
+  });
+}
+
 // ─── Queue endpoint ──────────────────────────────────────────────────
 
 async function handleQueue(
-  db: ReturnType<typeof createClient>,
+  db: any,
   limit: number,
   t0: number,
 ): Promise<Response> {
@@ -69,14 +174,11 @@ async function handleQueue(
     }
 
     if (!rqData || rqData.length === 0) {
-      const { data: projects } = await db
-        .from("projects")
-        .select("id, name")
-        .order("name");
+      const projects = await fetchReviewProjects(db);
       return json({
         ok: true,
         items: [],
-        projects: projects || [],
+        projects,
         total_pending: 0,
         function_version: FUNCTION_VERSION,
         ms: Date.now() - t0,
@@ -133,10 +235,10 @@ async function handleQueue(
     );
 
     items = rqData.map((rq: any) => {
-      const span = spanMap.get(rq.span_id) || {};
-      const attr = attrMap.get(rq.span_id) || {};
-      const interaction = interactionMap.get(rq.interaction_id) || {};
-      const call = callMap.get(rq.interaction_id) || {};
+      const span: any = spanMap.get(rq.span_id) || {};
+      const attr: any = attrMap.get(rq.span_id) || {};
+      const interaction: any = interactionMap.get(rq.interaction_id) || {};
+      const call: any = callMap.get(rq.interaction_id) || {};
       return {
         id: rq.id,
         span_id: rq.span_id,
@@ -173,16 +275,13 @@ async function handleQueue(
     .select("id", { count: "exact", head: true })
     .eq("status", "pending");
 
-  // Fetch all projects
-  const { data: projects } = await db
-    .from("projects")
-    .select("id, name")
-    .order("name");
+  // Fetch active projects for attribution picker.
+  const projects = await fetchReviewProjects(db);
 
   return json({
     ok: true,
     items,
-    projects: projects || [],
+    projects,
     total_pending: totalPending || 0,
     function_version: FUNCTION_VERSION,
     ms: Date.now() - t0,
@@ -192,7 +291,7 @@ async function handleQueue(
 // ─── Resolve endpoint ────────────────────────────────────────────────
 
 async function handleResolve(
-  db: ReturnType<typeof createClient>,
+  db: any,
   req: Request,
   t0: number,
 ): Promise<Response> {
@@ -206,7 +305,7 @@ async function handleResolve(
     );
   }
 
-  const { review_queue_id, project_id, notes, user_id } = body;
+  const { review_queue_id, project_id, notes, user_id, source } = body;
 
   if (!review_queue_id || !isValidUUID(review_queue_id)) {
     return json({
@@ -222,6 +321,9 @@ async function handleResolve(
       error: "project_id required (uuid)",
     }, 400);
   }
+
+  const writeSource = normalizeReviewQueueSource(source, "pipeline");
+  await tagReviewQueueSource(db, review_queue_id, writeSource, "bootstrap-review:resolve");
 
   const { data, error } = await db.rpc("resolve_review_item", {
     p_review_queue_id: review_queue_id,
@@ -248,6 +350,36 @@ async function handleResolve(
     if (result.error === "human_lock_conflict") status = 409;
     return json({ ...result, ms: Date.now() - t0 }, status);
   }
+
+  const [projectNameRes, queueContextRes] = await Promise.all([
+    db
+      .from("projects")
+      .select("name")
+      .eq("id", project_id)
+      .maybeSingle(),
+    db
+      .from("review_queue")
+      .select("interaction_id")
+      .eq("id", review_queue_id)
+      .maybeSingle(),
+  ]);
+  const chosenProjectName = projectNameRes.data?.name || null;
+  const resolvedInteractionId = queueContextRes.data?.interaction_id || result.interaction_id || null;
+
+  let pendingForInteraction = 0;
+  if (resolvedInteractionId) {
+    const { count } = await db
+      .from("review_queue")
+      .select("id", { count: "exact", head: true })
+      .eq("status", "pending")
+      .eq("interaction_id", resolvedInteractionId);
+    pendingForInteraction = count || 0;
+  }
+
+  const { count: totalPendingAfterResolve } = await db
+    .from("review_queue")
+    .select("id", { count: "exact", head: true })
+    .eq("status", "pending");
 
   // Sync journal_claims contamination-control (same pattern as review-resolve)
   if (result.span_id && isValidUUID(String(result.span_id))) {
@@ -277,6 +409,11 @@ async function handleResolve(
 
   return json({
     ...result,
+    chosen_project_id: project_id,
+    chosen_project_name: chosenProjectName,
+    interaction_id: resolvedInteractionId,
+    pending_remaining_for_interaction: pendingForInteraction,
+    total_pending: totalPendingAfterResolve || 0,
     function_version: FUNCTION_VERSION,
     ms: Date.now() - t0,
   });
@@ -285,7 +422,7 @@ async function handleResolve(
 // ─── Dismiss endpoint (NONE button — marks review as dismissed) ──────
 
 async function handleDismiss(
-  db: ReturnType<typeof createClient>,
+  db: any,
   req: Request,
   t0: number,
 ): Promise<Response> {
@@ -296,11 +433,14 @@ async function handleDismiss(
     return json({ ok: false, error_code: "invalid_json" }, 400);
   }
 
-  const { review_queue_id, user_id } = body;
+  const { review_queue_id, user_id, source } = body;
 
   if (!review_queue_id || !isValidUUID(review_queue_id)) {
     return json({ ok: false, error_code: "missing_review_queue_id" }, 400);
   }
+
+  const writeSource = normalizeReviewQueueSource(source, "pipeline");
+  await tagReviewQueueSource(db, review_queue_id, writeSource, "bootstrap-review:dismiss");
 
   const { error } = await db
     .from("review_queue")
@@ -336,7 +476,7 @@ async function handleDismiss(
 // ─── Undo endpoint ───────────────────────────────────────────────────
 
 async function handleUndo(
-  db: ReturnType<typeof createClient>,
+  db: any,
   req: Request,
   t0: number,
 ): Promise<Response> {
@@ -347,11 +487,14 @@ async function handleUndo(
     return json({ ok: false, error_code: "invalid_json" }, 400);
   }
 
-  const { review_queue_id } = body;
+  const { review_queue_id, source } = body;
 
   if (!review_queue_id || !isValidUUID(review_queue_id)) {
     return json({ ok: false, error_code: "missing_review_queue_id" }, 400);
   }
+
+  const writeSource = normalizeReviewQueueSource(source, "pipeline");
+  await tagReviewQueueSource(db, review_queue_id, writeSource, "bootstrap-review:undo");
 
   // Check if item was resolved within last 30 seconds (generous server-side window)
   const { data: item, error: fetchErr } = await db
@@ -1060,7 +1203,7 @@ function buildHtmlPage(): string {
         var r = await fetch(BASE + "?action=resolve", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ review_queue_id: qid, project_id: pid, user_id: "chad" })
+          body: JSON.stringify({ review_queue_id: qid, project_id: pid, user_id: "chad", source: "pipeline" })
         });
         return await r.json();
       }
@@ -1069,7 +1212,7 @@ function buildHtmlPage(): string {
         var r = await fetch(BASE + "?action=dismiss", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ review_queue_id: qid, user_id: "chad_bootstrap" })
+          body: JSON.stringify({ review_queue_id: qid, user_id: "chad_bootstrap", source: "pipeline" })
         });
         return await r.json();
       }
@@ -1078,7 +1221,7 @@ function buildHtmlPage(): string {
         var r = await fetch(BASE + "?action=undo", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ review_queue_id: qid })
+          body: JSON.stringify({ review_queue_id: qid, source: "pipeline" })
         });
         return await r.json();
       }
@@ -1482,6 +1625,9 @@ Deno.serve(async (req: Request) => {
         100,
       );
       return await handleQueue(db, limit, t0);
+    }
+    if (action === "projects") {
+      return await handleProjects(db, t0);
     }
 
     // Default: serve HTML UI

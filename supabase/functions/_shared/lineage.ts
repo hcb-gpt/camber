@@ -9,6 +9,23 @@ import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
 
 type DB = ReturnType<typeof createClient>;
 
+type LineageInsert = {
+  source_type: string;
+  source_id: string;
+  source_run_id: string;
+  transcript_variant: string;
+  metadata: Record<string, unknown>;
+};
+
+type LineageUpsertClient = {
+  from: (table: string) => {
+    upsert: (
+      values: LineageInsert,
+      options?: { onConflict?: string },
+    ) => PromiseLike<{ error: { message: string } | null }>;
+  };
+};
+
 export interface LineageEdge {
   from: string;
   to: string;
@@ -43,7 +60,8 @@ export function lineageSourceId(
  */
 export function emitLineage(db: DB, opts: EmitLineageOpts): void {
   const sourceId = lineageSourceId(opts.slug, opts.version, opts.qualifier);
-  db.from("evidence_events").upsert({
+  const lineageDb = db as unknown as LineageUpsertClient;
+  const upsertResult = lineageDb.from("evidence_events").upsert({
     source_type: "lineage",
     source_id: sourceId,
     source_run_id: `${opts.slug}:${opts.version}`,
@@ -53,7 +71,9 @@ export function emitLineage(db: DB, opts: EmitLineageOpts): void {
       pipeline_version: opts.version,
       ...opts.metadata,
     },
-  }, { onConflict: "source_type,source_id,transcript_variant" })
+  }, { onConflict: "source_type,source_id,transcript_variant" });
+
+  Promise.resolve(upsertResult)
     .then(({ error }: { error: { message: string } | null }) => {
       if (error) console.warn(`lineage_emit[${opts.slug}]: ${error.message}`);
     })

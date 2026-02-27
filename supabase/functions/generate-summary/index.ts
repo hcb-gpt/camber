@@ -15,7 +15,7 @@ import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
 
 const GENERATE_SUMMARY_VERSION = "v1.0.2";
 const PROMPT_VERSION = "generate-summary-v1";
-const MODEL_ID = Deno.env.get("GENERATE_SUMMARY_MODEL") || "claude-3-haiku-20240307";
+const MODEL_ID = Deno.env.get("GENERATE_SUMMARY_MODEL") || "gpt-4o-mini";
 const MAX_TOKENS = 1400;
 const MAX_TRANSCRIPT_CHARS = 12000;
 const MAX_SPAN_CHARS = 700;
@@ -340,48 +340,48 @@ const SYSTEM_PROMPT = `You are a call summarization assistant for a construction
   `- span_index_hint (integer if clear, else null)\n` +
   `Do not invent facts that are absent from transcript evidence.`;
 
-async function callAnthropic(userPrompt: string): Promise<
+async function callLlm(userPrompt: string): Promise<
   { output: ModelOutput; tokensUsed: number; parseMode: "strict_json" | "fallback_summary"; parseError: string | null }
 > {
-  const anthropicKey = Deno.env.get("ANTHROPIC_API_KEY");
-  if (!anthropicKey) {
-    throw new Error("config_missing: ANTHROPIC_API_KEY not set");
+  const openaiKey = Deno.env.get("OPENAI_API_KEY");
+  if (!openaiKey) {
+    throw new Error("config_missing: OPENAI_API_KEY not set");
   }
 
-  const resp = await fetch("https://api.anthropic.com/v1/messages", {
+  const resp = await fetch("https://api.openai.com/v1/chat/completions", {
     method: "POST",
     headers: {
       "Content-Type": "application/json",
-      "x-api-key": anthropicKey,
-      "anthropic-version": "2023-06-01",
+      "Authorization": `Bearer ${openaiKey}`,
     },
     body: JSON.stringify({
       model: MODEL_ID,
       max_tokens: MAX_TOKENS,
       temperature: 0,
-      system: SYSTEM_PROMPT,
-      messages: [{ role: "user", content: userPrompt }],
+      messages: [
+        { role: "system", content: SYSTEM_PROMPT },
+        { role: "user", content: userPrompt },
+      ],
     }),
   });
 
   if (!resp.ok) {
     const errText = await resp.text();
-    throw new Error(`anthropic_${resp.status}: ${truncate(errText, 240)}`);
+    throw new Error(`openai_${resp.status}: ${truncate(errText, 240)}`);
   }
 
   const payload = await resp.json();
-  const textBlock = (payload?.content || []).find((b: any) => b?.type === "text");
-  const rawContent = textBlock?.text || "";
+  const rawContent = payload?.choices?.[0]?.message?.content || "";
   if (!rawContent) {
-    throw new Error("anthropic_empty_response");
+    throw new Error("openai_empty_response");
   }
   const parsed = parseModelOutput(rawContent);
   const output = parsed.output;
   if (!output.human_summary) {
-    throw new Error("anthropic_invalid_output: missing_human_summary");
+    throw new Error("openai_invalid_output: missing_human_summary");
   }
 
-  const tokensUsed = (payload?.usage?.input_tokens || 0) + (payload?.usage?.output_tokens || 0);
+  const tokensUsed = (payload?.usage?.prompt_tokens || 0) + (payload?.usage?.completion_tokens || 0);
   return { output, tokensUsed, parseMode: parsed.parseMode, parseError: parsed.parseError };
 }
 
@@ -581,7 +581,7 @@ Deno.serve(async (req: Request) => {
       attributionsBySpan,
     });
 
-    const { output, tokensUsed, parseMode, parseError } = await callAnthropic(prompt);
+    const { output, tokensUsed, parseMode, parseError } = await callLlm(prompt);
     if (parseMode === "fallback_summary") {
       await logDiagnostic("MODEL_PARSE_ERROR", {
         interaction_id: interactionId,

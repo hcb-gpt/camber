@@ -6,19 +6,15 @@
 
 -- Step 0: Drop dependent view that references ee.occurred_at
 DROP VIEW IF EXISTS v_project_claims_for_review;
-
 -- Step 1: Rename drifted columns
 ALTER TABLE evidence_events RENAME COLUMN occurred_at TO occurred_at_utc;
 ALTER TABLE evidence_events RENAME COLUMN payload_hash TO integrity_hash;
-
 -- Step 2: Add missing spec columns
 ALTER TABLE evidence_events ADD COLUMN IF NOT EXISTS participants_json jsonb;
 ALTER TABLE evidence_events ADD COLUMN IF NOT EXISTS updated_at timestamptz DEFAULT now();
 ALTER TABLE evidence_events ADD COLUMN IF NOT EXISTS source_run_id text;
-
 -- Step 3: Backfill updated_at for existing rows (set to created_at)
 UPDATE evidence_events SET updated_at = created_at WHERE updated_at IS NULL;
-
 -- Step 4: Add updated_at auto-update trigger
 CREATE OR REPLACE FUNCTION update_evidence_events_updated_at()
 RETURNS TRIGGER
@@ -30,12 +26,10 @@ BEGIN
   RETURN NEW;
 END;
 $$;
-
 CREATE TRIGGER trg_evidence_events_updated_at
   BEFORE UPDATE ON evidence_events
   FOR EACH ROW
   EXECUTE FUNCTION update_evidence_events_updated_at();
-
 -- Step 5: Extend write-once trigger to integrity_hash (renamed from payload_hash)
 CREATE OR REPLACE FUNCTION enforce_payload_ref_write_once()
 RETURNS TRIGGER
@@ -54,7 +48,6 @@ BEGIN
   RETURN NEW;
 END;
 $$;
-
 -- Step 6: Recreate dependent view with renamed column
 CREATE OR REPLACE VIEW v_project_claims_for_review AS
 SELECT
@@ -113,7 +106,6 @@ FROM belief_claims bc
   LEFT JOIN corrections c ON c.belief_claim_id = bc.id
 WHERE bc.project_id IS NOT NULL
 ORDER BY p.name, bc.event_at_utc DESC NULLS LAST, bc.created_at DESC;
-
 -- Step 7: Update comments
 COMMENT ON COLUMN evidence_events.occurred_at_utc IS 'When the evidence event occurred (canon v0.3.6: occurred_at_utc)';
 COMMENT ON COLUMN evidence_events.integrity_hash IS 'WRITE-ONCE: Content hash for integrity verification (canon v0.3.6: integrity_hash). Cannot be mutated once set.';

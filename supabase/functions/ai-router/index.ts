@@ -143,12 +143,12 @@
  */
 import "jsr:@supabase/functions-js/edge-runtime.d.ts";
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
-import Anthropic from "npm:@anthropic-ai/sdk@0.39.0";
 import { evaluateJunkCallPrefilter } from "../_shared/junk_call_prefilter.ts";
 import { parseLlmJson } from "../_shared/llm_json.ts";
 import { applyCommonAliasCorroborationGuardrail, isCommonWordAlias } from "./alias_guardrails.ts";
 import { applyBethanyRoadWinshipGuardrail } from "./bethany_winship_guardrail.ts";
 import { applyBizDevCommitmentGate } from "./bizdev_guardrails.ts";
+import { evaluateClientOverride } from "./client_override_gate.ts";
 import { evaluateHomeownerOverride } from "./homeowner_override_gate.ts";
 import { applyNameContentGuardrail } from "./name_content_guardrail.ts";
 import {
@@ -163,7 +163,7 @@ import {
 
 const PROMPT_VERSION_BASE = "v1.13.0";
 const FUNCTION_VERSION = "v1.19.0";
-const MODEL_ID = Deno.env.get("AI_ROUTER_MODEL") || "claude-3-haiku-20240307";
+const MODEL_ID = Deno.env.get("AI_ROUTER_MODEL") || "gpt-4o-mini";
 const MAX_TOKENS = 1024;
 const WORLD_MODEL_FACTS_ENABLED = parseBoolEnv(Deno.env.get("WORLD_MODEL_FACTS_ENABLED"), false);
 const WORLD_MODEL_FACTS_MAX_PER_PROJECT = Math.max(
@@ -1082,6 +1082,9 @@ async function upsertReviewQueue(
         span_id: payload.span_id,
         interaction_id: payload.interaction_id,
         status: "pending",
+        // SSOT routing dimension used by triage surfaces (v_needs_triage).
+        // Without this, DB guardrails can reject inserts and items become unroutable.
+        module: "attribution",
         reason_codes: payload.reasons,
         reasons: payload.reasons,
         context_payload: payload.context_payload,
@@ -1534,6 +1537,14 @@ Deno.serve(async (req: Request) => {
   const homeownerOverrideProjectId = homeownerOverrideEvaluation.deterministic_project_id || "";
   const homeownerOverrideSkipReason = homeownerOverrideEvaluation.skip_reason;
 
+  const clientOverrideEvaluation = evaluateClientOverride(
+    context_package.meta,
+    (context_package.candidates || []).map((candidate) => candidate.project_id),
+  );
+  const clientOverrideStrongAnchor = clientOverrideEvaluation.strong_anchor_active;
+  const clientOverrideProjectId = clientOverrideEvaluation.deterministic_project_id || "";
+  const clientOverrideSkipReason = clientOverrideEvaluation.skip_reason;
+
   const db = createClient(
     Deno.env.get("SUPABASE_URL")!,
     Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!,
@@ -1561,6 +1572,8 @@ Deno.serve(async (req: Request) => {
   let transcriptControlCharsSanitized = 0;
   let homeownerDeterministicGateApplied = false;
   let homeownerDeterministicFallbackApplied = false;
+  let clientDeterministicGateApplied = false;
+  let clientDeterministicAssignApplied = false;
   let junkCallFiltered = false;
   let junkCallFilterReasonCodes: string[] = [];
   let junkCallFilterSignalSummary: string[] = [];
@@ -1589,30 +1602,45 @@ Deno.serve(async (req: Request) => {
     : [];
 
   try {
-    const anthropic = new Anthropic({
-      apiKey: Deno.env.get("ANTHROPIC_API_KEY")!,
-    });
+    const openaiKey = Deno.env.get("OPENAI_API_KEY");
+    if (!openaiKey) {
+      throw new Error("config_missing: OPENAI_API_KEY not set");
+    }
 
     const runInference = async (contextPackageForPrompt: ContextPackage) => {
       const inferenceStart = Date.now();
-      const response = await anthropic.messages.create({
-        model: MODEL_ID,
-        max_tokens: MAX_TOKENS,
-        messages: [
-          {
-            role: "user",
-            content: buildUserPrompt(contextPackageForPrompt, {
-              worldModelFactsEnabled: WORLD_MODEL_FACTS_ENABLED,
-              projectFacts: projectFactsForPrompt,
-            }),
-          },
-        ],
-        system: buildSystemPrompt(WORLD_MODEL_FACTS_ENABLED),
+      const resp = await fetch("https://api.openai.com/v1/chat/completions", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          "Authorization": `Bearer ${openaiKey}`,
+        },
+        body: JSON.stringify({
+          model: MODEL_ID,
+          max_tokens: MAX_TOKENS,
+          messages: [
+            {
+              role: "system",
+              content: buildSystemPrompt(WORLD_MODEL_FACTS_ENABLED),
+            },
+            {
+              role: "user",
+              content: buildUserPrompt(contextPackageForPrompt, {
+                worldModelFactsEnabled: WORLD_MODEL_FACTS_ENABLED,
+                projectFacts: projectFactsForPrompt,
+              }),
+            },
+          ],
+        }),
       });
+      if (!resp.ok) {
+        const errText = await resp.text();
+        throw new Error(`openai_${resp.status}: ${errText.slice(0, 240)}`);
+      }
+      const response = await resp.json();
       const inferenceElapsedMs = Date.now() - inferenceStart;
-      const tokensUsed = (response.usage?.input_tokens || 0) + (response.usage?.output_tokens || 0);
-      const textBlock = response.content.find((b: any) => b.type === "text");
-      const responseText = textBlock?.type === "text" ? textBlock.text : "";
+      const tokensUsed = (response.usage?.prompt_tokens || 0) + (response.usage?.completion_tokens || 0);
+      const responseText = response.choices?.[0]?.message?.content || "";
       const parsed = parseLlmJson<any>(responseText).value;
 
       return {
@@ -1893,6 +1921,38 @@ Deno.serve(async (req: Request) => {
       console.log("[ai-router] Homeowner deterministic gate skipped: multi-project span detected");
     }
 
+    // Client deterministic override gate (same pattern as homeowner)
+    // Fires only if homeowner gate did NOT already apply
+    if (
+      clientOverrideStrongAnchor && clientOverrideProjectId.length > 0 &&
+      !homeownerDeterministicGateApplied
+    ) {
+      const shouldForceClientAssign = decision !== "assign" ||
+        project_id !== clientOverrideProjectId ||
+        confidence < THRESHOLD_AUTO_ASSIGN;
+
+      if (shouldForceClientAssign) {
+        const previousDecision = decision;
+        const previousProject = project_id;
+        clientDeterministicGateApplied = true;
+        clientDeterministicAssignApplied = true;
+        decision = "assign";
+        project_id = clientOverrideProjectId;
+        confidence = Math.max(confidence, THRESHOLD_AUTO_ASSIGN, 0.92);
+        reasoning =
+          `${reasoning} deterministic_client_override_gate: forced assign to client project ${clientOverrideProjectId} (prev_decision=${previousDecision}, prev_project=${
+            previousProject || "null"
+          }).`;
+        console.log(
+          `[ai-router] Deterministic client gate forced assignment: project=${clientOverrideProjectId} prev_decision=${previousDecision} prev_project=${
+            previousProject || "null"
+          }`,
+        );
+      }
+    } else if (clientOverrideSkipReason === "multi_project_span") {
+      console.log("[ai-router] Client deterministic gate skipped: multi-project span detected");
+    }
+
     // v1.17.1: Weak-review-to-none — downgrade very-weak reviews (conf < 0.30, no crossref signal)
     // to "none" so they don't create false triage work in the review queue.
     // Runs AFTER all guardrails and promotions; only fires on surviving "review" decisions.
@@ -1939,6 +1999,20 @@ Deno.serve(async (req: Request) => {
         reasoning: `deterministic_homeowner_fallback_after_model_error: ${errorText}`,
         anchors: [],
       };
+    } else if (clientOverrideStrongAnchor && clientOverrideProjectId.length > 0) {
+      clientDeterministicAssignApplied = true;
+      model_error = false;
+      result = {
+        span_id,
+        project_id: clientOverrideProjectId,
+        confidence: 0.92,
+        decision: "assign",
+        reasoning: `deterministic_client_fallback_after_model_error: ${errorText}`,
+        anchors: [],
+      };
+      console.log(
+        `[ai-router] Client deterministic fallback after model error: project=${clientOverrideProjectId}`,
+      );
     } else {
       model_error = true;
       result = {
@@ -2110,12 +2184,14 @@ Deno.serve(async (req: Request) => {
       const spanTranscript = withSanitizedTranscript(context_package, "default").context.span?.transcript_text || "";
       const { valid: hasValidAnchor } = validateAnchorQuotes(result.anchors, spanTranscript);
       const allowDeterministicHomeownerAssign = homeownerDeterministicAssignApplied && homeownerOverrideStrongAnchor;
+      const allowDeterministicClientAssign = clientDeterministicAssignApplied && clientOverrideStrongAnchor;
       const hasStoplineProvenanceForApply = stoplineTranscriptAnchorCount > 0 || stoplineDocProvenanceCount > 0;
 
       if (
         result.decision === "assign" &&
         result.confidence >= THRESHOLD_AUTO_ASSIGN &&
-        ((hasValidAnchor && hasStoplineProvenanceForApply) || allowDeterministicHomeownerAssign)
+        ((hasValidAnchor && hasStoplineProvenanceForApply) || allowDeterministicHomeownerAssign ||
+          allowDeterministicClientAssign)
       ) {
         applied = true;
         applied_project_id = result.project_id;
@@ -2145,10 +2221,12 @@ Deno.serve(async (req: Request) => {
       ? "homeowner_deterministic_fallback"
       : homeownerDeterministicGateApplied
       ? "homeowner_deterministic_override"
+      : clientDeterministicAssignApplied
+      ? "client_deterministic_override"
       : deriveAttributionSource(result.anchors, model_error);
     const evidence_tier = junkCallFiltered
       ? 3
-      : homeownerDeterministicAssignApplied
+      : (homeownerDeterministicAssignApplied || clientDeterministicAssignApplied)
       ? 1
       : deriveEvidenceTier(result.anchors, result.confidence, model_error);
     const candidateSnapshot = buildTopCandidateSnapshot({
@@ -2219,12 +2297,15 @@ Deno.serve(async (req: Request) => {
     const interaction_id = context_package.meta?.interaction_id;
     const quoteVerified = stoplineTranscriptAnchorCount > 0;
     const quoteRequirementSatisfied = quoteVerified || stoplineDocProvenanceCount > 0 ||
-      homeownerDeterministicAssignApplied;
+      homeownerDeterministicAssignApplied || clientDeterministicAssignApplied;
     const strongAnchorPresent = hasStrongAnchor(result.anchors);
     const effectiveStrongAnchor = strongAnchorPresent || homeownerOverrideStrongAnchor ||
-      homeownerDeterministicAssignApplied || stoplineDocProvenanceCount > 0;
-    const bizdevGateEffective = bizdev_without_commitment && !homeownerDeterministicAssignApplied;
-    const bizdevSuppressedByHomeownerDeterministic = bizdev_without_commitment && homeownerDeterministicAssignApplied;
+      homeownerDeterministicAssignApplied || clientOverrideStrongAnchor || clientDeterministicAssignApplied ||
+      stoplineDocProvenanceCount > 0;
+    const bizdevGateEffective = bizdev_without_commitment && !homeownerDeterministicAssignApplied &&
+      !clientDeterministicAssignApplied;
+    const bizdevSuppressedByHomeownerDeterministic = bizdev_without_commitment &&
+      (homeownerDeterministicAssignApplied || clientDeterministicAssignApplied);
 
     const needsReviewQueue = !junkCallFiltered &&
       (
@@ -2234,7 +2315,7 @@ Deno.serve(async (req: Request) => {
         !effectiveStrongAnchor ||
         common_alias_unconfirmed ||
         bizdevGateEffective ||
-        (model_error && !homeownerDeterministicAssignApplied)
+        (model_error && !homeownerDeterministicAssignApplied && !clientDeterministicAssignApplied)
       );
 
     if (needsReviewQueue) {
@@ -2242,7 +2323,7 @@ Deno.serve(async (req: Request) => {
         modelReasons: null,
         quoteVerified: quoteRequirementSatisfied,
         strongAnchor: effectiveStrongAnchor,
-        modelError: model_error && !homeownerDeterministicAssignApplied,
+        modelError: model_error && !homeownerDeterministicAssignApplied && !clientDeterministicAssignApplied,
         ambiguousContact: (context_package.contact?.fanout_class === "floater" ||
           context_package.contact?.fanout_class === "drifter") || (context_package.contact?.floater_flag === true),
         geoOnly: !effectiveStrongAnchor && result.anchors.some((a) => a.match_type === "city_or_location"),
@@ -2305,6 +2386,14 @@ Deno.serve(async (req: Request) => {
           skip_reason: homeownerOverrideSkipReason,
           deterministic_gate_applied: homeownerDeterministicGateApplied,
           deterministic_fallback_applied: homeownerDeterministicFallbackApplied,
+        },
+        client_override: {
+          active: clientOverrideStrongAnchor,
+          project_id: context_package.meta?.client_override_project_id || null,
+          conflict_project_id: context_package.meta?.client_override_conflict_project_id || null,
+          conflict_term: context_package.meta?.client_override_conflict_term || null,
+          skip_reason: clientOverrideSkipReason,
+          deterministic_gate_applied: clientDeterministicGateApplied,
         },
         homeowner_deterministic_gate: homeownerDeterministicGateApplied,
         homeowner_deterministic_fallback: homeownerDeterministicFallbackApplied,
@@ -2440,6 +2529,9 @@ Deno.serve(async (req: Request) => {
         homeowner_deterministic_gate_applied: homeownerDeterministicGateApplied,
         homeowner_deterministic_fallback_applied: homeownerDeterministicFallbackApplied,
         homeowner_override_skip_reason: homeownerOverrideSkipReason,
+        client_deterministic_gate_applied: clientDeterministicGateApplied,
+        client_deterministic_assign_applied: clientDeterministicAssignApplied,
+        client_override_skip_reason: clientOverrideSkipReason,
         ...(WORLD_MODEL_FACTS_ENABLED
           ? {
             world_model: {
@@ -2468,8 +2560,10 @@ Deno.serve(async (req: Request) => {
           evidence_tags: bizdev_evidence_tags,
           commitment_to_start: bizdev_commitment_to_start,
           commitment_tags: bizdev_commitment_tags,
-          gate_active: bizdev_without_commitment && !homeownerDeterministicAssignApplied,
-          gate_suppressed_by_homeowner_override: bizdev_without_commitment && homeownerDeterministicAssignApplied,
+          gate_active: bizdev_without_commitment && !homeownerDeterministicAssignApplied &&
+            !clientDeterministicAssignApplied,
+          gate_suppressed_by_homeowner_override: bizdev_without_commitment &&
+            (homeownerDeterministicAssignApplied || clientDeterministicAssignApplied),
         },
         stopline_no_unanchored_assignments: {
           transcript_anchor_count: stoplineTranscriptAnchorCount,

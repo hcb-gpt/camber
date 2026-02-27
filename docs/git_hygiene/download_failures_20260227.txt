@@ -1,0 +1,12 @@
+dlq-enqueue
+eval-ai-router
+financial-receipt-ingest
+review-triage
+sms-openphone-sync
+sync-google-contacts
+test-tma-fetch
+transcribe-assemblyai
+transcribe-audio
+transcribe-claude
+transcribe-whisper
+zapier-sms-ingest
