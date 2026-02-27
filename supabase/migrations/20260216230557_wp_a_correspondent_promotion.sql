@@ -9,7 +9,6 @@
 -- Applied: 2026-02-16
 
 BEGIN;
-
 DO $$
 DECLARE
   rec RECORD;
@@ -291,5 +290,4 @@ BEGIN
   RAISE NOTICE 'Pass2: promoted=% created=% skipped=%', p2_promoted, p2_created, p2_skipped;
   RAISE NOTICE 'TOTAL: p1_promoted=% p2_promoted=% contacts_created=%', p1_promoted, p2_promoted, p1_created + p2_created;
 END $$;
-
 COMMIT;

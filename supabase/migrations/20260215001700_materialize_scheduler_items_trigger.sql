@@ -85,7 +85,6 @@ BEGIN
   RETURN NEW;
 END;
 $$;
-
 -- Create the trigger
 CREATE TRIGGER trg_materialize_scheduler_items
   AFTER INSERT OR UPDATE OF ai_scheduler_json
@@ -93,7 +92,6 @@ CREATE TRIGGER trg_materialize_scheduler_items
   FOR EACH ROW
   WHEN (NEW.ai_scheduler_json IS NOT NULL)
   EXECUTE FUNCTION public.materialize_scheduler_items();
-
 COMMENT ON FUNCTION public.materialize_scheduler_items() IS
   'Materializes scheduler items from interactions.ai_scheduler_json into the scheduler_items table. '
   'Fires after generate-summary writes ai_scheduler_json. Uses item_hash for idempotency.';

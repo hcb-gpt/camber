@@ -60,7 +60,5 @@ BEGIN
   ORDER BY m.score DESC, m.alias;
 END;
 $$;
-
 COMMENT ON FUNCTION public.find_fuzzy_alias_matches(TEXT, FLOAT, INT) IS
 'Find project aliases matching a search term using deterministic strategies only (exact, prefix, pg_trgm, levenshtein).\n\nPhonetic matching (soundex/dmetaphone) is intentionally disabled due to common-word collision risk.';
-

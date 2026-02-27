@@ -2,7 +2,6 @@
 -- Minimal, provenance-aware, time-stamped facts to support AS_OF vs POST_HOC retrieval.
 
 begin;
-
 create table if not exists public.project_facts (
   id uuid primary key default gen_random_uuid(),
 
@@ -38,39 +37,26 @@ create table if not exists public.project_facts (
     )
   )
 );
-
 create index if not exists project_facts_project_asof_idx
   on public.project_facts (project_id, as_of_at desc);
-
 create index if not exists project_facts_asof_idx
   on public.project_facts (as_of_at desc);
-
 create index if not exists project_facts_observed_idx
   on public.project_facts (observed_at desc);
-
 create index if not exists project_facts_kind_idx
   on public.project_facts (fact_kind);
-
 create index if not exists project_facts_interaction_idx
   on public.project_facts (interaction_id);
-
 create index if not exists project_facts_evidence_event_idx
   on public.project_facts (evidence_event_id);
-
 create index if not exists project_facts_span_idx
   on public.project_facts (source_span_id);
-
 comment on table public.project_facts is
   'Time-sync evidence layer (v0): provenance-aware project facts with as_of_at (effective time) and observed_at (recorded time).';
-
 comment on column public.project_facts.as_of_at is
   'When the fact is true/effective. Retrieval for AS_OF uses as_of_at <= t_call.';
-
 comment on column public.project_facts.observed_at is
   'When the fact was recorded/observed (may be after as_of_at).';
-
 comment on column public.project_facts.source_span_id is
   'Optional provenance pointer to a conversation span row (character offsets live in source_char_start/end).';
-
 commit;
-

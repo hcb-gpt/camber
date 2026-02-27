@@ -20,3 +20,4 @@ order by si.due_at_utc;
 
 comment on view public.v_overdue_tasks is
   'Pending scheduler items with due_at_utc in the past for overdue task monitoring.';
+;

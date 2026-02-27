@@ -58,11 +58,9 @@ BEGIN
   LIMIT result_limit;
 END;
 $function$;
-
 GRANT EXECUTE ON FUNCTION public.xref_search_journal_claims(
   extensions.vector(1536), uuid, text, integer, double precision
 ) TO service_role;
-
 COMMENT ON FUNCTION public.xref_search_journal_claims IS
   'Semantic vector search over journal_claims. Returns nearest claims by cosine distance. '
   'Accepts pre-computed query embedding (1536d). Optional scope by contact_id or phone. '
