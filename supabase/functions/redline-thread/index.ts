@@ -1,10 +1,11 @@
 import "jsr:@supabase/functions-js/edge-runtime.d.ts";
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
 
-const FUNCTION_VERSION = "redline-thread_v2.2.0";
+const FUNCTION_VERSION = "redline-thread_v2.5.0";
 const OWNER_SMS_USER_IDS = ["+17066889158", "usr_4PCSTDQ8N161KAC4GG7AF9CR94"];
 const OUTBOUND_INFERENCE_WINDOW_MS = 30 * 60 * 1000;
 const OUTBOUND_INFERENCE_MAX_GAP_MS = 60 * 1000;
+const IN_QUERY_BATCH_SIZE = 200;
 
 function corsHeaders(): Record<string, string> {
   return {
@@ -29,6 +30,30 @@ function groupBy<T>(arr: T[], keyFn: (item: T) => string): Map<string, T[]> {
     map.get(key)!.push(item);
   }
   return map;
+}
+
+async function batchIn<T>(
+  values: string[],
+  fetchChunk: (chunk: string[]) => Promise<{ data: T[] | null; error: any }>,
+): Promise<{ data: T[]; error: any | null }> {
+  const uniqueValues = [...new Set(values.filter((value) => value.length > 0))];
+  if (uniqueValues.length === 0) {
+    return { data: [], error: null };
+  }
+
+  const merged: T[] = [];
+  for (let start = 0; start < uniqueValues.length; start += IN_QUERY_BATCH_SIZE) {
+    const chunk = uniqueValues.slice(start, start + IN_QUERY_BATCH_SIZE);
+    const { data, error } = await fetchChunk(chunk);
+    if (error) {
+      return { data: [], error };
+    }
+    if (data && data.length > 0) {
+      merged.push(...data);
+    }
+  }
+
+  return { data: merged, error: null };
 }
 
 // deduplicate spans by transcript content (>80% overlap = dupe)
@@ -83,6 +108,31 @@ function parseEventMs(value: unknown): number | null {
   return Number.isFinite(parsed) ? parsed : null;
 }
 
+function isTruthy(value: string | null): boolean {
+  if (!value) return false;
+  const normalized = value.trim().toLowerCase();
+  return normalized === "1" || normalized === "true" || normalized === "yes" || normalized === "y";
+}
+
+function normalizePhoneDigits(value: unknown): string {
+  const digits = String(value || "").replace(/\D/g, "");
+  if (!digits) return "";
+  return digits.length > 10 ? digits.slice(-10) : digits;
+}
+
+function deriveSmsInteractionKeys(row: any, fallbackPhone: string | null): string[] {
+  const sentAtMs = parseEventMs(row?.sent_at);
+  if (sentAtMs === null) return [];
+  const sentAtSeconds = Math.floor(sentAtMs / 1000);
+  const phoneDigits = normalizePhoneDigits(row?.contact_phone || fallbackPhone || "");
+  const keys: string[] = [];
+  if (phoneDigits) {
+    keys.push(`sms_thread_${phoneDigits}_${sentAtSeconds}`);
+  }
+  keys.push(`sms_thread__${sentAtSeconds}`);
+  return keys;
+}
+
 function isLikelyOwnerOutboundCandidate(row: any): boolean {
   if (String(row?.direction || "").toLowerCase() !== "outbound") {
     return false;
@@ -131,7 +181,7 @@ async function inferMissingOutboundSms(
 
   const { data, error } = await db
     .from("sms_messages")
-    .select("id, sent_at, content, direction, contact_name, sender_user_id")
+    .select("id, sent_at, content, direction, contact_name, contact_phone, sender_user_id")
     .eq("direction", "outbound")
     .eq("contact_phone", contactPhone)
     .in("sender_user_id", OWNER_SMS_USER_IDS)
@@ -229,6 +279,56 @@ async function handleContacts(db: any, t0: number): Promise<Response> {
   return json({ ok: true, contacts, function_version: FUNCTION_VERSION, ms: Date.now() - t0 });
 }
 
+// top candidates endpoint
+async function handleTopCandidates(db: any, url: URL, t0: number): Promise<Response> {
+  const rawLimit = parseInt(url.searchParams.get("limit") || "50", 10);
+  const limit = Math.min(Math.max(Number.isNaN(rawLimit) ? 50 : rawLimit, 1), 500);
+  const shouldRefresh = isTruthy(url.searchParams.get("refresh"));
+
+  let refreshedAt: string | null = null;
+  if (shouldRefresh) {
+    const { data: refreshData, error: refreshErr } = await db.rpc("refresh_redline_top_candidates");
+    if (refreshErr) {
+      return json({ ok: false, error_code: "top_candidates_refresh_failed", error: refreshErr.message }, 500);
+    }
+    refreshedAt = refreshData ? String(refreshData) : new Date().toISOString();
+  }
+
+  const { data, error } = await db
+    .from("redline_top_candidates")
+    .select(
+      "contact_id, contact_name, contact_phone, pending_review_count, total_interaction_count, last_activity, oldest_pending_review",
+    )
+    .order("pending_review_count", { ascending: false })
+    .order("oldest_pending_review", { ascending: true, nullsFirst: false })
+    .order("last_activity", { ascending: false, nullsFirst: false })
+    .range(0, limit - 1);
+
+  if (error) {
+    return json({ ok: false, error_code: "top_candidates_query_failed", error: error.message }, 500);
+  }
+
+  const candidates = (data || []).map((row: any) => ({
+    contact_id: row.contact_id,
+    contact_name: row.contact_name,
+    contact_phone: row.contact_phone,
+    pending_review_count: Number(row.pending_review_count ?? 0),
+    total_interaction_count: Number(row.total_interaction_count ?? 0),
+    last_activity: row.last_activity || null,
+    oldest_pending_review: row.oldest_pending_review || null,
+  }));
+
+  return json({
+    ok: true,
+    candidates,
+    count: candidates.length,
+    refreshed: shouldRefresh,
+    refreshed_at: refreshedAt,
+    function_version: FUNCTION_VERSION,
+    ms: Date.now() - t0,
+  });
+}
+
 // thread endpoint
 async function handleThread(
   db: any,
@@ -256,6 +356,7 @@ async function handleThread(
       .from("interactions")
       .select("id, interaction_id, event_at_utc, human_summary, contact_name, is_shadow")
       .eq("contact_id", contactId)
+      .eq("channel", "call")
       .or("is_shadow.is.false,is_shadow.is.null")
       .not("interaction_id", "like", "cll_SHADOW_%")
       .not("event_at_utc", "is", null)
@@ -278,7 +379,7 @@ async function handleThread(
     const smsTo = smsFrom + queryPageSize - 1;
     const { data: page, error: smsErr } = await db
       .from("sms_messages")
-      .select("id, sent_at, content, direction, contact_name, sender_user_id")
+      .select("id, sent_at, content, direction, contact_name, contact_phone, sender_user_id")
       .eq("contact_phone", contact.phone)
       .order("sent_at", { ascending: false })
       .range(smsFrom, smsTo);
@@ -379,6 +480,47 @@ async function handleThread(
   }
   const pagedSmsMessages = smsMessages.filter((s: any) => pagedSmsIds.has(s.id));
 
+  const pendingSmsReviewByInteractionId = new Map<string, any>();
+  const pendingSmsReviewByMessageId = new Map<string, any>();
+  const smsInteractionKeys = [
+    ...new Set(
+      pagedSmsMessages.flatMap((sms: any) => deriveSmsInteractionKeys(sms, contact.phone)),
+    ),
+  ];
+
+  if (smsInteractionKeys.length > 0) {
+    const { data: pendingSmsReviewRows, error: pendingSmsReviewErr } = await db
+      .from("review_queue")
+      .select("id, interaction_id, created_at")
+      .eq("status", "pending")
+      .in("interaction_id", smsInteractionKeys)
+      .order("created_at", { ascending: false });
+
+    if (pendingSmsReviewErr) {
+      return json(
+        { ok: false, error_code: "pending_sms_review_query_failed", error: pendingSmsReviewErr.message },
+        500,
+      );
+    }
+
+    for (const row of pendingSmsReviewRows || []) {
+      const interactionId = String(row?.interaction_id || "");
+      if (!interactionId) continue;
+      if (!pendingSmsReviewByInteractionId.has(interactionId)) {
+        pendingSmsReviewByInteractionId.set(interactionId, row);
+      }
+    }
+
+    for (const sms of pagedSmsMessages) {
+      const matchingReview = deriveSmsInteractionKeys(sms, contact.phone)
+        .map((key) => pendingSmsReviewByInteractionId.get(key))
+        .find((value) => !!value);
+      if (matchingReview) {
+        pendingSmsReviewByMessageId.set(String(sms.id), matchingReview);
+      }
+    }
+  }
+
   let callsRaw: any[] = [];
   if (interactionIds.length > 0) {
     const { data, error } = await db
@@ -397,20 +539,75 @@ async function handleThread(
 
   let spans: any[] = [];
   if (interactionIds.length > 0) {
-    const { data, error } = await db
-      .from("conversation_spans")
-      .select("id, interaction_id, span_index, transcript_segment, word_count")
-      .in("interaction_id", interactionIds)
-      .eq("is_superseded", false)
-      .order("span_index", { ascending: true });
+    const { data, error } = await batchIn<any>(
+      interactionIds,
+      (chunk: string[]) =>
+        db
+          .from("conversation_spans")
+          .select("id, interaction_id, span_index, transcript_segment, word_count")
+          .in("interaction_id", chunk)
+          .eq("is_superseded", false)
+          .order("span_index", { ascending: true }),
+    );
 
     if (error) {
       return json({ ok: false, error_code: "spans_query_failed", error: error.message }, 500);
     }
-    spans = data || [];
+    spans = (data || []).sort((a: any, b: any) => {
+      const interactionCmp = String(a?.interaction_id || "").localeCompare(String(b?.interaction_id || ""));
+      if (interactionCmp !== 0) return interactionCmp;
+      return Number(a?.span_index || 0) - Number(b?.span_index || 0);
+    });
   }
 
   const spansPerInteraction = groupBy(spans || [], (s: any) => s.interaction_id);
+  const spanIds = (spans || [])
+    .map((span: any) => String(span.id || ""))
+    .filter((id: string) => id.length > 0);
+
+  let pendingReviewRows: any[] = [];
+  if (spanIds.length > 0) {
+    const { data, error } = await batchIn<any>(
+      spanIds,
+      (chunk: string[]) =>
+        db
+          .from("review_queue")
+          .select("id, span_id, interaction_id, created_at")
+          .eq("status", "pending")
+          .in("span_id", chunk)
+          .order("created_at", { ascending: false }),
+    );
+
+    if (error) {
+      return json({ ok: false, error_code: "pending_review_query_failed", error: error.message }, 500);
+    }
+    pendingReviewRows = (data || []).sort((a: any, b: any) => {
+      const bTs = Date.parse(String(b?.created_at || "")) || 0;
+      const aTs = Date.parse(String(a?.created_at || "")) || 0;
+      if (bTs !== aTs) return bTs - aTs;
+      return String(a?.id || "").localeCompare(String(b?.id || ""));
+    });
+  }
+
+  const pendingReviewBySpanId = new Map<string, any>();
+  for (const row of pendingReviewRows) {
+    const spanId = String(row?.span_id || "");
+    if (!spanId) continue;
+    if (!pendingReviewBySpanId.has(spanId)) {
+      pendingReviewBySpanId.set(spanId, row);
+    }
+  }
+
+  const pendingCountByInteraction = new Map<string, number>();
+  for (const row of pendingReviewRows) {
+    const rawInteraction = String(row?.interaction_id || "");
+    if (!rawInteraction) continue;
+    const interactionKey = interactionAliasToCanonical.get(rawInteraction) || rawInteraction;
+    pendingCountByInteraction.set(
+      interactionKey,
+      (pendingCountByInteraction.get(interactionKey) || 0) + 1,
+    );
+  }
 
   let callClaims: any[] = [];
   if (interactionIds.length > 0) {
@@ -422,10 +619,14 @@ async function handleThread(
         ]).filter((value: string) => value.length > 0),
       ),
     ];
-    const { data: claimData, error: claimsErr } = await db
-      .from("journal_claims")
-      .select("id, call_id, source_span_id, claim_type, claim_text, speaker_label")
-      .in("call_id", claimCallKeys);
+    const { data: claimData, error: claimsErr } = await batchIn<any>(
+      claimCallKeys,
+      (chunk: string[]) =>
+        db
+          .from("journal_claims")
+          .select("id, call_id, source_span_id, claim_type, claim_text, speaker_label")
+          .in("call_id", chunk),
+    );
 
     if (claimsErr) {
       return json({ ok: false, error_code: "claims_query_failed", error: claimsErr.message }, 500);
@@ -447,10 +648,14 @@ async function handleThread(
 
   let grades: any[] = [];
   if (allClaimIds.length > 0) {
-    const { data: gradeData, error: gradesErr } = await db
-      .from("claim_grades")
-      .select("claim_id, grade, correction_text, graded_by")
-      .in("claim_id", allClaimIds);
+    const { data: gradeData, error: gradesErr } = await batchIn<any>(
+      allClaimIds,
+      (chunk: string[]) =>
+        db
+          .from("claim_grades")
+          .select("claim_id, grade, correction_text, graded_by")
+          .in("claim_id", chunk),
+    );
 
     if (gradesErr) {
       return json({ ok: false, error_code: "grades_query_failed", error: gradesErr.message }, 500);
@@ -465,6 +670,7 @@ async function handleThread(
     const rawSpans = spansPerInteraction.get(i.interaction_id) || [];
     const dedupedSpans = deduplicateSpans(rawSpans);
     const participants = extractParticipants(rawTranscript);
+    let pendingSpanCount = 0;
 
     const interactionClaims = (claimsPerCall.get(i.interaction_id) || []).map((c: any) => {
       const g = gradeMap.get(c.id);
@@ -495,6 +701,8 @@ async function handleThread(
       raw_transcript: rawTranscript,
       participants,
       spans: dedupedSpans.map((s: any, index: number) => {
+        const pendingReview = pendingReviewBySpanId.get(String(s.id));
+        if (pendingReview) pendingSpanCount += 1;
         const scopedClaims = (claimsPerSpan.get(String(s.id)) || [])
           .map(({ source_span_id: _sourceSpanId, ...claim }: any) => claim);
         const fallbackUnscopedClaims = index === 0
@@ -505,21 +713,32 @@ async function handleThread(
           span_index: s.span_index,
           transcript_segment: s.transcript_segment,
           word_count: s.word_count,
+          review_queue_id: pendingReview?.id || null,
+          needs_attribution: !!pendingReview,
           claims: [...scopedClaims, ...fallbackUnscopedClaims],
         };
       }),
+      pending_attribution_count: Math.max(
+        pendingSpanCount,
+        pendingCountByInteraction.get(i.interaction_id) || 0,
+      ),
       claims: interactionClaimPayload,
     };
   });
 
-  const smsEntries = pagedSmsMessages.map((s: any) => ({
-    type: "sms",
-    sms_id: s.id,
-    event_at: s.sent_at,
-    direction: s.direction,
-    content: s.content,
-    sender_name: s.direction === "outbound" ? "Zack" : (s.contact_name || contact.name),
-  }));
+  const smsEntries = pagedSmsMessages.map((s: any) => {
+    const pendingReview = pendingSmsReviewByMessageId.get(String(s.id));
+    return {
+      type: "sms",
+      sms_id: s.id,
+      event_at: s.sent_at,
+      direction: s.direction,
+      content: s.content,
+      sender_name: s.direction === "outbound" ? "Zack" : (s.contact_name || contact.name),
+      review_queue_id: pendingReview?.id || null,
+      needs_attribution: !!pendingReview,
+    };
+  });
 
   const thread = [...callEntries, ...smsEntries].sort(
     (a, b) => new Date(a.event_at).getTime() - new Date(b.event_at).getTime(),
@@ -1308,6 +1527,9 @@ Deno.serve(async (req: Request) => {
     }
 
     const action = url.searchParams.get("action");
+    if (action === "top_candidates") {
+      return await handleTopCandidates(db, url, t0);
+    }
     if (action === "contacts") {
       return await handleContacts(db, t0);
     }
