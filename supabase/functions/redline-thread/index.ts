@@ -38,14 +38,6 @@ function corsHeaders(): Record<string, string> {
   };
 }
 
-function noStoreHeaders(): Record<string, string> {
-  return {
-    "Cache-Control": "no-store, no-cache, must-revalidate, max-age=0",
-    "Pragma": "no-cache",
-    "Expires": "0",
-  };
-}
-
 function json(data: unknown, status = 200, extraHeaders: Record<string, string> = {}): Response {
   return new Response(JSON.stringify(data), {
     status,
