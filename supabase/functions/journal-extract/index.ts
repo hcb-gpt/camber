@@ -79,7 +79,7 @@ import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
 const FUNCTION_VERSION = "v1.3.2";
 const PROMPT_VERSION = "journal-extract-v2";
 const MAX_TOKENS = 4096;
-const DEFAULT_MODEL = "claude-3-haiku-20240307";
+const DEFAULT_MODEL = "gpt-4o-mini";
 const DEFAULT_TIMEOUT_MS = 30000;
 const MAX_TRANSCRIPT_CHARS = 8000; // Cap transcript to prevent inference timeouts
 const JOURNAL_CONSOLIDATE_TIMEOUT_MS = 120000;
@@ -377,12 +377,12 @@ async function triggerLoopClosure(
 }
 
 /**
- * Call Anthropic API for claim extraction with AbortController-backed timeout.
+ * Call OpenAI API for claim extraction with AbortController-backed timeout.
  * The AbortController ensures the HTTP request is actually cancelled on timeout,
  * not just abandoned (which would leak connections).
  */
 async function callLlm(
-  anthropicKey: string,
+  openaiKey: string,
   model: string,
   systemPrompt: string,
   userPrompt: string,
@@ -393,19 +393,20 @@ async function callLlm(
   const timeoutHandle = setTimeout(() => controller.abort(), timeoutMs);
 
   try {
-    const resp = await fetch("https://api.anthropic.com/v1/messages", {
+    const resp = await fetch("https://api.openai.com/v1/chat/completions", {
       method: "POST",
       headers: {
         "Content-Type": "application/json",
-        "x-api-key": anthropicKey,
-        "anthropic-version": "2023-06-01",
+        "Authorization": `Bearer ${openaiKey}`,
       },
       body: JSON.stringify({
         model,
         max_tokens: MAX_TOKENS,
         temperature: 0,
-        system: systemPrompt,
-        messages: [{ role: "user", content: userPrompt }],
+        messages: [
+          { role: "system", content: systemPrompt },
+          { role: "user", content: userPrompt },
+        ],
       }),
       signal: controller.signal,
     });
@@ -414,18 +415,17 @@ async function callLlm(
 
     if (!resp.ok) {
       const errText = await resp.text();
-      throw new Error(`anthropic_${resp.status}: ${errText.slice(0, 200)}`);
+      throw new Error(`openai_${resp.status}: ${errText.slice(0, 200)}`);
     }
 
     const payload = await resp.json();
-    const textBlock = (payload?.content || []).find((b: any) => b?.type === "text");
-    const rawContent = textBlock?.text || "";
-    const tokens_used = (payload?.usage?.input_tokens || 0) + (payload?.usage?.output_tokens || 0);
+    const rawContent = payload?.choices?.[0]?.message?.content || "";
+    const tokens_used = (payload?.usage?.prompt_tokens || 0) + (payload?.usage?.completion_tokens || 0);
 
     return { rawContent, tokens_used, inference_ms };
   } catch (err: any) {
     if (err.name === "AbortError" || controller.signal.aborted) {
-      throw new Error(`anthropic_extract_timeout: request aborted after ${timeoutMs}ms`);
+      throw new Error(`openai_extract_timeout: request aborted after ${timeoutMs}ms`);
     }
     throw err;
   } finally {
@@ -580,10 +580,10 @@ Deno.serve(async (req: Request) => {
     Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!,
   );
 
-  const anthropicKey = Deno.env.get("ANTHROPIC_API_KEY");
-  if (!anthropicKey) {
+  const openaiKey = Deno.env.get("OPENAI_API_KEY");
+  if (!openaiKey) {
     return new Response(
-      JSON.stringify({ ok: false, error: "missing_anthropic_key" }),
+      JSON.stringify({ ok: false, error: "missing_openai_key" }),
       { status: 500, headers: { "Content-Type": "application/json" } },
     );
   }
@@ -764,7 +764,7 @@ Deno.serve(async (req: Request) => {
     let retried = false;
 
     // ── ATTEMPT 1: Normal extraction ──────────────────────────────
-    const result1 = await callLlm(anthropicKey, model, SYSTEM_PROMPT, userPrompt, timeoutMs);
+    const result1 = await callLlm(openaiKey, model, SYSTEM_PROMPT, userPrompt, timeoutMs);
     tokens_used = result1.tokens_used;
     inference_ms = result1.inference_ms;
 
@@ -784,7 +784,7 @@ Deno.serve(async (req: Request) => {
       const retryPrompt =
         `TRANSCRIPT SEGMENT (span_id: ${span_id}, interaction: ${interaction_id}):\n"""\n${promptTranscript}\n"""\n\nExtract all project-relevant claims. Output ONLY valid JSON — no markdown, no code fences, no comments.`;
 
-      const result2 = await callLlm(anthropicKey, model, RETRY_SYSTEM_PROMPT, retryPrompt, timeoutMs);
+      const result2 = await callLlm(openaiKey, model, RETRY_SYSTEM_PROMPT, retryPrompt, timeoutMs);
       tokens_used += result2.tokens_used;
       inference_ms += result2.inference_ms;
 

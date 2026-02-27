@@ -11,12 +11,11 @@
  */
 import "jsr:@supabase/functions-js/edge-runtime.d.ts";
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
-import Anthropic from "npm:@anthropic-ai/sdk@0.39.0";
 import { authErrorResponse, requireEdgeSecret } from "../_shared/auth.ts";
 import { parseLlmJson } from "../_shared/llm_json.ts";
 
 const FUNCTION_VERSION = "v0.1.0";
-const MODEL_ID = "claude-sonnet-4-5-20250514";
+const MODEL_ID = "gpt-4o";
 const MAX_TOKENS = 1024;
 
 // Budget caps
@@ -234,9 +233,13 @@ Deno.serve(async (req: Request) => {
     Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!,
   );
 
-  const anthropic = new Anthropic({
-    apiKey: Deno.env.get("ANTHROPIC_API_KEY")!,
-  });
+  const openaiKey = Deno.env.get("OPENAI_API_KEY");
+  if (!openaiKey) {
+    return new Response(
+      JSON.stringify({ ok: false, error: "config_missing: OPENAI_API_KEY not set", version: FUNCTION_VERSION }),
+      { status: 500, headers: { "Content-Type": "application/json" } },
+    );
+  }
 
   const toolCallLog: ToolCallLog[] = [];
   let toolCallsUsed = 0;
@@ -289,18 +292,34 @@ Deno.serve(async (req: Request) => {
       { anchorVerification, alternativeCandidates },
     );
 
-    const llmResponse = await Promise.race([
-      anthropic.messages.create({
+    const llmFetchPromise = fetch("https://api.openai.com/v1/chat/completions", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        "Authorization": `Bearer ${openaiKey}`,
+      },
+      body: JSON.stringify({
         model: MODEL_ID,
         max_tokens: MAX_TOKENS,
-        system: AUDITOR_SYSTEM_PROMPT,
-        messages: [{ role: "user", content: userPrompt }],
+        messages: [
+          { role: "system", content: AUDITOR_SYSTEM_PROMPT },
+          { role: "user", content: userPrompt },
+        ],
       }),
+    }).then(async (r) => {
+      if (!r.ok) {
+        const errText = await r.text();
+        throw new Error(`openai_${r.status}: ${errText.slice(0, 240)}`);
+      }
+      return r.json();
+    });
+
+    const llmPayload = await Promise.race([
+      llmFetchPromise,
       new Promise<never>((_, reject) => setTimeout(() => reject(new Error("llm_timeout")), LLM_TIMEOUT_MS)),
     ]);
 
-    const textBlock = (llmResponse as any).content?.find((b: any) => b.type === "text");
-    const responseText = textBlock?.text || "";
+    const responseText = llmPayload?.choices?.[0]?.message?.content || "";
     const parsed = parseLlmJson<any>(responseText).value;
 
     const verdict = ["confirm", "downgrade", "escalate"].includes(parsed.verdict) ? parsed.verdict : "confirm";

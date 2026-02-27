@@ -21,11 +21,10 @@
  */
 import "jsr:@supabase/functions-js/edge-runtime.d.ts";
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
-import Anthropic from "npm:@anthropic-ai/sdk@0.39.0";
 
 const CHAIN_VERSION = "v1.0.0";
 const PROMPT_VERSION = "v1.0.0";
-const MODEL_ID = "claude-3-haiku-20240307";
+const MODEL_ID = "gpt-4o-mini";
 const MAX_TOKENS = 1024;
 
 const jsonHeaders = { "Content-Type": "application/json" };
@@ -355,37 +354,47 @@ Deno.serve(async (req: Request) => {
     };
   } else {
     try {
-      const anthropic = new Anthropic({
-        apiKey: Deno.env.get("ANTHROPIC_API_KEY")!,
-      });
+      const openaiKey = Deno.env.get("OPENAI_API_KEY");
+      if (!openaiKey) throw new Error("config_missing: OPENAI_API_KEY not set");
 
       const inferenceStart = Date.now();
 
-      const response = await anthropic.messages.create({
-        model: MODEL_ID,
-        max_tokens: MAX_TOKENS,
-        messages: [
-          {
-            role: "user",
-            content: buildUserPrompt(
-              contactPhone,
-              contactName,
-              chainDate,
-              callCount,
-              durationMinutes,
-              avgGapMinutes,
-              callDetails,
-            ),
-          },
-        ],
-        system: SYSTEM_PROMPT,
+      const resp = await fetch("https://api.openai.com/v1/chat/completions", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          "Authorization": `Bearer ${openaiKey}`,
+        },
+        body: JSON.stringify({
+          model: MODEL_ID,
+          max_tokens: MAX_TOKENS,
+          messages: [
+            { role: "system", content: SYSTEM_PROMPT },
+            {
+              role: "user",
+              content: buildUserPrompt(
+                contactPhone,
+                contactName,
+                chainDate,
+                callCount,
+                durationMinutes,
+                avgGapMinutes,
+                callDetails,
+              ),
+            },
+          ],
+        }),
       });
+      if (!resp.ok) {
+        const errText = await resp.text();
+        throw new Error(`openai_${resp.status}: ${errText.slice(0, 240)}`);
+      }
+      const payload = await resp.json();
 
       inference_ms = Date.now() - inferenceStart;
-      tokens_used = (response.usage?.input_tokens || 0) + (response.usage?.output_tokens || 0);
+      tokens_used = (payload?.usage?.prompt_tokens || 0) + (payload?.usage?.completion_tokens || 0);
 
-      const textBlock = response.content.find((b) => b.type === "text");
-      const responseText = textBlock?.type === "text" ? textBlock.text : "";
+      const responseText = payload?.choices?.[0]?.message?.content || "";
 
       let jsonStr = responseText;
       const jsonMatch = responseText.match(/\{[\s\S]*\}/);
