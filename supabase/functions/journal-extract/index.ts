@@ -591,6 +591,7 @@ Deno.serve(async (req: Request) => {
   const model = Deno.env.get("JOURNAL_EXTRACT_MODEL") || DEFAULT_MODEL;
   const timeoutMs = Number(Deno.env.get("JOURNAL_EXTRACT_TIMEOUT_MS")) || DEFAULT_TIMEOUT_MS;
   const dry_run = body.dry_run === true;
+  const skip_attribution = body.skip_attribution === true;
 
   // Hoisted so catch block can reference it for failure recording
   let run_id: string | null = null;
@@ -824,11 +825,12 @@ Deno.serve(async (req: Request) => {
 
     if (!dry_run && extraction.claims.length > 0) {
       // ── NULL PROJECT_ID GUARD ────────────────────────────────────
-      // journal_claims.project_id has NOT NULL + FK to projects(id).
-      // If span has no attribution yet, we cannot write claims — the FK
-      // would reject the insert. Return extraction results so caller
-      // knows claims were found, and can re-trigger after attribution.
-      if (!project_id) {
+      // In skip-attribution mode, project_id may be null — that's expected.
+      // journal_claims.project_id is now nullable (v2.9.0 migration) to
+      // support GT training set builds where claims are extracted without
+      // project attribution. Human grading in Redline replaces AI attribution.
+      // In normal mode, still block writes without project_id (FK safety).
+      if (!project_id && !skip_attribution) {
         skipped_no_project = true;
         console.warn(
           `[journal-extract] Skipping claim insert: span ${span_id} has no project attribution (FK constraint).`,
@@ -1070,6 +1072,7 @@ Deno.serve(async (req: Request) => {
         inference_ms,
         retried,
         dry_run,
+        skip_attribution,
         transcript_chars: transcript.length,
         truncated,
         prompt_version: PROMPT_VERSION,

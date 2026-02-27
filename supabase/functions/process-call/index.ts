@@ -1,9 +1,9 @@
 /**
- * process-call Edge Function v4.3.9
+ * process-call Edge Function v4.3.10
  * Full v3.6 pipeline in Supabase - Ported from v4.0.22 context_assembly
  *
- * @version 4.3.8
- * @date 2026-02-15
+ * @version 4.3.10
+ * @date 2026-02-27
  * @port context_assembly v4.0.22 - 6-source ranking, word boundaries, speaker stripping
  *
  * PR-12 HARDENING:
@@ -17,6 +17,12 @@
  *
  * v4.3.2 CHANGES (lineage persistence):
  * - Persist zapier_zap_id and zapier_run_id from _zapier_ingest_meta into calls_raw.
+ *
+ * v4.3.10 CHANGES (misattribution guards):
+ * - Adds OWNER_PHONES guard: suppresses otherPartyPhone when it matches shared inbox line.
+ * - Adds ADMIN_NAMES guard: suppresses contact_name when it matches known admin fallback
+ *   and otherPartyPhone is null (Beside API bug defense-in-depth).
+ * - Mirrors sms-beside-batch-ingest v1.1.0 guard pattern for calls pipeline.
  *
  * v4.3.9 CHANGES (chain-detect rewire + bounded retry):
  * - Adds non-blocking process-call -> chain-detect invocation path.
@@ -68,7 +74,7 @@ import { fireAndForget } from "../_shared/lineage.ts";
 import { normalizePhoneForLookup } from "./phone_lookup.ts";
 import { resolveCallPartyPhones } from "./phone_direction.ts";
 
-const PROCESS_CALL_VERSION = "v4.3.9"; // adds bounded timeout + retry for segment-call and chain-detect chaining
+const PROCESS_CALL_VERSION = "v4.3.10"; // adds misattribution guards (owner phone + admin name suppression)
 const GATE = { PASS: "PASS", SKIP: "SKIP", NEEDS_REVIEW: "NEEDS_REVIEW" };
 const ID_PATTERN = /^cll_[a-zA-Z0-9_]+$/;
 const SEGMENT_CALL_TIMEOUT_MS = Number(Deno.env.get("PROCESS_CALL_SEGMENT_TIMEOUT_MS") || "6000");
@@ -113,6 +119,15 @@ const ADMIN_USER_IDS: string[] = [
   // Add Supabase auth.users.id values here
   // Example: "a1b2c3d4-e5f6-7890-abcd-ef1234567890"
 ];
+
+// ============================================================
+// MISATTRIBUTION GUARDS (mirrors sms-beside-batch-ingest v1.1.0)
+// Beside API bug: ~2.6% of inbound messages return inbox admin name
+// ("Chad Barlow") with empty phone. These guards prevent false
+// attribution on calls the same way the SMS pipeline does.
+// ============================================================
+const OWNER_PHONES = new Set(["+17066889158"]); // Beside shared inbox line
+const ADMIN_NAMES = new Set(["chad barlow"]); // Beside inbox admin fallback names
 
 // ============================================================
 // V3 PORTED UTILITIES (from context_assembly v4.0.22)
@@ -551,6 +566,15 @@ Deno.serve(async (req: Request) => {
     const n = normalizedPreview;
     const partyPhones = resolveCallPartyPhones(n);
     const persistedDirection = partyPhones.direction === "unknown" ? n.direction || null : partyPhones.direction;
+
+    // Guard: Suppress otherPartyPhone if it matches a known owner/shared line
+    if (partyPhones.otherPartyPhone && OWNER_PHONES.has(partyPhones.otherPartyPhone)) {
+      warnings.push(
+        `misattribution_guard_owner_phone: otherPartyPhone=${partyPhones.otherPartyPhone} is a shared line; suppressing`,
+      );
+      partyPhones.otherPartyPhone = null;
+    }
+
     const lookupPhone = normalizePhoneForLookup(partyPhones.otherPartyPhone);
     if (partyPhones.direction === "unknown") {
       warnings.push("data_quality_missing_direction");
@@ -571,6 +595,15 @@ Deno.serve(async (req: Request) => {
         contact_name = data[0].contact_name;
         sources_used.push("lookup_contact_by_phone");
       }
+    }
+
+    // Guard: Suppress contact_name if it matches a known admin name with no phone
+    if (contact_name && !partyPhones.otherPartyPhone && ADMIN_NAMES.has(contact_name.toLowerCase())) {
+      warnings.push(
+        `misattribution_guard_admin_name: contact_name="${contact_name}" is a known admin fallback with no phone; suppressing`,
+      );
+      contact_name = null;
+      contact_id = null;
     }
 
     // ========================================
