@@ -37,7 +37,11 @@ struct ContactListView: View {
             .navigationTitle("Redline")
             .navigationBarTitleDisplayMode(.inline)
             .navigationDestination(for: Contact.self) { contact in
-                ThreadView(viewModel: threadViewModel, contact: contact)
+                ThreadView(
+                    viewModel: threadViewModel,
+                    contact: contact,
+                    orderedContacts: filteredContacts
+                )
             }
             .background(Color(white: 0.06))
             .scrollContentBackground(.hidden)

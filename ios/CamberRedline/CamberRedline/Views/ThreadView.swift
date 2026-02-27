@@ -1,4 +1,5 @@
 import SwiftUI
+import UIKit
 
 // MARK: - Display Group
 
@@ -64,6 +65,7 @@ private enum DisplayGroup: Identifiable {
 struct ThreadView: View {
     var viewModel: ThreadViewModel
     let contact: Contact
+    let orderedContacts: [Contact]
     @State private var hasScrolledToLatest = false
     @State private var didTriggerTopPagination = false
     @State private var hasUserScrolledThread = false
@@ -232,7 +234,7 @@ struct ThreadView: View {
                                     spanOverrides[span.spanId] = selectedProject
                                     guard let queueId = span.reviewQueueId else { return }
                                     guard let projectId = selectedProject.projectId else {
-                                        viewModel.error = "Project selection unavailable for this span."
+                                        viewModel.showTransientError("Project selection unavailable for this span.")
                                         return
                                     }
                                     Task {
@@ -242,6 +244,10 @@ struct ThreadView: View {
                                         )
                                         if !didResolve {
                                             spanOverrides.removeValue(forKey: span.spanId)
+                                        } else {
+                                            await MainActor.run {
+                                                triggerAssignmentHaptic()
+                                            }
                                         }
                                     }
                                 },
@@ -265,7 +271,7 @@ struct ThreadView: View {
                                         smsOverrides[id] = selectedProject
                                     }
                                     guard let projectId = selectedProject.projectId else {
-                                        viewModel.error = "Pick a project-backed option to apply attribution."
+                                        viewModel.showTransientError("Pick a project-backed option to apply attribution.")
                                         return
                                     }
                                     let queueIds = entries
@@ -283,12 +289,19 @@ struct ThreadView: View {
                                             for id in entries.map(\.messageId) {
                                                 smsOverrides.removeValue(forKey: id)
                                             }
+                                        } else {
+                                            await MainActor.run {
+                                                triggerAssignmentHaptic()
+                                            }
                                         }
                                     }
                                 },
                                 onOpenPicker: {
                                     if reviewProjectOptions.isEmpty {
-                                        viewModel.error = "Project list still loading. Pull to refresh and try again."
+                                        viewModel.showTransientError("Syncing project list…")
+                                        Task {
+                                            await viewModel.loadReviewProjectsIfNeeded()
+                                        }
                                     }
                                 },
                                 onAddNote: {
@@ -360,6 +373,7 @@ struct ThreadView: View {
                 didTriggerTopPagination = false
                 hasUserScrolledThread = false
                 lastObservedTopOffset = nil
+                viewModel.updateContactSequence(orderedContacts)
                 viewModel.currentContact = contact
                 viewModel.threadItems = []
                 // Subscribe FIRST so no Realtime events are missed during REST fetch
@@ -367,6 +381,7 @@ struct ThreadView: View {
                 await viewModel.startInteractionsSubscription(contactId: contact.contactId)
                 await viewModel.loadThread(contactId: contact.contactId)
                 await viewModel.loadReviewProjectsIfNeeded()
+                viewModel.prefetchNextContact(after: contact.contactId)
                 for _ in 0..<3 {
                     if Task.isCancelled { return }
                     withAnimation(.none) {
@@ -524,6 +539,10 @@ struct ThreadView: View {
         noteDraft = viewModel.noteText(targetType: first.type, targetId: first.id)
         activeNoteContext = ThreadNoteContext(title: title, targets: targets)
     }
+
+    private func triggerAssignmentHaptic() {
+        UIImpactFeedbackGenerator(style: .medium).impactOccurred()
+    }
 }
 
 private struct ThreadTopOffsetPreferenceKey: PreferenceKey {
@@ -609,7 +628,6 @@ private struct CallCard: View {
 
     @State private var transcriptExpanded = false
     @State private var claimsExpanded = false
-    @State private var activePendingSpan: SpanEntry?
 
     private var isInbound: Bool {
         header.direction?.lowercased() == "inbound"
@@ -643,10 +661,6 @@ private struct CallCard: View {
             $0.needsAttribution && spanOverrides[$0.spanId] != nil
         }.count
         return max(0, pending - optimisticResolved)
-    }
-
-    private var firstPendingSpan: SpanEntry? {
-        header.spans.first { $0.needsAttribution }
     }
 
     var body: some View {
@@ -689,18 +703,7 @@ private struct CallCard: View {
                     Text("\(unresolvedCount) missing attribution\(unresolvedCount == 1 ? "" : "s")")
                         .font(.caption)
                         .fontWeight(.semibold)
-                    if let firstPendingSpan, !projectOptions.isEmpty {
-                        Spacer(minLength: 8)
-                        Button("Assign") {
-                            activePendingSpan = firstPendingSpan
-                        }
-                        .font(.caption2)
-                        .fontWeight(.bold)
-                        .padding(.horizontal, 8)
-                        .padding(.vertical, 4)
-                        .background(Color.black.opacity(0.22), in: Capsule())
-                        .buttonStyle(.plain)
-                    } else if projectOptions.isEmpty {
+                    if projectOptions.isEmpty {
                         Spacer(minLength: 8)
                         Text("Loading projects…")
                             .font(.caption2)
@@ -732,8 +735,8 @@ private struct CallCard: View {
             }
 
             // --- Transcript section ---
-            if header.spans.count > 1 {
-                // Multi-span: span boxes are the transcript. Each expands to bubbles.
+            if !header.spans.isEmpty {
+                // Span boxes are the transcript. Each expands to bubbles.
                 Divider()
                     .overlay(Color(.systemGray4))
 
@@ -866,22 +869,6 @@ private struct CallCard: View {
                 .frame(width: 3)
         }
         .clipShape(RoundedRectangle(cornerRadius: 14, style: .continuous))
-        .sheet(item: $activePendingSpan) { span in
-            ProjectAssignmentSheet(
-                title: "Assign Project",
-                currentAssignment: spanOverrides[span.spanId],
-                options: projectOptions,
-                onSelect: { selected in
-                    onAssignSpanProject(span, selected)
-                },
-                onAddNote: {
-                    onAddNote(
-                        "Notes — Conversation segment",
-                        [ThreadNoteTarget(type: .span, id: span.spanId.uuidString)]
-                    )
-                }
-            )
-        }
     }
 
     // MARK: - Speaker label helpers
@@ -957,6 +944,10 @@ private struct SpanBlock: View {
         return Self.spanColors[colorIndex % Self.spanColors.count]
     }
 
+    private var opensPickerOnCardTap: Bool {
+        span.needsAttribution && selectedAssignment == nil
+    }
+
     private var parsedTurns: [SpeakerTurn] {
         guard let segment = span.transcriptSegment, !segment.isEmpty else { return [] }
         return TranscriptParser.parse(segment, contactName: contactName)
@@ -970,10 +961,22 @@ private struct SpanBlock: View {
                     .fill(color)
                     .frame(width: 8, height: 8)
                 if let displayProjectName {
-                    Text(displayProjectName)
-                        .font(.caption)
-                        .fontWeight(.semibold)
-                        .foregroundStyle(color)
+                    if span.needsAttribution {
+                        Text(displayProjectName)
+                            .font(.caption)
+                            .fontWeight(.semibold)
+                            .foregroundStyle(color)
+                    } else {
+                        Button {
+                            showProjectSheet = true
+                        } label: {
+                            Text(displayProjectName)
+                                .font(.caption)
+                                .fontWeight(.semibold)
+                                .foregroundStyle(color)
+                        }
+                        .buttonStyle(.plain)
+                    }
                 }
                 Spacer()
                 Image(systemName: isExpanded ? "chevron.up" : "chevron.down")
@@ -1016,12 +1019,13 @@ private struct SpanBlock: View {
         .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
         .contentShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
         .onTapGesture {
-            withAnimation(.easeInOut(duration: 0.2)) {
-                isExpanded.toggle()
+            if opensPickerOnCardTap {
+                showProjectSheet = true
+            } else {
+                withAnimation(.easeInOut(duration: 0.2)) {
+                    isExpanded.toggle()
+                }
             }
-        }
-        .onLongPressGesture(minimumDuration: 0.25) {
-            showProjectSheet = true
         }
         .sheet(isPresented: $showProjectSheet) {
             ProjectAssignmentSheet(
@@ -1071,12 +1075,27 @@ private struct SMSStripeGroup: View {
 
             VStack(alignment: .leading, spacing: 0) {
                 if let stripeLabel {
-                    Text(stripeLabel)
-                        .font(.caption2)
-                        .foregroundStyle(Color(.systemGray2))
-                    .padding(.horizontal, 10)
-                    .padding(.top, 6)
-                    .padding(.bottom, 4)
+                    if unresolvedCount == 0 {
+                        Button {
+                            onOpenPicker()
+                            showProjectSheet = true
+                        } label: {
+                            Text(stripeLabel)
+                                .font(.caption2)
+                                .foregroundStyle(Color(.systemGray2))
+                        }
+                        .buttonStyle(.plain)
+                        .padding(.horizontal, 10)
+                        .padding(.top, 6)
+                        .padding(.bottom, 4)
+                    } else {
+                        Text(stripeLabel)
+                            .font(.caption2)
+                            .foregroundStyle(Color(.systemGray2))
+                            .padding(.horizontal, 10)
+                            .padding(.top, 6)
+                            .padding(.bottom, 4)
+                    }
                 }
 
                 if unresolvedCount > 0 {
@@ -1094,32 +1113,18 @@ private struct SMSStripeGroup: View {
 
                 ForEach(Array(entries.enumerated()), id: \.element.id) { idx, entry in
                     SMSBubble(entry: entry, showTimestamp: true)
+                        .contentShape(Rectangle())
+                        .onTapGesture {
+                            guard entry.needsAttribution else { return }
+                            onOpenPicker()
+                            showProjectSheet = true
+                        }
                         .padding(.bottom, bubbleSpacing(at: idx))
                 }
             }
         }
         .frame(maxWidth: .infinity, alignment: .leading)
-        .overlay(alignment: .topTrailing) {
-            Button {
-                onOpenPicker()
-                showProjectSheet = true
-            } label: {
-                Image(systemName: "slider.horizontal.3")
-                    .font(.caption2)
-                    .foregroundStyle(Color(.systemGray2))
-                    .padding(.horizontal, 8)
-                    .padding(.vertical, 6)
-                    .background(Color.black.opacity(0.18), in: Capsule())
-            }
-            .buttonStyle(.plain)
-            .padding(.top, 6)
-            .padding(.trailing, 8)
-        }
         .contentShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
-        .onLongPressGesture(minimumDuration: 0.25) {
-            onOpenPicker()
-            showProjectSheet = true
-        }
         .sheet(isPresented: $showProjectSheet) {
             ProjectAssignmentSheet(
                 title: "Assign Project",
@@ -1183,6 +1188,8 @@ private struct ProjectAssignmentSheet: View {
                                             .foregroundStyle(.blue)
                                     }
                                 }
+                                .frame(minHeight: 54, alignment: .leading)
+                                .contentShape(Rectangle())
                             }
                         }
                     }

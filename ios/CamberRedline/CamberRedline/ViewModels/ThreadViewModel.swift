@@ -32,6 +32,8 @@ final class ThreadViewModel {
     var hasOlderThreadItems = false
     var error: String?
     var notesByTarget: [String: NoteEntry] = [:]
+    var reviewProjects: [ReviewProject] = []
+    var contactSequence: [Contact] = []
 
     // MARK: - Dependencies
 
@@ -50,13 +52,41 @@ final class ThreadViewModel {
     private var threadSMSUpdateTask: Task<Void, Never>?
     private var threadRealtimeReloadTask: Task<Void, Never>?
     private var threadFallbackRefreshTask: Task<Void, Never>?
-    private let threadPageSize = 50
+    private var postResolveRefreshTask: Task<Void, Never>?
+    private var projectRefreshLoopTask: Task<Void, Never>?
+    private var transientErrorTask: Task<Void, Never>?
+    private let threadPageSize = 20
     private var currentThreadOffset = 0
     private var totalThreadCount = 0
-    var reviewProjects: [ReviewProject] = []
 
     init() {
         loadPersistedNotes()
+    }
+
+    // MARK: - Shared Context / Warmup
+
+    func updateContactSequence(_ contacts: [Contact]) {
+        contactSequence = contacts
+    }
+
+    func warmProjectPickerCache() async {
+        await loadReviewProjectsIfNeeded()
+        startProjectRefreshLoopIfNeeded()
+    }
+
+    func prefetchNextContact(after contactId: UUID) {
+        guard !contactSequence.isEmpty else { return }
+        guard let currentIndex = contactSequence.firstIndex(where: { $0.contactId == contactId }) else { return }
+        let nextIndex = currentIndex + 1
+        guard nextIndex < contactSequence.count else { return }
+        let nextContact = contactSequence[nextIndex]
+        Task {
+            await service.prefetchThread(
+                contactId: nextContact.contactId,
+                limit: threadPageSize,
+                offset: 0
+            )
+        }
     }
 
     // MARK: - Load Thread
@@ -71,6 +101,7 @@ final class ThreadViewModel {
         totalThreadCount = 0
         hasOlderThreadItems = false
         await loadThreadPage(contactId: contactId, offset: 0, resetItems: true)
+        prefetchNextContact(after: contactId)
     }
 
     func loadOlderThreadPageIfNeeded() async {
@@ -327,18 +358,31 @@ final class ThreadViewModel {
     // MARK: - Attribution Resolve
 
     func loadReviewProjectsIfNeeded() async {
-        guard reviewProjects.isEmpty else { return }
+        if !reviewProjects.isEmpty {
+            refreshReviewProjectsInBackgroundIfNeeded()
+            return
+        }
+
+        let cached = bootstrapService.snapshotCachedReviewProjects()
+        if !cached.isEmpty {
+            reviewProjects = cached
+        }
+
         do {
-            let response = try await bootstrapService.fetchQueue(limit: 1)
-            reviewProjects = response.projects
+            let fetchedProjects = try await bootstrapService.fetchReviewProjects(forceRefresh: reviewProjects.isEmpty)
+            reviewProjects = fetchedProjects
             if reviewProjects.isEmpty {
-                error = "No projects available yet."
+                showTransientError("No projects available yet.")
             } else {
                 error = nil
             }
         } catch {
-            self.error = "Failed to load projects: \(error.localizedDescription)"
+            if reviewProjects.isEmpty {
+                showTransientError("Failed to load projects: \(error.localizedDescription)")
+            }
         }
+
+        refreshReviewProjectsInBackgroundIfNeeded()
     }
 
     @discardableResult
@@ -353,15 +397,12 @@ final class ThreadViewModel {
                 reviewQueueId: reviewQueueId,
                 chosenProjectId: projectId
             )
-            if reloadAfterResolve, let contactId = currentContact?.contactId {
-                await loadThread(contactId: contactId)
-            }
             if reloadAfterResolve {
-                NotificationCenter.default.post(name: .redlineAttributionDidResolve, object: nil)
+                schedulePostResolveSync()
             }
             return true
         } catch {
-            self.error = "Attribution update failed: \(error.localizedDescription)"
+            showTransientError("Attribution update failed: \(error.localizedDescription)")
             return false
         }
     }
@@ -372,16 +413,91 @@ final class ThreadViewModel {
         let uniqueQueueIds = reviewQueueIds.filter { seen.insert($0).inserted }
         guard !uniqueQueueIds.isEmpty else { return true }
 
-        for (index, queueId) in uniqueQueueIds.enumerated() {
-            let isLast = index == uniqueQueueIds.count - 1
-            let didResolve = await resolveAttribution(
-                reviewQueueId: queueId,
-                projectId: projectId,
-                reloadAfterResolve: isLast
+        do {
+            _ = try await service.resolveReviewQueueItemsBatch(
+                reviewQueueIds: uniqueQueueIds,
+                chosenProjectId: projectId
             )
-            if !didResolve { return false }
+            schedulePostResolveSync()
+            return true
+        } catch {
+            showTransientError("Attribution update failed: \(error.localizedDescription)")
+            return false
         }
-        return true
+    }
+
+    private func schedulePostResolveSync() {
+        postResolveRefreshTask?.cancel()
+        postResolveRefreshTask = Task { @MainActor [weak self] in
+            guard let self else { return }
+            do {
+                try await Task.sleep(for: .milliseconds(350))
+            } catch {
+                return
+            }
+            guard !Task.isCancelled else { return }
+            guard let contactId = self.currentContact?.contactId else { return }
+            self.service.invalidateThreadCache(for: contactId)
+            await self.loadThread(contactId: contactId)
+            NotificationCenter.default.post(name: .redlineAttributionDidResolve, object: nil)
+        }
+    }
+
+    private func refreshReviewProjectsInBackgroundIfNeeded() {
+        let cacheAge = bootstrapService.reviewProjectsCacheAge() ?? .infinity
+        guard cacheAge >= 5 * 60 else { return }
+
+        Task { @MainActor [weak self] in
+            guard let self else { return }
+            do {
+                let refreshed = try await self.bootstrapService.fetchReviewProjects(forceRefresh: true)
+                if !refreshed.isEmpty {
+                    self.reviewProjects = refreshed
+                }
+            } catch {
+                // Keep current in-memory list if refresh fails.
+            }
+        }
+    }
+
+    private func startProjectRefreshLoopIfNeeded() {
+        guard projectRefreshLoopTask == nil else { return }
+        projectRefreshLoopTask = Task { @MainActor [weak self] in
+            guard let self else { return }
+            while !Task.isCancelled {
+                do {
+                    try await Task.sleep(for: .seconds(300))
+                } catch {
+                    break
+                }
+                guard !Task.isCancelled else { break }
+                do {
+                    let refreshed = try await self.bootstrapService.fetchReviewProjects(forceRefresh: true)
+                    if !refreshed.isEmpty {
+                        self.reviewProjects = refreshed
+                    }
+                } catch {
+                    // Keep running; next refresh may succeed.
+                }
+            }
+        }
+    }
+
+    func showTransientError(_ message: String, clearAfter: Duration = .seconds(2)) {
+        error = message
+        transientErrorTask?.cancel()
+        transientErrorTask = Task { @MainActor [weak self] in
+            guard let self else { return }
+            do {
+                try await Task.sleep(for: clearAfter)
+            } catch {
+                return
+            }
+            guard !Task.isCancelled else { return }
+            if self.error == message {
+                self.error = nil
+            }
+        }
     }
 
     // MARK: - Realtime (claim_grades)

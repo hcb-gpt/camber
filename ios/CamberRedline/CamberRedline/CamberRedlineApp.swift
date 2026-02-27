@@ -45,6 +45,8 @@ struct CamberRedlineApp: App {
             .task {
                 await requestBadgePermission()
                 await contactListViewModel.loadContacts()
+                threadViewModel.updateContactSequence(contactListViewModel.contacts)
+                await threadViewModel.warmProjectPickerCache()
                 updateBadge()
                 await contactListViewModel.subscribeToNewInteractions()
                 contactListViewModel.startLiveRefresh()
@@ -53,6 +55,8 @@ struct CamberRedlineApp: App {
                 if newPhase == .active {
                     Task {
                         await contactListViewModel.loadContacts()
+                        threadViewModel.updateContactSequence(contactListViewModel.contacts)
+                        await threadViewModel.warmProjectPickerCache()
                         updateBadge()
                         await contactListViewModel.subscribeToNewInteractions()
                         if let contact = threadViewModel.currentContact {
