@@ -1,10 +1,14 @@
 /**
- * process-call Edge Function v4.3.10
+ * process-call Edge Function v4.3.12
  * Full v3.6 pipeline in Supabase - Ported from v4.0.22 context_assembly
  *
- * @version 4.3.10
+ * @version 4.3.12
  * @date 2026-02-27
  * @port context_assembly v4.0.22 - 6-source ranking, word boundaries, speaker stripping
+ *
+ * v4.3.12 CHANGES (transcript rescue):
+ * - Add payload_text as transcript fallback in m1() normalization.
+ *   Rescues plain-text transcripts from zapier-call-ingest parse fallback path.
  *
  * PR-12 HARDENING:
  * - JWT + edge-secret gate
@@ -74,7 +78,7 @@ import { fireAndForget } from "../_shared/lineage.ts";
 import { normalizePhoneForLookup } from "./phone_lookup.ts";
 import { resolveCallPartyPhones } from "./phone_direction.ts";
 
-const PROCESS_CALL_VERSION = "v4.3.10"; // adds misattribution guards (owner phone + admin name suppression)
+const PROCESS_CALL_VERSION = "v4.3.12"; // adds payload_text transcript fallback
 const GATE = { PASS: "PASS", SKIP: "SKIP", NEEDS_REVIEW: "NEEDS_REVIEW" };
 const ID_PATTERN = /^cll_[a-zA-Z0-9_]+$/;
 const SEGMENT_CALL_TIMEOUT_MS = Number(Deno.env.get("PROCESS_CALL_SEGMENT_TIMEOUT_MS") || "6000");
@@ -255,6 +259,7 @@ function m1(raw: any) {
   const rawEvent = signal.raw_event && typeof signal.raw_event === "object" ? signal.raw_event : {};
   if (a.transcript_text && !a.transcript) a.transcript = a.transcript_text;
   if (signal.transcript && !a.transcript) a.transcript = signal.transcript;
+  if (a.payload_text && !a.transcript) a.transcript = a.payload_text;
   if (!a.interaction_id && a.call_id) a.interaction_id = a.call_id;
   if (!a.interaction_id && signal.interaction_id) {
     a.interaction_id = signal.interaction_id;
