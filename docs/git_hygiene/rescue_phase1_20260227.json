@@ -1,0 +1,177 @@
+{
+  "generated_at_utc": "2026-02-27T18:44:14Z",
+  "project_ref": "rjhdwidddtfetbwqolof",
+  "manual_runtime_function_count": 24,
+  "downloaded_count": 12,
+  "download_failed_count": 12,
+  "rows": [
+    {
+      "name": "bootstrap-review",
+      "version": 9,
+      "entrypoint_path": "file:///tmp/user_fn_rjhdwidddtfetbwqolof_e7058153-68dc-449f-96f8-ebcdb62ba04b_9/source/supabase/functions/bootstrap-review/index.ts",
+      "download_status": "downloaded",
+      "git_diff_status": "changed"
+    },
+    {
+      "name": "dlq-enqueue",
+      "version": 28,
+      "entrypoint_path": "file:///tmp/user_fn_rjhdwidddtfetbwqolof_7c52da27-c692-46ec-b193-dfe6e268d63f_1/source/supabase/functions/dlq-enqueue/index.ts",
+      "download_status": "download_failed_500",
+      "git_diff_status": "unchanged"
+    },
+    {
+      "name": "eval-ai-router",
+      "version": 28,
+      "entrypoint_path": "file:///tmp/user_fn_rjhdwidddtfetbwqolof_4169e876-ae37-4b58-9c28-482681132918_1/source/index.ts",
+      "download_status": "download_failed_500",
+      "git_diff_status": "unchanged"
+    },
+    {
+      "name": "financial-receipt-ingest",
+      "version": 2,
+      "entrypoint_path": "file:///tmp/user_fn_rjhdwidddtfetbwqolof_d9fa13c3-6550-4fef-be6f-913c087b0bca_2/source/supabase/functions/financial-receipt-ingest/index.ts",
+      "download_status": "download_failed_500",
+      "git_diff_status": "unchanged"
+    },
+    {
+      "name": "generate-summary",
+      "version": 23,
+      "entrypoint_path": "file:///tmp/user_fn_rjhdwidddtfetbwqolof_0ba37508-115e-4a0e-a066-db0ff24518bd_23/source/supabase/functions/generate-summary/index.ts",
+      "download_status": "downloaded",
+      "git_diff_status": "unchanged"
+    },
+    {
+      "name": "journal-extract",
+      "version": 43,
+      "entrypoint_path": "file:///tmp/user_fn_rjhdwidddtfetbwqolof_9c77e03c-83c8-4a33-aaf1-935fafe4ba24_43/source/supabase/functions/journal-extract/index.ts",
+      "download_status": "downloaded",
+      "git_diff_status": "changed"
+    },
+    {
+      "name": "process-call",
+      "version": 83,
+      "entrypoint_path": "file:///tmp/user_fn_rjhdwidddtfetbwqolof_35431d60-69ee-4b36-83d9-e6e753eb91d8_83/source/supabase/functions/process-call/index.ts",
+      "download_status": "downloaded",
+      "git_diff_status": "changed"
+    },
+    {
+      "name": "project-query",
+      "version": 4,
+      "entrypoint_path": "file:///tmp/user_fn_rjhdwidddtfetbwqolof_d98e4dbc-11b7-47c8-a58c-d44f202b9722_4/source/supabase/functions/project-query/index.ts",
+      "download_status": "downloaded",
+      "git_diff_status": "unchanged"
+    },
+    {
+      "name": "review-triage",
+      "version": 14,
+      "entrypoint_path": "file:///tmp/user_fn_rjhdwidddtfetbwqolof_03436717-0112-4aec-8de8-06c1ca32e122_4/source/index.ts",
+      "download_status": "download_failed_500",
+      "git_diff_status": "unchanged"
+    },
+    {
+      "name": "segment-call",
+      "version": 82,
+      "entrypoint_path": "file:///tmp/user_fn_rjhdwidddtfetbwqolof_3eeee6ea-5bee-4585-8eed-4c91dd871470_82/source/supabase/functions/segment-call/index.ts",
+      "download_status": "downloaded",
+      "git_diff_status": "changed"
+    },
+    {
+      "name": "segment-llm",
+      "version": 43,
+      "entrypoint_path": "file:///tmp/user_fn_rjhdwidddtfetbwqolof_a8190fcc-29e3-4c38-8f34-fe1271ccf021_43/source/supabase/functions/segment-llm/index.ts",
+      "download_status": "downloaded",
+      "git_diff_status": "changed"
+    },
+    {
+      "name": "shadow-replay",
+      "version": 15,
+      "entrypoint_path": "file:///tmp/user_fn_rjhdwidddtfetbwqolof_f0750552-1c21-4338-a3d8-d40bf7bd097a_15/source/supabase/functions/shadow-replay/index.ts",
+      "download_status": "downloaded",
+      "git_diff_status": "unchanged"
+    },
+    {
+      "name": "sms-beside-batch-ingest",
+      "version": 12,
+      "entrypoint_path": "file:///tmp/user_fn_rjhdwidddtfetbwqolof_b353c1d6-6353-44d2-b1cf-f6699a677ca5_12/source/supabase/functions/sms-beside-batch-ingest/index.ts",
+      "download_status": "downloaded",
+      "git_diff_status": "new_or_changed"
+    },
+    {
+      "name": "sms-openphone-sync",
+      "version": 2,
+      "entrypoint_path": "file:///tmp/user_fn_rjhdwidddtfetbwqolof_30d5dd7d-406f-4083-a11a-f4a4a2372c1a_2/source/index.ts",
+      "download_status": "download_failed_500",
+      "git_diff_status": "unchanged"
+    },
+    {
+      "name": "sms-thread-assembler",
+      "version": 3,
+      "entrypoint_path": "file:///tmp/user_fn_rjhdwidddtfetbwqolof_b958dfb3-bf86-44b8-ac11-78a9c0868751_3/source/supabase/functions/sms-thread-assembler/index.ts",
+      "download_status": "downloaded",
+      "git_diff_status": "new_or_changed"
+    },
+    {
+      "name": "striking-detect",
+      "version": 23,
+      "entrypoint_path": "file:///tmp/user_fn_rjhdwidddtfetbwqolof_ac7a985c-1b95-448a-ace7-3c1e21b90f40_23/source/supabase/functions/striking-detect/index.ts",
+      "download_status": "downloaded",
+      "git_diff_status": "unchanged"
+    },
+    {
+      "name": "sync-google-contacts",
+      "version": 29,
+      "entrypoint_path": "file:///tmp/user_fn_rjhdwidddtfetbwqolof_3b086961-dd7d-422b-97c1-d840c4107bbd_1/source/index.ts",
+      "download_status": "download_failed_500",
+      "git_diff_status": "unchanged"
+    },
+    {
+      "name": "test-tma-fetch",
+      "version": 29,
+      "entrypoint_path": "file:///tmp/user_fn_rjhdwidddtfetbwqolof_7c7e098d-73bf-4cc5-9038-cde35985d7ad_1/source/index.ts",
+      "download_status": "download_failed_500",
+      "git_diff_status": "unchanged"
+    },
+    {
+      "name": "training-data-export",
+      "version": 1,
+      "entrypoint_path": "file:///tmp/user_fn_rjhdwidddtfetbwqolof_9914af0a-26c9-45b8-8033-09f1e4427249_1/source/supabase/functions/training-data-export/index.ts",
+      "download_status": "downloaded",
+      "git_diff_status": "new_or_changed"
+    },
+    {
+      "name": "transcribe-assemblyai",
+      "version": 28,
+      "entrypoint_path": "file:///tmp/user_fn_rjhdwidddtfetbwqolof_bb1107c7-074a-4b10-a681-91f073c0c606_1/source/index.ts",
+      "download_status": "download_failed_500",
+      "git_diff_status": "unchanged"
+    },
+    {
+      "name": "transcribe-audio",
+      "version": 35,
+      "entrypoint_path": "file:///tmp/user_fn_rjhdwidddtfetbwqolof_7ff79885-ff4a-4707-9576-f34f072ad5c9_7/source/index.ts",
+      "download_status": "download_failed_500",
+      "git_diff_status": "unchanged"
+    },
+    {
+      "name": "transcribe-claude",
+      "version": 31,
+      "entrypoint_path": "file:///tmp/user_fn_rjhdwidddtfetbwqolof_86bd7c69-bdf1-4760-81d8-952cdab0f7f6_4/source/index.ts",
+      "download_status": "download_failed_500",
+      "git_diff_status": "unchanged"
+    },
+    {
+      "name": "transcribe-whisper",
+      "version": 30,
+      "entrypoint_path": "file:///tmp/user_fn_rjhdwidddtfetbwqolof_1264fde9-568c-4806-86a9-c55f611f9ae1_3/source/index.ts",
+      "download_status": "download_failed_500",
+      "git_diff_status": "unchanged"
+    },
+    {
+      "name": "zapier-sms-ingest",
+      "version": 3,
+      "entrypoint_path": "file:///tmp/user_fn_rjhdwidddtfetbwqolof_e71726c9-ad9e-4f26-bf7d-2201103f7b9f_3/source/index.ts",
+      "download_status": "download_failed_500",
+      "git_diff_status": "unchanged"
+    }
+  ]
+}

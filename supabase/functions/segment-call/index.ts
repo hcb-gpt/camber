@@ -55,7 +55,7 @@
 import "jsr:@supabase/functions-js/edge-runtime.d.ts";
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
 
-const SEGMENT_CALL_VERSION = "v2.8.0";
+const SEGMENT_CALL_VERSION = "v2.9.1";
 const MAX_SEGMENT_CHARS_HARD_LIMIT = 3000;
 const MAX_HOOK_NON2XX_DIAGNOSTICS = 3;
 
@@ -486,6 +486,15 @@ async function enforceCoverageInvariant(
 // v2.6.0: Evidence assembler + decision auditor feature flag
 const ASSEMBLER_MODE = Deno.env.get("ASSEMBLER_MODE") || "off"; // "off" | "shadow" | "live"
 
+// v2.9.0: Skip-attribution mode — segment + extract claims without project attribution.
+// Keeps: segmentation, journal-extract (claims), striking-detect, generate-summary.
+// Skips: context-assembly, ai-router, evidence-assembler, decision-auditor, coverage invariant.
+// Use for GT training set builds where human grading replaces AI attribution.
+const SKIP_ATTRIBUTION_DEFAULT = (() => {
+  const raw = (Deno.env.get("SKIP_ATTRIBUTION") || "").trim().toLowerCase();
+  return raw === "1" || raw === "true" || raw === "yes" || raw === "on";
+})();
+
 function shouldRunAssembler(ctx: any): { run: boolean; reasons: string[] } {
   const reasons: string[] = [];
   const candidates = ctx.candidates || [];
@@ -626,7 +635,9 @@ Deno.serve(async (req: Request) => {
     const {
       interaction_id,
       transcript,
+      channel: requested_channel = null,
       dry_run = false,
+      skip_attribution = SKIP_ATTRIBUTION_DEFAULT,
       max_segments = 10,
       min_segment_chars = 200,
     } = body;
@@ -644,6 +655,13 @@ Deno.serve(async (req: Request) => {
         { status: 400, headers: jsonHeaders },
       );
     }
+
+    const requestedChannelNorm = typeof requested_channel === "string"
+      ? requested_channel.trim().toLowerCase()
+      : "";
+    const inferredSmsChannel = String(interaction_id).startsWith("sms_thread_") ||
+      String(interaction_id).startsWith("beside_sms_");
+    const segmentationChannel = requestedChannelNorm || (inferredSmsChannel ? "sms_thread" : "call");
 
     const edgeSecret = Deno.env.get("EDGE_SHARED_SECRET");
     if (!edgeSecret) {
@@ -866,6 +884,9 @@ Deno.serve(async (req: Request) => {
     let segmenterVersion = "fallback_trivial_v1";
     const segmenterWarnings: string[] = [];
     segmenterWarnings.push(...canonicalWarnings);
+    if (!requestedChannelNorm && inferredSmsChannel) {
+      segmenterWarnings.push("channel_inferred_sms_thread_from_interaction_id");
+    }
     if (transcriptControlCharsSanitized > 0) {
       segmenterWarnings.push(`transcript_control_chars_sanitized_${transcriptControlCharsSanitized}`);
     }
@@ -944,6 +965,7 @@ Deno.serve(async (req: Request) => {
         },
         body: JSON.stringify({
           interaction_id,
+          channel: segmentationChannel,
           transcript: spanTranscript,
           source: "segment-call",
           max_segments,
@@ -1206,6 +1228,59 @@ Deno.serve(async (req: Request) => {
           }, "warning");
         }
       };
+
+      // v2.9.0: skip-attribution fast path — skip context-assembly + ai-router,
+      // fire journal-extract + striking-detect directly per span.
+      if (skip_attribution) {
+        // HOOK: striking-detect (fire-and-forget, same as normal path)
+        try {
+          void fetch(STRIKING_DETECT_URL, {
+            method: "POST",
+            headers: {
+              "Content-Type": "application/json",
+              "X-Edge-Secret": edgeSecret,
+            },
+            body: JSON.stringify({
+              span_id: span.id,
+              interaction_id,
+              call_id: interaction_id,
+              source: "segment-call",
+            }),
+          }).catch((e: any) => {
+            console.error(`[segment-call] striking-detect (skip-attr) error: ${e?.message}`);
+          });
+          status.striking_detect_fired = true;
+        } catch {
+          // Non-fatal
+        }
+
+        // HOOK: journal-extract (fire-and-forget, no project_id)
+        try {
+          void fetch(JOURNAL_EXTRACT_URL, {
+            method: "POST",
+            headers: {
+              "Content-Type": "application/json",
+              "X-Edge-Secret": edgeSecret,
+            },
+            body: JSON.stringify({
+              span_id: span.id,
+              interaction_id,
+              skip_attribution: true,
+              source: "segment-call",
+            }),
+          }).catch((e: any) => {
+            console.error(`[segment-call] journal-extract (skip-attr) error: ${e?.message}`);
+          });
+          status.journal_extract_fired = true;
+        } catch {
+          // Non-fatal
+        }
+
+        // Mark chain as successful (no context-assembly/ai-router ran)
+        status.context_assembly_status = -1; // sentinel: skipped
+        status.ai_router_status = -1; // sentinel: skipped
+        return status;
+      }
 
       // context-assembly
       let contextData: any = null;
@@ -1531,12 +1606,15 @@ Deno.serve(async (req: Request) => {
     const chainWallClockMs = Date.now() - chainT0;
 
     const allSuccess = chainStatuses.every((s) =>
-      s.context_assembly_status === 200 &&
-      s.ai_router_status === 200 &&
+      (s.context_assembly_status === 200 || s.context_assembly_status === -1) &&
+      (s.ai_router_status === 200 || s.ai_router_status === -1) &&
       !s.error_code
     );
 
-    const coverageInvariant = await enforceCoverageInvariant(db, interaction_id);
+    // Skip coverage invariant in skip-attribution mode (no span_attributions expected)
+    const coverageInvariant = skip_attribution
+      ? { before_count: 0, after_count: 0, backfilled_count: 0, backfilled_span_ids: [] as string[], error: null }
+      : await enforceCoverageInvariant(db, interaction_id);
     if (coverageInvariant.backfilled_count > 0) {
       await logDiagnostic("STOPLINE_COVERAGE_BACKFILL", {
         interaction_id,
@@ -1574,6 +1652,7 @@ Deno.serve(async (req: Request) => {
           span_ids: spanIds,
           span_count: spanCount,
           segmenter_version: segmenterVersion,
+          segmentation_channel: segmentationChannel,
           segmenter_warnings: segmenterWarnings,
           parent_interaction_sync: {
             applied: parent_interaction_sync_applied,
@@ -1626,6 +1705,7 @@ Deno.serve(async (req: Request) => {
           span_ids: spanIds,
           span_count: spanCount,
           segmenter_version: segmenterVersion,
+          segmentation_channel: segmentationChannel,
           segmenter_warnings: segmenterWarnings,
           parent_interaction_sync: {
             applied: parent_interaction_sync_applied,
@@ -1695,6 +1775,7 @@ Deno.serve(async (req: Request) => {
         span_ids: spanIds,
         span_count: spanCount,
         segmenter_version: segmenterVersion,
+        segmentation_channel: segmentationChannel,
         segmenter_warnings: segmenterWarnings,
         parent_interaction_sync: {
           applied: parent_interaction_sync_applied,
@@ -1713,6 +1794,7 @@ Deno.serve(async (req: Request) => {
           generate_summary_fired: generateSummaryFired,
         },
         dry_run,
+        skip_attribution,
         ms: Date.now() - t0,
       }),
       { status: 200, headers: jsonHeaders },
