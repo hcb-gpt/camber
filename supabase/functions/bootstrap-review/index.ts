@@ -1,7 +1,7 @@
 import "jsr:@supabase/functions-js/edge-runtime.d.ts";
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
 
-const FUNCTION_VERSION = "bootstrap-review_v1.1.4";
+const FUNCTION_VERSION = "bootstrap-review_v1.1.5";
 type ReviewQueueSource = "pipeline" | "redline";
 
 // ─── Helpers ─────────────────────────────────────────────────────────
@@ -48,6 +48,61 @@ function normalizeReviewQueueSource(
 
 function isMissingReviewQueueSourceColumnError(message: string): boolean {
   return /column .*source.* does not exist/i.test(message);
+}
+
+function isMissingColumnError(message: string, column: string): boolean {
+  const escapedColumn = column.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  return new RegExp(`column .*${escapedColumn}.* does not exist`, "i").test(
+    message,
+  );
+}
+
+function isAllowedQueueModule(raw: unknown): boolean {
+  const module = String(raw || "").trim().toLowerCase();
+  return module === "" || module === "attribution";
+}
+
+function normalizeQueueItemForIOS(item: any): any | null {
+  const spanId = String(item?.span_id || "").trim();
+  if (!isValidUUID(spanId)) return null;
+  if (!isAllowedQueueModule(item?.module)) return null;
+
+  const transcriptSegment = typeof item?.transcript_segment === "string"
+    ? item.transcript_segment
+    : typeof item?.context_payload?.transcript_snippet === "string"
+    ? item.context_payload.transcript_snippet
+    : "";
+
+  return {
+    ...item,
+    span_id: spanId,
+    transcript_segment: transcriptSegment,
+  };
+}
+
+async function countPendingQueueItemsForIOS(db: any): Promise<number> {
+  const base = db
+    .from("review_queue")
+    .select("id", { count: "exact", head: true })
+    .eq("status", "pending")
+    .not("span_id", "is", null);
+
+  const { count, error } = await base.or("module.eq.attribution,module.is.null");
+  if (!error) return count || 0;
+
+  if (isMissingColumnError(error.message || "", "module")) {
+    const { count: fallbackCount, error: fallbackErr } = await db
+      .from("review_queue")
+      .select("id", { count: "exact", head: true })
+      .eq("status", "pending")
+      .not("span_id", "is", null);
+    if (!fallbackErr) return fallbackCount || 0;
+    console.warn(`[bootstrap-review:queue] pending count fallback failed: ${fallbackErr.message}`);
+    return 0;
+  }
+
+  console.warn(`[bootstrap-review:queue] pending count failed: ${error.message}`);
+  return 0;
 }
 
 async function tagReviewQueueSource(
@@ -261,6 +316,10 @@ async function handleQueue(
     items = queueItems || [];
   }
 
+  items = items
+    .map(normalizeQueueItemForIOS)
+    .filter((item: any): item is any => item !== null);
+
   // Sort by most recent first for feed-style triage.
   items.sort((a: any, b: any) => {
     const aTime = Date.parse(a.event_at || a.created_at || "") || 0;
@@ -270,10 +329,7 @@ async function handleQueue(
   });
 
   // Get total pending count
-  const { count: totalPending } = await db
-    .from("review_queue")
-    .select("id", { count: "exact", head: true })
-    .eq("status", "pending");
+  const totalPending = await countPendingQueueItemsForIOS(db);
 
   // Fetch active projects for attribution picker.
   const projects = await fetchReviewProjects(db);
