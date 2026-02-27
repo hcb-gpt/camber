@@ -374,9 +374,7 @@ Deno.serve(async (req: Request) => {
     return fallbackResponse(transcriptLength, ["config_error_no_api_key"], t0);
   }
 
-  const promptTemplate = segmentationChannel === "sms_thread"
-    ? SMS_SEGMENTATION_PROMPT
-    : CALL_SEGMENTATION_PROMPT;
+  const promptTemplate = segmentationChannel === "sms_thread" ? SMS_SEGMENTATION_PROMPT : CALL_SEGMENTATION_PROMPT;
   const prompt = promptTemplate
     .replace("{TRANSCRIPT}", transcript)
     .replace("{MIN_CHARS}", String(min_segment_chars))

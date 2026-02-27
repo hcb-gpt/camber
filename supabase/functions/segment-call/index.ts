@@ -656,9 +656,7 @@ Deno.serve(async (req: Request) => {
       );
     }
 
-    const requestedChannelNorm = typeof requested_channel === "string"
-      ? requested_channel.trim().toLowerCase()
-      : "";
+    const requestedChannelNorm = typeof requested_channel === "string" ? requested_channel.trim().toLowerCase() : "";
     const inferredSmsChannel = String(interaction_id).startsWith("sms_thread_") ||
       String(interaction_id).startsWith("beside_sms_");
     const segmentationChannel = requestedChannelNorm || (inferredSmsChannel ? "sms_thread" : "call");
