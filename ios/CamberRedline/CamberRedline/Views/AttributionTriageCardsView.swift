@@ -493,7 +493,9 @@ private struct SwipeableTriageCard: View {
                         swipeAway(direction: .up)
                     } else if value.translation.height > verticalSwipeThreshold,
                               abs(value.translation.height) > abs(value.translation.width) {
-                        swipeAway(direction: .down)
+                        // DOWN: card stays in queue — snap back then open comment sheet
+                        snapBack()
+                        onSwipeDown()
                     } else {
                         snapBack()
                     }
@@ -548,9 +550,6 @@ private struct SwipeableTriageCard: View {
         case .up:
             offscreenX = 0
             offscreenY = -700
-        case .down:
-            offscreenX = 0
-            offscreenY = 700
         }
         withAnimation(.easeIn(duration: 0.25)) {
             offset = CGSize(width: offscreenX, height: offscreenY)
@@ -559,7 +558,7 @@ private struct SwipeableTriageCard: View {
                 rotation = 15
             case .left:
                 rotation = -15
-            case .up, .down:
+            case .up:
                 rotation = 0
             }
         }
@@ -570,7 +569,6 @@ private struct SwipeableTriageCard: View {
             case .right: onSwipeRight()
             case .left: onSwipeLeft()
             case .up: onSwipeUp()
-            case .down: onSwipeDown()
             }
         }
     }
@@ -582,7 +580,7 @@ private struct SwipeableTriageCard: View {
         }
     }
 
-    private enum SwipeDirection { case left, right, up, down }
+    private enum SwipeDirection { case left, right, up }
 }
 
 private struct TriageCommentSheet: View {
