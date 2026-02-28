@@ -76,6 +76,16 @@ struct AssistantContextDebugView: View {
                     .font(.caption2)
                     .foregroundStyle(.secondary)
             }
+            HStack(spacing: 12) {
+                if let contract = p.contractVersion {
+                    Text("contract \(contract)")
+                }
+                if let requestId = p.requestId {
+                    Text("req \(requestId)")
+                }
+            }
+            .font(.caption2)
+            .foregroundStyle(.secondary)
             HStack(spacing: 16) {
                 stat("Latency", "\(p.ms ?? 0)ms")
                 stat("Generated", timeAgo(p.generatedAt))

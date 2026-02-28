@@ -61,7 +61,8 @@ final class SupabaseService {
         request.setValue("no-cache", forHTTPHeaderField: "Pragma")
 
         let (data, response) = try await URLSession.shared.data(for: request)
-        let httpStatus = (response as? HTTPURLResponse)?.statusCode ?? -1
+        let http = response as? HTTPURLResponse
+        let httpStatus = http?.statusCode ?? -1
         try validateHTTPResponse(response)
 
         let decoded: ContactsResponse
@@ -124,10 +125,11 @@ final class SupabaseService {
         request.setValue("no-cache", forHTTPHeaderField: "Pragma")
 
         let (data, response) = try await URLSession.shared.data(for: request)
-        let httpStatus = (response as? HTTPURLResponse)?.statusCode ?? -1
+        let http = response as? HTTPURLResponse
+        let httpStatus = http?.statusCode ?? -1
         try validateHTTPResponse(response)
 
-        let decoded: ThreadResponse
+        var decoded: ThreadResponse
         do {
             decoded = try JSONDecoder().decode(ThreadResponse.self, from: data)
         } catch let decodingError as DecodingError {
@@ -156,6 +158,15 @@ final class SupabaseService {
         }
         if decoded.droppedCount > 0 {
             print("[ThreadDecode] Lossy decode dropped \(decoded.droppedCount) malformed thread items")
+        }
+        if decoded.requestId == nil {
+            decoded.requestId = http?.value(forHTTPHeaderField: "x-request-id")
+        }
+        if decoded.contractVersion == nil {
+            decoded.contractVersion = http?.value(forHTTPHeaderField: "x-contract-version")
+        }
+        if decoded.functionVersion == nil {
+            decoded.functionVersion = http?.value(forHTTPHeaderField: "x-function-version")
         }
         threadCache[cacheKey] = ThreadCacheEntry(response: decoded, fetchedAt: Date())
         return decoded
@@ -408,10 +419,16 @@ struct ThreadResponse: Decodable {
     let contact: ThreadContactInfo
     let thread: [RawThreadItem]
     let pagination: ThreadPagination
+    var requestId: String?
+    var contractVersion: String?
+    var functionVersion: String?
     let droppedCount: Int
 
     private enum CodingKeys: String, CodingKey {
         case ok, contact, thread, pagination
+        case requestId = "request_id"
+        case contractVersion = "contract_version"
+        case functionVersion = "function_version"
     }
 
     init(from decoder: Decoder) throws {
@@ -419,6 +436,9 @@ struct ThreadResponse: Decodable {
         ok = try container.decode(Bool.self, forKey: .ok)
         contact = try container.decode(ThreadContactInfo.self, forKey: .contact)
         pagination = try container.decode(ThreadPagination.self, forKey: .pagination)
+        requestId = try container.decodeIfPresent(String.self, forKey: .requestId)
+        contractVersion = try container.decodeIfPresent(String.self, forKey: .contractVersion)
+        functionVersion = try container.decodeIfPresent(String.self, forKey: .functionVersion)
 
         // Lossy array decode: skip individual malformed thread items instead of
         // failing the entire response.

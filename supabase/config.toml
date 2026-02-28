@@ -70,3 +70,9 @@ entrypoint = "./functions/redline-assistant/index.ts"
 # Specifies static files to be bundled with the function. Supports glob patterns.
 # For example, if you want to serve static HTML pages in your function:
 # static_files = [ "./functions/redline-assistant/*.html" ]
+
+[functions.report-data-issue]
+verify_jwt = false
+
+[functions.reconcile-missing-interactions]
+verify_jwt = false

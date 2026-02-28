@@ -2,7 +2,8 @@ import "jsr:@supabase/functions-js/edge-runtime.d.ts";
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
 import { getModelConfigCached } from "../_shared/model_config.ts";
 
-const _FUNCTION_VERSION = "redline-assistant_v0.3.0";
+const FUNCTION_VERSION = "redline-assistant_v0.3.1";
+const CONTRACT_VERSION = "redline-assistant_contract_v1";
 const DEFAULT_MODEL_ID = Deno.env.get("REDLINE_ASSISTANT_MODEL") || "gpt-4o";
 const DEFAULT_MAX_TOKENS = Number(
   Deno.env.get("REDLINE_ASSISTANT_MAX_TOKENS") || "1400",
@@ -59,6 +60,14 @@ function corsHeaders(): Record<string, string> {
     "Access-Control-Allow-Headers":
       "authorization, x-client-info, apikey, content-type, x-edge-secret",
     "Access-Control-Allow-Methods": "POST, OPTIONS",
+  };
+}
+
+function responseMetaHeaders(requestId: string): Record<string, string> {
+  return {
+    "x-request-id": requestId,
+    "x-contract-version": CONTRACT_VERSION,
+    "x-function-version": FUNCTION_VERSION,
   };
 }
 
@@ -466,8 +475,11 @@ async function fetchRecentInteractions(
 }
 
 Deno.serve(async (req) => {
+  const requestId = req.headers.get("x-request-id") || crypto.randomUUID();
+  const metaHeaders = responseMetaHeaders(requestId);
+
   if (req.method === "OPTIONS") {
-    return new Response(null, { headers: corsHeaders() });
+    return new Response(null, { headers: { ...corsHeaders(), ...metaHeaders } });
   }
 
   try {
@@ -481,9 +493,14 @@ Deno.serve(async (req) => {
     try {
       requestBody = await req.json();
     } catch {
-      return new Response(JSON.stringify({ error: "invalid_json" }), {
+      return new Response(JSON.stringify({
+        error: "invalid_json",
+        request_id: requestId,
+        contract_version: CONTRACT_VERSION,
+        function_version: FUNCTION_VERSION,
+      }), {
         status: 400,
-        headers: { "Content-Type": "application/json", ...corsHeaders() },
+        headers: { "Content-Type": "application/json", ...corsHeaders(), ...metaHeaders },
       });
     }
 
@@ -491,9 +508,14 @@ Deno.serve(async (req) => {
       requestBody;
 
     if (!message) {
-      return new Response(JSON.stringify({ error: "message_required" }), {
+      return new Response(JSON.stringify({
+        error: "message_required",
+        request_id: requestId,
+        contract_version: CONTRACT_VERSION,
+        function_version: FUNCTION_VERSION,
+      }), {
         status: 400,
-        headers: { "Content-Type": "application/json", ...corsHeaders() },
+        headers: { "Content-Type": "application/json", ...corsHeaders(), ...metaHeaders },
       });
     }
 
@@ -509,18 +531,20 @@ Deno.serve(async (req) => {
     const resolvedProjectId = explicitProjectId ?? resolution.resolvedProjectId;
 
     if (isProjectsRosterQuery(String(message))) {
-      return textSseResponse(renderProjectsRosterResponse(projectsRoster));
+      return textSseResponse(renderProjectsRosterResponse(projectsRoster), metaHeaders);
     }
 
     if (!explicitProjectId && resolution.mode === "ambiguous") {
       return textSseResponse(
         renderAmbiguousProjectResponse(String(message), resolution.matches),
+        metaHeaders,
       );
     }
 
     if (!explicitProjectId && resolution.mode === "none" && resolution.token) {
       return textSseResponse(
         renderNoMatchProjectResponse(resolution.token, projectsRoster),
+        metaHeaders,
       );
     }
 
@@ -700,9 +724,14 @@ Deno.serve(async (req) => {
     }
 
     if (runtimeProvider === "openai" && !openaiKey) {
-      return new Response(JSON.stringify({ error: "openai_api_key_missing" }), {
+      return new Response(JSON.stringify({
+        error: "openai_api_key_missing",
+        request_id: requestId,
+        contract_version: CONTRACT_VERSION,
+        function_version: FUNCTION_VERSION,
+      }), {
         status: 500,
-        headers: { "Content-Type": "application/json", ...corsHeaders() },
+        headers: { "Content-Type": "application/json", ...corsHeaders(), ...metaHeaders },
       });
     }
 
@@ -763,10 +792,13 @@ ${JSON.stringify(context, null, 2)}
             error: "llm_error",
             provider: "anthropic",
             details: errText,
+            request_id: requestId,
+            contract_version: CONTRACT_VERSION,
+            function_version: FUNCTION_VERSION,
           }),
           {
             status: 500,
-            headers: { "Content-Type": "application/json", ...corsHeaders() },
+            headers: { "Content-Type": "application/json", ...corsHeaders(), ...metaHeaders },
           },
         );
       }
@@ -778,6 +810,7 @@ ${JSON.stringify(context, null, 2)}
       if (providerWarning) {
         headers["x-assistant-provider-warning"] = providerWarning;
       }
+      Object.assign(headers, metaHeaders);
       return await translateAnthropicToOpenAiSse(anthropicRes, headers);
     }
 
@@ -812,10 +845,13 @@ ${JSON.stringify(context, null, 2)}
           error: "llm_error",
           provider: "openai",
           details: errText,
+          request_id: requestId,
+          contract_version: CONTRACT_VERSION,
+          function_version: FUNCTION_VERSION,
         }),
         {
           status: 500,
-          headers: { "Content-Type": "application/json", ...corsHeaders() },
+          headers: { "Content-Type": "application/json", ...corsHeaders(), ...metaHeaders },
         },
       );
     }
@@ -827,14 +863,21 @@ ${JSON.stringify(context, null, 2)}
     if (providerWarning) {
       headers["x-assistant-provider-warning"] = providerWarning;
     }
+    Object.assign(headers, metaHeaders);
     return openAiProxyResponse(openaiRes.body, headers);
   } catch (err: any) {
     console.error("[redline-assistant] Error:", err.message);
     return new Response(
-      JSON.stringify({ error: "internal_error", details: err.message }),
+      JSON.stringify({
+        error: "internal_error",
+        details: err.message,
+        request_id: requestId,
+        contract_version: CONTRACT_VERSION,
+        function_version: FUNCTION_VERSION,
+      }),
       {
         status: 500,
-        headers: { "Content-Type": "application/json", ...corsHeaders() },
+        headers: { "Content-Type": "application/json", ...corsHeaders(), ...metaHeaders },
       },
     );
   }

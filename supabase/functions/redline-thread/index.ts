@@ -2,6 +2,7 @@ import "jsr:@supabase/functions-js/edge-runtime.d.ts";
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
 
 const FUNCTION_VERSION = "redline-thread_v3.3.0";
+const CONTRACT_VERSION = "redline-thread_contract_v1";
 /**
  * v3.2.1 - Fix typo interactionClaims -> _interactionClaims
  * v3.1.2 - iOS Contract Fix (P0 Unbrick)
@@ -53,6 +54,17 @@ function json(data: unknown, status = 200, extraHeaders: Record<string, string> 
       ...noStoreHeaders(),
       ...extraHeaders,
     },
+  });
+}
+
+function withRequestMeta(response: Response, requestId: string): Response {
+  const headers = new Headers(response.headers);
+  headers.set("x-request-id", requestId);
+  headers.set("x-contract-version", CONTRACT_VERSION);
+  headers.set("x-function-version", FUNCTION_VERSION);
+  return new Response(response.body, {
+    status: response.status,
+    headers,
   });
 }
 
@@ -2579,8 +2591,13 @@ async function handleHealth(db: any, t0: number): Promise<Response> {
 
 // Main router
 Deno.serve(async (req: Request) => {
+  const requestId = req.headers.get("x-request-id") || crypto.randomUUID();
+
   if (req.method === "OPTIONS") {
-    return new Response(null, { status: 204, headers: { ...corsHeaders(), ...noStoreHeaders() } });
+    return withRequestMeta(
+      new Response(null, { status: 204, headers: { ...corsHeaders(), ...noStoreHeaders() } }),
+      requestId,
+    );
   }
 
   const t0 = Date.now();
@@ -2590,7 +2607,7 @@ Deno.serve(async (req: Request) => {
   try {
     // Health check — fast path, no auth, no cache
     if (url.searchParams.get("mode") === "health") {
-      return await handleHealth(db, t0);
+      return withRequestMeta(await handleHealth(db, t0), requestId);
     }
 
     const action = url.searchParams.get("action");
@@ -2598,59 +2615,59 @@ Deno.serve(async (req: Request) => {
     const apiRoute = parseRedlineApiRoute(url);
     if (apiRoute) {
       if (apiRoute.kind === "contacts" && req.method === "GET") {
-        return await handleContacts(db, url, t0);
+        return withRequestMeta(await handleContacts(db, url, t0), requestId);
       }
       if (apiRoute.kind === "thread" && req.method === "GET") {
-        return await handleThreadApi(db, apiRoute.contactId, url, t0);
+        return withRequestMeta(await handleThreadApi(db, apiRoute.contactId, url, t0), requestId);
       }
       if (apiRoute.kind === "spans" && req.method === "GET") {
-        return await handleSpansApi(db, apiRoute.contactId, url, t0);
+        return withRequestMeta(await handleSpansApi(db, apiRoute.contactId, url, t0), requestId);
       }
       if (apiRoute.kind === "verdict" && req.method === "POST") {
-        return await handleVerdict(db, req, t0);
+        return withRequestMeta(await handleVerdict(db, req, t0), requestId);
       }
       if (apiRoute.kind === "unknown") {
-        return json({
+        return withRequestMeta(json({
           ok: false,
           error_code: "unknown_redline_route",
           error: `Unsupported redline API path: /redline/${apiRoute.path.join("/")}`,
           function_version: FUNCTION_VERSION,
-        }, 404);
+        }, 404), requestId);
       }
-      return json({
+      return withRequestMeta(json({
         ok: false,
         error_code: "method_not_allowed",
         error: `Method ${req.method} not allowed for redline API route`,
         function_version: FUNCTION_VERSION,
-      }, 405);
+      }, 405), requestId);
     }
 
     if (action === "undo_verdict" && req.method === "POST") {
-      return await handleUndoVerdict(db, req, t0);
+      return withRequestMeta(await handleUndoVerdict(db, req, t0), requestId);
     }
     if (req.method === "POST") {
-      return await handleGrade(db, req, t0);
+      return withRequestMeta(await handleGrade(db, req, t0), requestId);
     }
     if (action === "triage_queue") {
-      return await handleTriageQueue(db, url, t0);
+      return withRequestMeta(await handleTriageQueue(db, url, t0), requestId);
     }
     if (action === "top_candidates") {
-      return await handleTopCandidates(db, url, t0);
+      return withRequestMeta(await handleTopCandidates(db, url, t0), requestId);
     }
     if (action === "sanity") {
-      return await handleSanity(db, t0);
+      return withRequestMeta(await handleSanity(db, t0), requestId);
     }
     if (action === "contacts") {
-      return await handleContacts(db, url, t0);
+      return withRequestMeta(await handleContacts(db, url, t0), requestId);
     }
     if (action === "projects") {
-      return await handleProjects(db, t0);
+      return withRequestMeta(await handleProjects(db, t0), requestId);
     }
     if (action === "reset_clock") {
-      return await handleResetClock(db, t0);
+      return withRequestMeta(await handleResetClock(db, t0), requestId);
     }
     if (action === "get_cutoff") {
-      return await handleGetCutoff(db, t0);
+      return withRequestMeta(await handleGetCutoff(db, t0), requestId);
     }
 
     const contactId = url.searchParams.get("contact_id") || url.searchParams.get("contact_key");
@@ -2659,18 +2676,18 @@ Deno.serve(async (req: Request) => {
       const limit = Math.min(Math.max(isNaN(rawLimit) ? 20 : rawLimit, 1), 200);
       const rawOffset = parseInt(url.searchParams.get("offset") || "0", 10);
       const offset = Math.max(isNaN(rawOffset) ? 0 : rawOffset, 0);
-      return await handleThread(db, contactId, limit, offset, t0);
+      return withRequestMeta(await handleThread(db, contactId, limit, offset, t0), requestId);
     }
 
-    return new Response(HTML, {
+    return withRequestMeta(new Response(HTML, {
       status: 200,
       headers: { "Content-Type": "text/html; charset=utf-8", ...corsHeaders(), ...noStoreHeaders() },
-    });
+    }), requestId);
   } catch (err: any) {
     console.error("[redline-thread] Error:", err.message);
-    return json(
+    return withRequestMeta(json(
       { ok: false, error_code: "internal_error", error: err.message, function_version: FUNCTION_VERSION },
       500,
-    );
+    ), requestId);
   }
 });

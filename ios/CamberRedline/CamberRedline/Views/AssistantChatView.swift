@@ -46,6 +46,10 @@ struct AssistantChatView: View {
                 }
             }
 
+            if let debug = viewModel.lastDebugInfo {
+                assistantDebugMeta(debug)
+            }
+
             inputArea
         }
         .navigationTitle(contactId != nil ? "Contact Assistant" : (projectId != nil ? "Project Assistant" : "Assistant"))
@@ -79,6 +83,27 @@ struct AssistantChatView: View {
             didRunSmokeAssistant = true
             Task { await runSmokePrompts() }
         }
+    }
+
+    private func assistantDebugMeta(_ debug: AssistantChatDebugInfo) -> some View {
+        HStack(spacing: 8) {
+            Image(systemName: "dot.scope.display")
+            if let contract = debug.contractVersion {
+                Text("contract \(contract)")
+            }
+            if let requestId = debug.requestId {
+                Text("req \(requestId)")
+            }
+            if let functionVersion = debug.functionVersion {
+                Text("fn \(functionVersion)")
+            }
+            Spacer()
+        }
+        .font(.caption2)
+        .foregroundStyle(.secondary)
+        .padding(.horizontal, 12)
+        .padding(.vertical, 6)
+        .background(Color.white.opacity(0.03))
     }
 
     private var emptyState: some View {

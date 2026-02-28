@@ -102,6 +102,8 @@ struct ThreadView: View {
     @State private var spanOverrides: [UUID: SMSProjectAssignment] = [:]
     @State private var activeNoteContext: ThreadNoteContext?
     @State private var noteDraft = ""
+    @State private var reportIssueStatus: String?
+    @State private var isSubmittingIssue = false
     private let bottomAnchorID = "thread-bottom-anchor"
     private let topLoadThreshold: CGFloat = -80
     private static let smsStripeColors: [Color] = [
@@ -274,6 +276,26 @@ struct ThreadView: View {
                         .padding(.bottom, 10)
                     }
 
+                    if viewModel.lastThreadRequestId != nil || viewModel.lastThreadContractVersion != nil {
+                        HStack(spacing: 8) {
+                            Image(systemName: "dot.scope.display")
+                            if let contract = viewModel.lastThreadContractVersion {
+                                Text("contract \(contract)")
+                            }
+                            if let requestId = viewModel.lastThreadRequestId {
+                                Text("req \(requestId)")
+                            }
+                            if let functionVersion = viewModel.lastThreadFunctionVersion {
+                                Text("fn \(functionVersion)")
+                            }
+                            Spacer()
+                        }
+                        .font(.caption2)
+                        .foregroundStyle(.secondary)
+                        .padding(.horizontal, 16)
+                        .padding(.bottom, 10)
+                    }
+
                     ForEach(Array(groups.enumerated()), id: \.element.id) { index, group in
                         groupView(index: index, group: group, groups: groups)
                     }
@@ -312,6 +334,29 @@ struct ThreadView: View {
             .navigationBarTitleDisplayMode(.inline)
             .toolbarBackground(Color.black, for: .navigationBar)
             .toolbarColorScheme(.dark, for: .navigationBar)
+            .toolbar {
+#if DEBUG
+                ToolbarItem(placement: .topBarTrailing) {
+                    Button {
+                        Task {
+                            guard !isSubmittingIssue else { return }
+                            isSubmittingIssue = true
+                            defer { isSubmittingIssue = false }
+                            do {
+                                let result = try await viewModel.reportCurrentThreadDataIssue()
+                                reportIssueStatus = "Reported issue \(result.reportId ?? "unknown")"
+                            } catch {
+                                reportIssueStatus = "Report failed: \(error.localizedDescription)"
+                            }
+                            try? await Task.sleep(for: .seconds(4))
+                            reportIssueStatus = nil
+                        }
+                    } label: {
+                        Image(systemName: isSubmittingIssue ? "hourglass" : "ladybug")
+                    }
+                }
+#endif
+            }
             .overlay {
                 if viewModel.isLoading && viewModel.threadItems.isEmpty {
                     ProgressView()
@@ -319,14 +364,23 @@ struct ThreadView: View {
                 }
             }
             .overlay(alignment: .bottom) {
-                if let error = viewModel.error {
-                    Text(error)
-                        .font(.caption)
-                        .foregroundStyle(.red)
-                        .padding(8)
-                        .background(.ultraThinMaterial, in: RoundedRectangle(cornerRadius: 8))
-                        .padding()
+                VStack(spacing: 6) {
+                    if let error = viewModel.error {
+                        Text(error)
+                            .font(.caption)
+                            .foregroundStyle(.red)
+                            .padding(8)
+                            .background(.ultraThinMaterial, in: RoundedRectangle(cornerRadius: 8))
+                    }
+                    if let status = reportIssueStatus {
+                        Text(status)
+                            .font(.caption2)
+                            .foregroundStyle(.white)
+                            .padding(8)
+                            .background(Color.black.opacity(0.7), in: RoundedRectangle(cornerRadius: 8))
+                    }
                 }
+                .padding()
             }
             .task(id: contact.contactId) {
                 hasScrolledToLatest = false
