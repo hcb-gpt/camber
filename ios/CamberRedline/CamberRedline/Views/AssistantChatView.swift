@@ -1,7 +1,19 @@
 import SwiftUI
+import os
+
+private enum AssistantSmokeAutomation {
+    static let launchFlag = "--smoke-drive"
+    static let assistantNotification = Notification.Name("camber.smoke.runAssistant")
+    static let logger = Logger(subsystem: "CamberRedline", category: "smoke")
+
+    static var isEnabled: Bool {
+        ProcessInfo.processInfo.arguments.contains(launchFlag)
+    }
+}
 
 struct AssistantChatView: View {
     @StateObject private var viewModel = AssistantViewModel()
+    @State private var didRunSmokeAssistant = false
     var contactId: String? = nil
     var projectId: String? = nil
     var initialMessage: String? = nil
@@ -60,6 +72,12 @@ struct AssistantChatView: View {
                 viewModel.currentInput = initial
                 await viewModel.sendMessage(contactId: contactId, projectId: projectId)
             }
+        }
+        .onReceive(NotificationCenter.default.publisher(for: AssistantSmokeAutomation.assistantNotification)) { _ in
+            guard AssistantSmokeAutomation.isEnabled else { return }
+            guard !didRunSmokeAssistant else { return }
+            didRunSmokeAssistant = true
+            Task { await runSmokePrompts() }
         }
     }
 
@@ -149,5 +167,21 @@ struct AssistantChatView: View {
             .padding()
             .background(Color(red: 0.05, green: 0.05, blue: 0.05))
         }
+    }
+
+    private func runSmokePrompts() async {
+        let prompts = [
+            "What is going on recently?",
+            "What are the top urgent contacts right now?"
+        ]
+
+        for prompt in prompts {
+            viewModel.currentInput = prompt
+            AssistantSmokeAutomation.logger.log("SMOKE_EVENT ASSISTANT_PROMPT prompt=\(prompt, privacy: .public)")
+            await viewModel.sendMessage(contactId: contactId, projectId: projectId)
+            try? await Task.sleep(for: .seconds(1))
+        }
+
+        AssistantSmokeAutomation.logger.log("SMOKE_EVENT ASSISTANT_DONE messages=\(viewModel.messages.count, privacy: .public)")
     }
 }

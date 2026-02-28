@@ -1,4 +1,15 @@
 import SwiftUI
+import os
+
+private enum TriageSmokeAutomation {
+    static let launchFlag = "--smoke-drive"
+    static let triageNotification = Notification.Name("camber.smoke.runTriage")
+    static let logger = Logger(subsystem: "CamberRedline", category: "smoke")
+
+    static var isEnabled: Bool {
+        ProcessInfo.processInfo.arguments.contains(launchFlag)
+    }
+}
 
 private extension Color {
     static let cardsBg = Color.black
@@ -14,6 +25,7 @@ struct AttributionTriageCardsView: View {
     @State private var viewModel = CardTriageViewModel()
     @State private var showProjectPicker = false
     @State private var pickerCard: CardItem?
+    @State private var didRunSmokeTriage = false
 
     var body: some View {
         NavigationStack {
@@ -48,6 +60,12 @@ struct AttributionTriageCardsView: View {
                 if viewModel.queue.isEmpty {
                     await viewModel.loadQueue()
                 }
+            }
+            .onReceive(NotificationCenter.default.publisher(for: TriageSmokeAutomation.triageNotification)) { _ in
+                guard TriageSmokeAutomation.isEnabled else { return }
+                guard !didRunSmokeTriage else { return }
+                didRunSmokeTriage = true
+                Task { await runSmokeSwipes() }
             }
             .sheet(isPresented: $showProjectPicker) {
                 if let card = pickerCard {
@@ -204,6 +222,34 @@ struct AttributionTriageCardsView: View {
             .padding(.horizontal, 16)
             .padding(.bottom, 60)
             .onTapGesture { viewModel.error = nil }
+    }
+
+    private func runSmokeSwipes() async {
+        if viewModel.queue.isEmpty {
+            await viewModel.loadQueue()
+        }
+
+        guard !viewModel.queue.isEmpty else {
+            TriageSmokeAutomation.logger.log("SMOKE_EVENT TRIAGE_EMPTY")
+            return
+        }
+
+        let steps = min(3, viewModel.queue.count)
+        for index in 0..<steps {
+            guard let card = viewModel.queue.first else { break }
+
+            if index.isMultiple(of: 2), let projectId = card.projectId {
+                TriageSmokeAutomation.logger.log("SMOKE_EVENT TRIAGE_RESOLVE queue=\(card.queueId, privacy: .public) project=\(projectId, privacy: .public)")
+                await viewModel.resolve(card, to: projectId)
+            } else {
+                TriageSmokeAutomation.logger.log("SMOKE_EVENT TRIAGE_DISMISS queue=\(card.queueId, privacy: .public)")
+                await viewModel.dismiss(card)
+            }
+
+            try? await Task.sleep(for: .milliseconds(1200))
+        }
+
+        TriageSmokeAutomation.logger.log("SMOKE_EVENT TRIAGE_DONE remaining=\(viewModel.queue.count, privacy: .public)")
     }
 }
 
