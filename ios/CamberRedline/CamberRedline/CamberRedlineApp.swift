@@ -6,6 +6,7 @@ private enum AppSmokeAutomation {
     static let launchFlag = "--smoke-drive"
     static let triageNotification = Notification.Name("camber.smoke.runTriage")
     static let assistantNotification = Notification.Name("camber.smoke.runAssistant")
+    static let redlineNotification = Notification.Name("camber.smoke.runRedline")
     static let logger = Logger(subsystem: "CamberRedline", category: "smoke")
 
     static var isEnabled: Bool {
@@ -131,7 +132,13 @@ struct CamberRedlineApp: App {
         // - 3 smoke prompts
         // - screenshots from the simulator harness
         try? await Task.sleep(for: .seconds(18))
+
         selectedTab = 0
+        AppSmokeAutomation.logger.log("SMOKE_EVENT OPEN_REDLINE")
+        try? await Task.sleep(for: .milliseconds(1200))
+        NotificationCenter.default.post(name: AppSmokeAutomation.redlineNotification, object: nil)
+
+        try? await Task.sleep(for: .seconds(12))
         AppSmokeAutomation.logger.log("SMOKE_EVENT END")
     }
 }

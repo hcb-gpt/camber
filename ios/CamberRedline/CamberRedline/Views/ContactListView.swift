@@ -1,4 +1,15 @@
 import SwiftUI
+import os
+
+private enum RedlineSmokeAutomation {
+    static let launchFlag = "--smoke-drive"
+    static let redlineNotification = Notification.Name("camber.smoke.runRedline")
+    static let logger = Logger(subsystem: "CamberRedline", category: "smoke")
+
+    static var isEnabled: Bool {
+        ProcessInfo.processInfo.arguments.contains(launchFlag)
+    }
+}
 
 struct ContactListView: View {
     var contactListViewModel: ContactListViewModel
@@ -7,6 +18,8 @@ struct ContactListView: View {
     @State private var searchText = ""
     @State private var showSyncStatus = false
     @State private var showResetConfirmation = false
+    @State private var didRunSmokeRedline = false
+    @State private var smokeNavigationContact: Contact?
 
     private var filteredContacts: [Contact] {
         let trimmed = searchText.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -76,6 +89,12 @@ struct ContactListView: View {
                     await contactListViewModel.loadContacts()
                 }
             }
+            .onReceive(NotificationCenter.default.publisher(for: RedlineSmokeAutomation.redlineNotification)) { _ in
+                guard RedlineSmokeAutomation.isEnabled else { return }
+                guard !didRunSmokeRedline else { return }
+                didRunSmokeRedline = true
+                Task { await runSmokeRedline() }
+            }
     }
 
     @ToolbarContentBuilder
@@ -140,6 +159,27 @@ struct ContactListView: View {
                 .background(.ultraThinMaterial, in: RoundedRectangle(cornerRadius: 8))
                 .padding()
         }
+    }
+
+    @MainActor
+    private func runSmokeRedline() async {
+        RedlineSmokeAutomation.logger.log("SMOKE_EVENT REDLINE_START")
+
+        if contactListViewModel.contacts.isEmpty {
+            await contactListViewModel.loadContacts()
+        }
+        try? await Task.sleep(for: .seconds(1))
+
+        guard let first = contactListViewModel.contacts.first else {
+            RedlineSmokeAutomation.logger.log("SMOKE_EVENT REDLINE_EMPTY")
+            return
+        }
+
+        RedlineSmokeAutomation.logger.log("SMOKE_EVENT REDLINE_OPEN_THREAD contact=\(first.contactId, privacy: .public)")
+        smokeNavigationContact = first
+        try? await Task.sleep(for: .seconds(3))
+
+        RedlineSmokeAutomation.logger.log("SMOKE_EVENT REDLINE_DONE")
     }
 }
 

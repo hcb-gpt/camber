@@ -22,19 +22,24 @@ struct ProjectPickerSheet: View {
         NavigationStack {
             List {
                 Section {
-                    ForEach(filtered) { project in
-                        Button {
-                            dismiss()
-                            onSelect(project.id)
-                        } label: {
-                            HStack(spacing: 10) {
-                                Text(project.name)
-                                    .foregroundStyle(.white)
-                                Spacer()
-                                if project.id == card.projectId {
-                                    Image(systemName: "cpu")
-                                        .font(.caption)
-                                        .foregroundStyle(Color(red: 0.188, green: 0.82, blue: 0.345))
+                    if filtered.isEmpty {
+                        Text("No projects available")
+                            .foregroundStyle(.secondary)
+                    } else {
+                        ForEach(filtered) { project in
+                            Button {
+                                dismiss()
+                                onSelect(project.id)
+                            } label: {
+                                HStack(spacing: 10) {
+                                    Text(project.name)
+                                        .foregroundStyle(.white)
+                                    Spacer()
+                                    if project.id == card.projectId {
+                                        Image(systemName: "cpu")
+                                            .font(.caption)
+                                            .foregroundStyle(Color(red: 0.188, green: 0.82, blue: 0.345))
+                                    }
                                 }
                             }
                         }

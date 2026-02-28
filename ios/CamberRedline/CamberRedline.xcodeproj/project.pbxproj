@@ -29,7 +29,7 @@
 		A1B2C3D4E5F60003AABBCC02 /* ReviewProject.swift in Sources */ = {isa = PBXBuildFile; fileRef = A1B2C3D4E5F60004AABBCC02 /* ReviewProject.swift */; };
 		A1B2C3D4E5F60005AABBCC03 /* BootstrapService.swift in Sources */ = {isa = PBXBuildFile; fileRef = A1B2C3D4E5F60006AABBCC03 /* BootstrapService.swift */; };
 		A1B2C3D4E5F60007AABBCC04 /* TriageViewModel.swift in Sources */ = {isa = PBXBuildFile; fileRef = A1B2C3D4E5F60008AABBCC04 /* TriageViewModel.swift */; };
-		A1B2C3D4E5F60009AABBCC05 /* TriageView.swift in Sources */ = {isa = PBXBuildFile; fileRef = A1B2C3D4E5F6000AAABBCC05 /* TriageView.swift */; };
+		E1A2B3C4D5E6F70100AABB01 /* AppConfig.swift in Sources */ = {isa = PBXBuildFile; fileRef = E1A2B3C4D5E6F70200AABB01 /* AppConfig.swift */; };
 		B1A2B3C4D5E6F70100112233 /* AttributionTriageCardsView.swift in Sources */ = {isa = PBXBuildFile; fileRef = B1A2B3C4D5E6F70200112233 /* AttributionTriageCardsView.swift */; };
 		B1A2B3C4D5E6F70300112233 /* ProjectPickerSheet.swift in Sources */ = {isa = PBXBuildFile; fileRef = B1A2B3C4D5E6F70400112233 /* ProjectPickerSheet.swift */; };
 		B1A2B3C4D5E6F70500112233 /* CardTriageViewModel.swift in Sources */ = {isa = PBXBuildFile; fileRef = B1A2B3C4D5E6F70600112233 /* CardTriageViewModel.swift */; };
@@ -62,7 +62,7 @@
 		A1B2C3D4E5F60004AABBCC02 /* ReviewProject.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ReviewProject.swift; sourceTree = "<group>"; };
 		A1B2C3D4E5F60006AABBCC03 /* BootstrapService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BootstrapService.swift; sourceTree = "<group>"; };
 		A1B2C3D4E5F60008AABBCC04 /* TriageViewModel.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TriageViewModel.swift; sourceTree = "<group>"; };
-		A1B2C3D4E5F6000AAABBCC05 /* TriageView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TriageView.swift; sourceTree = "<group>"; };
+		E1A2B3C4D5E6F70200AABB01 /* AppConfig.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppConfig.swift; sourceTree = "<group>"; };
 		B1A2B3C4D5E6F70200112233 /* AttributionTriageCardsView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AttributionTriageCardsView.swift; sourceTree = "<group>"; };
 		B1A2B3C4D5E6F70400112233 /* ProjectPickerSheet.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ProjectPickerSheet.swift; sourceTree = "<group>"; };
 		B1A2B3C4D5E6F70600112233 /* CardTriageViewModel.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CardTriageViewModel.swift; sourceTree = "<group>"; };
@@ -97,7 +97,6 @@
 				C0B838D3F03C0D2CDB76E802 /* SMSBubble.swift */,
 				CD4E5F6A7B8C9D0E1F2A3B4C /* SpeakerTurnBubble.swift */,
 				055EAEA048AB6BB4CA4EEE80 /* ThreadView.swift */,
-				A1B2C3D4E5F6000AAABBCC05 /* TriageView.swift */,
 				B1A2B3C4D5E6F70200112233 /* AttributionTriageCardsView.swift */,
 				B1A2B3C4D5E6F70400112233 /* ProjectPickerSheet.swift */,
 				D2A1B3C4D5E6F70800998877 /* AssistantChatView.swift */,
@@ -109,6 +108,7 @@
 		4CBF2260079024E63D8ABDC0 /* CamberRedline */ = {
 			isa = PBXGroup;
 			children = (
+				E1A2B3C4D5E6F70200AABB01 /* AppConfig.swift */,
 				FF5BA52015DDCF6F215FA113 /* CamberRedlineApp.swift */,
 				C32672D30BE75E53A0CBB17B /* Models */,
 				99BF2C7EF9F55A8850309EB3 /* Services */,
@@ -246,7 +246,7 @@
 				A1B2C3D4E5F60003AABBCC02 /* ReviewProject.swift in Sources */,
 				A1B2C3D4E5F60005AABBCC03 /* BootstrapService.swift in Sources */,
 				A1B2C3D4E5F60007AABBCC04 /* TriageViewModel.swift in Sources */,
-				A1B2C3D4E5F60009AABBCC05 /* TriageView.swift in Sources */,
+				E1A2B3C4D5E6F70100AABB01 /* AppConfig.swift in Sources */,
 				B1A2B3C4D5E6F70100112233 /* AttributionTriageCardsView.swift in Sources */,
 				B1A2B3C4D5E6F70300112233 /* ProjectPickerSheet.swift in Sources */,
 				B1A2B3C4D5E6F70500112233 /* CardTriageViewModel.swift in Sources */,

@@ -60,6 +60,7 @@ struct ContactRow: View {
                         lineWidth: 0.5
                     )
             )
+            .accessibilityLabel("\(count) ungraded")
     }
 
     // MARK: - Preview Text

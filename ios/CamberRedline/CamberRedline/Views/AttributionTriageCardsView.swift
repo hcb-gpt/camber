@@ -285,6 +285,7 @@ struct AttributionTriageCardsView: View {
             .padding(.horizontal, 16)
             .padding(.bottom, 60)
             .onTapGesture { viewModel.error = nil }
+            .task { try? await Task.sleep(for: .seconds(4)); viewModel.error = nil }
     }
 
     private func runSmokeSwipes() async {
@@ -331,7 +332,11 @@ struct AttributionTriageCardsView: View {
                 await viewModel.dismissUndecided(card)
             case 3:
                 TriageSmokeAutomation.logger.log("SMOKE_EVENT TRIAGE_COMMENT queue=\(card.queueId, privacy: .public)")
-                await viewModel.resolve(card, to: card.projectId ?? "", notes: "smoke-comment")
+                if let pid = card.projectId {
+                    await viewModel.resolve(card, to: pid, notes: "smoke-comment")
+                } else {
+                    await viewModel.dismiss(card)
+                }
             default:
                 TriageSmokeAutomation.logger.log("SMOKE_EVENT TRIAGE_DISMISS queue=\(card.queueId, privacy: .public)")
                 await viewModel.dismiss(card)
@@ -502,6 +507,13 @@ private struct SwipeableTriageCard: View {
                 }
         )
         .animation(.interactiveSpring(response: 0.4, dampingFraction: 0.7), value: offset)
+        .accessibilityElement(children: .combine)
+        .accessibilityLabel("Triage card for \(card.contactName)")
+        .accessibilityHint("Swipe right to confirm, left to dismiss, up for later, down for note")
+        .accessibilityAction(named: "Confirm") { onSwipeRight() }
+        .accessibilityAction(named: "Dismiss") { onSwipeLeft() }
+        .accessibilityAction(named: "Later") { onSwipeUp() }
+        .accessibilityAction(named: "Add note") { onSwipeDown() }
     }
 
     private var confidenceBadge: some View {

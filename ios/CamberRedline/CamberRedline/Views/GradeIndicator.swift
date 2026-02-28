@@ -32,9 +32,20 @@ struct GradeIndicator: View {
         }
     }
 
+    private var gradeLabel: String {
+        guard let grade else { return "Ungraded" }
+        switch grade {
+        case GradeType.confirm.rawValue: return "Confirmed"
+        case GradeType.reject.rawValue: return "Rejected"
+        case GradeType.correct.rawValue: return "Corrected"
+        default: return "Ungraded"
+        }
+    }
+
     var body: some View {
         Image(systemName: iconName)
             .font(.system(size: 16))
             .foregroundStyle(iconColor)
+            .accessibilityLabel(gradeLabel)
     }
 }

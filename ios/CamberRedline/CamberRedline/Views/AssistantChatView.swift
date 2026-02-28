@@ -33,6 +33,9 @@ struct AssistantChatView: View {
                                 chatBubble(msg)
                                     .id(msg.id)
                             }
+                            if viewModel.isLoading {
+                                typingIndicator
+                            }
                         }
                     }
                     .padding()
@@ -58,6 +61,7 @@ struct AssistantChatView: View {
                     Image(systemName: "chart.bar.doc.horizontal")
                         .foregroundStyle(.secondary)
                 }
+                .accessibilityLabel("View context packet")
             }
             ToolbarItem(placement: .topBarTrailing) {
                 Button {
@@ -66,6 +70,7 @@ struct AssistantChatView: View {
                     Image(systemName: "trash")
                         .foregroundStyle(.secondary)
                 }
+                .accessibilityLabel("Clear chat")
             }
         }
         .navigationDestination(isPresented: $showSmokeContextPacket) {
@@ -125,6 +130,23 @@ struct AssistantChatView: View {
                 .background(Color.white.opacity(0.1))
                 .clipShape(Capsule())
                 .foregroundStyle(.white)
+        }
+    }
+
+    private var typingIndicator: some View {
+        HStack {
+            HStack(spacing: 4) {
+                ForEach(0..<3) { i in
+                    Circle()
+                        .fill(Color.white.opacity(0.5))
+                        .frame(width: 6, height: 6)
+                }
+            }
+            .padding(.horizontal, 14)
+            .padding(.vertical, 12)
+            .background(Color.white.opacity(0.1))
+            .clipShape(RoundedRectangle(cornerRadius: 18))
+            Spacer(minLength: 50)
         }
     }
 

@@ -57,12 +57,13 @@ struct CallHeaderCard: View {
         return firstLine.trimmingCharacters(in: .whitespaces)
     }
 
-    /// "👤 Zack ↔ {contactName}" — uses contactName when available.
+    /// "👤 {owner} ↔ {contactName}" — uses contactName when available.
     private var participantsLabel: String {
+        let owner = AppConfig.ownerName
         if let contact = header.contactName, !contact.isEmpty {
-            return "👤 Zack ↔ \(contact)"
+            return "👤 \(owner) ↔ \(contact)"
         }
-        return "👤 Zack"
+        return "👤 \(owner)"
     }
 
     // MARK: - Body

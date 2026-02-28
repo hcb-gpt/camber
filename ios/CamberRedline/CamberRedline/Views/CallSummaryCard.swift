@@ -62,19 +62,20 @@ struct CallSummaryCard: View {
 
     /// Participants label built from the participants array, falling back to contactName.
     private var participantsLabel: String {
+        let owner = AppConfig.ownerName
         if !entry.participants.isEmpty {
             let others = entry.participants.filter {
-                !$0.lowercased().contains("zack")
+                !$0.lowercased().contains(owner.lowercased())
             }
             let otherName = others.first ?? entry.participants.first ?? ""
             if !otherName.isEmpty {
-                return "👤 Zack ↔ \(otherName)"
+                return "👤 \(owner) ↔ \(otherName)"
             }
         }
         if let contact = entry.contactName, !contact.isEmpty {
-            return "👤 Zack ↔ \(contact)"
+            return "👤 \(owner) ↔ \(contact)"
         }
-        return "👤 Zack"
+        return "👤 \(owner)"
     }
 
     /// Truncated summary body (200 chars max), excluding the first line (used as title).
