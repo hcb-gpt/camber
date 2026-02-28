@@ -1,7 +1,7 @@
 import "jsr:@supabase/functions-js/edge-runtime.d.ts";
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
 
-const FUNCTION_VERSION = "redline-thread_v3.1.0";
+const FUNCTION_VERSION = "redline-thread_v3.2.0";
 const OWNER_SMS_USER_IDS = ["+17066889158", "usr_4PCSTDQ8N161KAC4GG7AF9CR94"];
 const OUTBOUND_INFERENCE_WINDOW_MS = 30 * 60 * 1000;
 const OUTBOUND_INFERENCE_MAX_GAP_MS = 60 * 1000;
@@ -516,7 +516,7 @@ async function handleContacts(db: any, url: URL, t0: number): Promise<Response> 
   }
 
   const selectColumns =
-    "contact_id, contact_name, contact_phone, call_count, sms_count, claim_count, ungraded_count, last_activity, last_snippet, last_direction, last_interaction_type";
+    "contact_id, contact_name, contact_phone, call_count, sms_count, claim_count, ungraded_count, last_activity, last_snippet, last_direction, last_interaction_type, source";
 
   // Cascade: unified matview → unified view → legacy view
   const contactsSources = [
@@ -555,10 +555,10 @@ async function handleContacts(db: any, url: URL, t0: number): Promise<Response> 
       sms_count: Number(row.sms_count ?? 0),
       claim_count: Number(row.claim_count ?? 0),
       ungraded_count: Number(row.ungraded_count ?? 0),
-      last_activity: row.last_activity || null,
-      last_summary: deriveContactLastSummary(row),
-      last_direction: row.last_direction || null,
-      last_interaction_type: row.last_interaction_type || null,
+      last_activity: row.last_activity || "",
+      last_summary: deriveContactLastSummary(row) || "",
+      last_direction: row.last_direction || "",
+      last_interaction_type: row.last_interaction_type || "",
     }))
     .filter((row: any) => !!row.contact_id && (row.call_count > 0 || row.sms_count > 0))
     .sort((a: any, b: any) => {
@@ -642,7 +642,7 @@ async function handleTopCandidates(db: any, url: URL, t0: number): Promise<Respo
     contact_phone: row.contact_phone,
     pending_review_count: Number(row.pending_review_count ?? 0),
     total_interaction_count: Number(row.total_interaction_count ?? 0),
-    last_activity: row.last_activity || null,
+    last_activity: row.last_activity || "",
     oldest_pending_review: row.oldest_pending_review || null,
   }));
 
@@ -1016,44 +1016,69 @@ async function handleThread(
   };
   const computeStart = performance.now();
 
-  const { data: contactRow, error: contactErr } = await timeDb("db_contact", () =>
-    db
-      .from("contacts")
-      .select("id, name, phone")
-      .eq("id", contactId)
-      .single());
-  let resolvedContact = contactRow;
-  const smsOnlyContactDigits = parseSmsOnlyContactDigits(contactId);
+  // Resolve contact: unified matview first (covers real contacts + beside_thread synthetics),
+  // then fall back to contacts table for legacy compatibility.
+  let resolvedContact: { id: string; name: string; phone: string } | null = null;
 
-  if (!resolvedContact && smsOnlyContactDigits) {
-    const smsOnlyPhoneVariants = buildPhoneVariants(smsOnlyContactDigits);
-    let lookupQuery = db
-      .from("sms_messages")
-      .select("contact_name, contact_phone")
-      .not("contact_phone", "is", null)
-      .order("sent_at", { ascending: false, nullsFirst: false })
-      .limit(1);
-    if (smsOnlyPhoneVariants.length === 1) {
-      lookupQuery = lookupQuery.eq("contact_phone", smsOnlyPhoneVariants[0]);
-    } else if (smsOnlyPhoneVariants.length > 1) {
-      lookupQuery = lookupQuery.in("contact_phone", smsOnlyPhoneVariants);
-    }
-    const { data: smsContactRows, error: smsContactErr } = await timeDb("db_sms_contact_fallback", () => lookupQuery);
-    if (!smsContactErr && smsContactRows && smsContactRows.length > 0) {
-      const latest = smsContactRows[0];
-      resolvedContact = {
-        id: contactId,
-        name: String(latest?.contact_name || "").trim() || (latest?.contact_phone || smsOnlyContactDigits),
-        phone: String(latest?.contact_phone || "").trim() || smsOnlyContactDigits,
-      };
+  const { data: unifiedRow } = await timeDb("db_contact_unified", () =>
+    db
+      .from("redline_contacts_unified_matview")
+      .select("contact_id, contact_name, contact_phone")
+      .eq("contact_id", contactId)
+      .limit(1)
+      .maybeSingle());
+  if (unifiedRow) {
+    resolvedContact = {
+      id: unifiedRow.contact_id,
+      name: unifiedRow.contact_name || unifiedRow.contact_phone || contactId,
+      phone: unifiedRow.contact_phone || "",
+    };
+  }
+
+  if (!resolvedContact) {
+    const { data: contactRow } = await timeDb("db_contact_legacy", () =>
+      db
+        .from("contacts")
+        .select("contact_id, contact_name, contact_phone")
+        .eq("id", contactId)
+        .single());
+    if (contactRow) {
+      resolvedContact = contactRow;
     }
   }
 
   if (!resolvedContact) {
-    return json({ ok: false, error_code: "contact_not_found", error: contactErr?.message || "not found" }, 404);
+    const smsOnlyContactDigits = parseSmsOnlyContactDigits(contactId);
+    if (smsOnlyContactDigits) {
+      const smsOnlyPhoneVariants = buildPhoneVariants(smsOnlyContactDigits);
+      let lookupQuery = db
+        .from("sms_messages")
+        .select("contact_name, contact_phone")
+        .not("contact_phone", "is", null)
+        .order("sent_at", { ascending: false, nullsFirst: false })
+        .limit(1);
+      if (smsOnlyPhoneVariants.length === 1) {
+        lookupQuery = lookupQuery.eq("contact_phone", smsOnlyPhoneVariants[0]);
+      } else if (smsOnlyPhoneVariants.length > 1) {
+        lookupQuery = lookupQuery.in("contact_phone", smsOnlyPhoneVariants);
+      }
+      const { data: smsContactRows } = await timeDb("db_sms_contact_fallback", () => lookupQuery);
+      if (smsContactRows && smsContactRows.length > 0) {
+        const latest = smsContactRows[0];
+        resolvedContact = {
+          id: contactId,
+          name: String(latest?.contact_name || "").trim() || (latest?.contact_phone || smsOnlyContactDigits),
+          phone: String(latest?.contact_phone || "").trim() || smsOnlyContactDigits,
+        };
+      }
+    }
+  }
+
+  if (!resolvedContact) {
+    return json({ ok: false, error_code: "contact_not_found", error: "not found" }, 404);
   }
   const contact = resolvedContact;
-  const contactPhoneVariants = buildPhoneVariants(resolvedContact.phone);
+  const contactPhoneVariants = buildPhoneVariants(contact.contact_phone);
 
   const scanWindow = Math.min(Math.max(offset + limit + 20, 40), 120);
   const queryPageSize = 40;
@@ -1211,7 +1236,7 @@ async function handleThread(
   if (pagedTimeline.length === 0) {
     return json({
       ok: true,
-      contact: { id: contact.id, name: contact.name, phone: contact.phone },
+      contact: { id: contact.contact_id, name: contact.contact_name, phone: contact.contact_phone },
       thread: [],
       pagination: { limit, offset, total: totalCount },
       function_version: FUNCTION_VERSION,
@@ -1247,7 +1272,7 @@ async function handleThread(
   const pendingSmsReviewByMessageId = new Map<string, any>();
   const smsInteractionKeys = [
     ...new Set(
-      pagedSmsMessages.flatMap((sms: any) => deriveSmsInteractionKeys(sms, contact.phone)),
+      pagedSmsMessages.flatMap((sms: any) => deriveSmsInteractionKeys(sms, contact.contact_phone)),
     ),
   ];
 
@@ -1279,7 +1304,7 @@ async function handleThread(
     }
 
     for (const sms of pagedSmsMessages) {
-      const matchingReview = deriveSmsInteractionKeys(sms, contact.phone)
+      const matchingReview = deriveSmsInteractionKeys(sms, contact.contact_phone)
         .map((key) => pendingSmsReviewByInteractionId.get(key))
         .find((value) => !!value);
       if (matchingReview) {
@@ -1539,7 +1564,7 @@ async function handleThread(
       event_at: i.event_at_utc,
       direction: directionMap.get(i.interaction_id) || null,
       summary: i.human_summary,
-      contact_name: i.contact_name || contact.name,
+      contact_name: i.contact_name || contact.contact_name,
       raw_transcript: rawTranscript,
       participants,
       spans: dedupedSpans.map((s: any, index: number) => {
@@ -1562,7 +1587,7 @@ async function handleThread(
           transcript_segment: s.transcript_segment,
           word_count: s.word_count,
           review_queue_id: pendingReview?.id || null,
-          needs_attribution: !!pendingReview,
+          needs_attribution: !!pendingReview, span_id: s.id,
           project_id: projectId || null,
           project_name: projectName,
           confidence: Number.isFinite(confidenceValue) ? confidenceValue : null,
@@ -1581,13 +1606,13 @@ async function handleThread(
     const pendingReview = pendingSmsReviewByMessageId.get(String(s.id));
     return {
       type: "sms",
-      sms_id: s.id,
+      sms_id: s.id, sender_name: s.direction === "outbound" ? "Zack" : (s.contact_name || contact.contact_name), needs_attribution: !!pendingReview,
       event_at: s.sent_at,
       direction: s.direction,
       content: s.content,
-      sender_name: s.direction === "outbound" ? "Zack" : (s.contact_name || contact.name),
+      sender_name: s.direction === "outbound" ? "Zack" : (s.contact_name || contact.contact_name),
       review_queue_id: pendingReview?.id || null,
-      needs_attribution: !!pendingReview,
+      needs_attribution: !!pendingReview, span_id: s.id,
     };
   });
 
@@ -1617,7 +1642,7 @@ async function handleThread(
   return json(
     {
       ok: true,
-      contact: { id: contact.id, name: contact.name, phone: contact.phone },
+      contact: { id: contact.contact_id, name: contact.contact_name, phone: contact.contact_phone },
       thread,
       pagination: { limit, offset, total: totalCount },
       function_version: FUNCTION_VERSION,
@@ -1668,7 +1693,7 @@ async function handleSpansApi(db: any, contactId: string, url: URL, t0: number):
 
   const { data: contact, error: contactErr } = await db
     .from("contacts")
-    .select("id, name, phone")
+    .select("contact_id, contact_name, contact_phone")
     .eq("id", contactId)
     .single();
 
@@ -1712,7 +1737,7 @@ async function handleSpansApi(db: any, contactId: string, url: URL, t0: number):
   if (allInteractions.length === 0) {
     return json({
       ok: true,
-      contact: { id: contact.id, name: contact.name, phone: contact.phone },
+      contact: { id: contact.contact_id, name: contact.contact_name, phone: contact.contact_phone },
       spans: [],
       pagination: {
         mode: "offset_cursor_v1",
@@ -1866,8 +1891,8 @@ async function handleSpansApi(db: any, contactId: string, url: URL, t0: number):
       interaction_id: interactionId,
       event_at: interaction?.event_at_utc || null,
       direction: directionByInteraction.get(interactionId) || null,
-      contact_id: contact.id,
-      contact_name: interaction?.contact_name || contact.name,
+      contact_id: contact.contact_id,
+      contact_name: interaction?.contact_name || contact.contact_name,
       span_index: span.span_index,
       transcript_segment: span.transcript_segment,
       word_count: span.word_count,
@@ -1900,7 +1925,7 @@ async function handleSpansApi(db: any, contactId: string, url: URL, t0: number):
   return json({
     ok: true,
     endpoint: "GET /redline/spans/:contact_id",
-    contact: { id: contact.id, name: contact.name, phone: contact.phone },
+    contact: { id: contact.contact_id, name: contact.contact_name, phone: contact.contact_phone },
     spans: paged,
     pagination: {
       mode: "offset_cursor_v1",
@@ -2834,9 +2859,9 @@ const HTML = `<!DOCTYPE html>
         container.appendChild(layout);
 
         var hdr = document.getElementById("contact-header");
-        document.getElementById("contact-header-name").textContent = data.contact.name;
+        document.getElementById("contact-header-name").textContent = data.contact.contact_name;
         document.getElementById("contact-header-meta").textContent =
-          data.pagination.total + " calls \u00b7 " + (data.contact.phone || "");
+          data.pagination.total + " calls \u00b7 " + (data.contact.contact_phone || "");
         hdr.style.display = "block";
 
         if (!data.thread || data.thread.length === 0) {
@@ -2944,7 +2969,7 @@ const HTML = `<!DOCTYPE html>
           card.appendChild(titleEl);
         }
 
-        var contactName = item.contact_name || (contact && contact.name) || "Contact";
+        var contactName = item.contact_name || (contact && contact.contact_name) || "Contact";
         var partEl = document.createElement("div");
         partEl.className = "call-card-participants";
         partEl.textContent = "\uD83D\uDC64 Zack \u2194 " + contactName;
