@@ -1000,6 +1000,7 @@ async function handleSanity(db: any, t0: number): Promise<Response> {
     db
       .from("interactions")
       .select("id, interaction_id, contact_name, event_at_utc, channel")
+      .not("interaction_id", "like", "cll_VP_BYPASS_TEST_%")
       .order("event_at_utc", { ascending: false, nullsFirst: false })
       .limit(10),
     db
@@ -1180,6 +1181,7 @@ async function handleThread(
           .or("channel.eq.call,channel.eq.phone,channel.is.null")
           .or("is_shadow.is.false,is_shadow.is.null")
           .not("interaction_id", "like", "cll_SHADOW_%")
+          .not("interaction_id", "like", "cll_VP_BYPASS_TEST_%")
           .not("event_at_utc", "is", null)
           .order("event_at_utc", { ascending: false })
           .range(from, to);
@@ -1505,6 +1507,7 @@ async function handleSpansApi(db: any, contactId: string, url: URL, t0: number):
       .or("channel.eq.call,channel.eq.phone,channel.is.null")
       .or("is_shadow.is.false,is_shadow.is.null")
       .not("interaction_id", "like", "cll_SHADOW_%")
+      .not("interaction_id", "like", "cll_VP_BYPASS_TEST_%")
       .not("event_at_utc", "is", null)
       .order("event_at_utc", { ascending: false })
       .range(interactionsFrom, interactionsTo);
