@@ -166,8 +166,7 @@ function zonedDateParts(date: Date, timeZone: string): { year: number; month: nu
   });
 
   const parts = formatter.formatToParts(date);
-  const value = (type: string): number =>
-    Number(parts.find((part) => part.type === type)?.value || "0");
+  const value = (type: string): number => Number(parts.find((part) => part.type === type)?.value || "0");
 
   return {
     year: value("year"),
@@ -539,8 +538,7 @@ async function handleContacts(db: any, url: URL, t0: number): Promise<Response> 
     db
       .from(contactsSource)
       .select(selectColumns)
-      .order("last_activity", { ascending: false, nullsFirst: false })
-  );
+      .order("last_activity", { ascending: false, nullsFirst: false }));
 
   if (error) {
     return json({ ok: false, error_code: "contacts_query_failed", error: error.message }, 500);
@@ -582,16 +580,20 @@ async function handleContacts(db: any, url: URL, t0: number): Promise<Response> 
   const computeMs = Math.max(0, performance.now() - computeStart - dbMs);
   const serverTiming = buildServerTimingHeader({ db_ms: dbMs, compute_ms: computeMs, ...stageMs }, totalMs);
 
-  return json({
-    ok: true,
-    contacts,
-    cached: false,
-    source: contactsSource,
-    grading_cutoff: cutoff,
-    auto_reset_applied: resetApplied,
-    function_version: FUNCTION_VERSION,
-    ms: totalMs,
-  }, 200, serverTiming ? { "Server-Timing": serverTiming } : {});
+  return json(
+    {
+      ok: true,
+      contacts,
+      cached: false,
+      source: contactsSource,
+      grading_cutoff: cutoff,
+      auto_reset_applied: resetApplied,
+      function_version: FUNCTION_VERSION,
+      ms: totalMs,
+    },
+    200,
+    serverTiming ? { "Server-Timing": serverTiming } : {},
+  );
 }
 
 // projects endpoint
@@ -679,18 +681,22 @@ async function handleTriageQueue(db: any, url: URL, t0: number): Promise<Respons
   const rawLimit = parseInt(url.searchParams.get("limit") || "100", 10);
   const limit = Math.min(Math.max(Number.isNaN(rawLimit) ? 100 : rawLimit, 1), 300);
 
-  const [{ data: pendingRows, error: pendingErr }, { count: totalPending, error: totalErr }] = await timeDb("db_pending_queue", () => Promise.all([
-    db
-      .from("review_queue")
-      .select("id, span_id, interaction_id, created_at")
-      .eq("status", "pending")
-      .order("created_at", { ascending: true, nullsFirst: false })
-      .limit(limit),
-    db
-      .from("review_queue")
-      .select("id", { count: "exact", head: true })
-      .eq("status", "pending"),
-  ]));
+  const [{ data: pendingRows, error: pendingErr }, { count: totalPending, error: totalErr }] = await timeDb(
+    "db_pending_queue",
+    () =>
+      Promise.all([
+        db
+          .from("review_queue")
+          .select("id, span_id, interaction_id, created_at")
+          .eq("status", "pending")
+          .order("created_at", { ascending: true, nullsFirst: false })
+          .limit(limit),
+        db
+          .from("review_queue")
+          .select("id", { count: "exact", head: true })
+          .eq("status", "pending"),
+      ]),
+  );
 
   if (pendingErr) {
     return json({ ok: false, error_code: "triage_queue_query_failed", error: pendingErr.message }, 500);
@@ -711,25 +717,30 @@ async function handleTriageQueue(db: any, url: URL, t0: number): Promise<Respons
     });
   }
 
-  const spanIds: string[] = Array.from(new Set(
-    queueRows
-      .map((row: any) => String(row?.span_id || ""))
-      .filter((value: string) => value.length > 0),
-  )) as string[];
-  const interactionIdsFromQueue: string[] = Array.from(new Set(
-    queueRows
-      .map((row: any) => String(row?.interaction_id || ""))
-      .filter((value: string) => value.length > 0),
-  )) as string[];
+  const spanIds: string[] = Array.from(
+    new Set(
+      queueRows
+        .map((row: any) => String(row?.span_id || ""))
+        .filter((value: string) => value.length > 0),
+    ),
+  ) as string[];
+  const interactionIdsFromQueue: string[] = Array.from(
+    new Set(
+      queueRows
+        .map((row: any) => String(row?.interaction_id || ""))
+        .filter((value: string) => value.length > 0),
+    ),
+  ) as string[];
 
-  const { data: spanRows, error: spanErr } = await timeDb("db_spans", () => batchIn<any>(
-    spanIds,
-    (chunk: string[]) =>
-      db
-        .from("conversation_spans")
-        .select("id, interaction_id, span_index, transcript_segment")
-        .in("id", chunk),
-  ));
+  const { data: spanRows, error: spanErr } = await timeDb("db_spans", () =>
+    batchIn<any>(
+      spanIds,
+      (chunk: string[]) =>
+        db
+          .from("conversation_spans")
+          .select("id, interaction_id, span_index, transcript_segment")
+          .in("id", chunk),
+    ));
   if (spanErr) {
     return json({ ok: false, error_code: "triage_spans_query_failed", error: spanErr.message }, 500);
   }
@@ -737,19 +748,22 @@ async function handleTriageQueue(db: any, url: URL, t0: number): Promise<Respons
     (spanRows || []).map((row: any) => [String(row?.id || ""), row]),
   );
 
-  const interactionIds: string[] = [...new Set([
-    ...interactionIdsFromQueue,
-    ...((spanRows || []).map((row: any) => String(row?.interaction_id || "")).filter(Boolean)),
-  ])];
+  const interactionIds: string[] = [
+    ...new Set([
+      ...interactionIdsFromQueue,
+      ...((spanRows || []).map((row: any) => String(row?.interaction_id || "")).filter(Boolean)),
+    ]),
+  ];
 
-  const { data: interactionRows, error: interactionErr } = await timeDb("db_interactions", () => batchIn<any>(
-    interactionIds,
-    (chunk: string[]) =>
-      db
-        .from("interactions")
-        .select("interaction_id, contact_id, contact_name, event_at_utc, channel")
-        .in("interaction_id", chunk),
-  ));
+  const { data: interactionRows, error: interactionErr } = await timeDb("db_interactions", () =>
+    batchIn<any>(
+      interactionIds,
+      (chunk: string[]) =>
+        db
+          .from("interactions")
+          .select("interaction_id, contact_id, contact_name, event_at_utc, channel")
+          .in("interaction_id", chunk),
+    ));
   if (interactionErr) {
     return json({ ok: false, error_code: "triage_interactions_query_failed", error: interactionErr.message }, 500);
   }
@@ -757,15 +771,16 @@ async function handleTriageQueue(db: any, url: URL, t0: number): Promise<Respons
     (interactionRows || []).map((row: any) => [String(row?.interaction_id || ""), row]),
   );
 
-  const { data: attributionRows, error: attributionErr } = await timeDb("db_attributions", () => batchIn<any>(
-    spanIds,
-    (chunk: string[]) =>
-      db
-        .from("span_attributions")
-        .select("span_id, project_id, applied_project_id, confidence, attributed_at")
-        .in("span_id", chunk)
-        .order("attributed_at", { ascending: false }),
-  ));
+  const { data: attributionRows, error: attributionErr } = await timeDb("db_attributions", () =>
+    batchIn<any>(
+      spanIds,
+      (chunk: string[]) =>
+        db
+          .from("span_attributions")
+          .select("span_id, project_id, applied_project_id, confidence, attributed_at")
+          .in("span_id", chunk)
+          .order("attributed_at", { ascending: false }),
+    ));
   if (attributionErr) {
     return json({ ok: false, error_code: "triage_attributions_query_failed", error: attributionErr.message }, 500);
   }
@@ -776,19 +791,22 @@ async function handleTriageQueue(db: any, url: URL, t0: number): Promise<Respons
     attributionBySpan.set(spanId, row);
   }
 
-  const projectIds = [...new Set(
-    (attributionRows || [])
-      .map((row: any) => String(row?.applied_project_id || row?.project_id || ""))
-      .filter(Boolean),
-  )];
-  const { data: projectRows, error: projectErr } = await timeDb("db_projects", () => batchIn<any>(
-    projectIds,
-    (chunk: string[]) =>
-      db
-        .from("projects")
-        .select("id, name")
-        .in("id", chunk),
-  ));
+  const projectIds = [
+    ...new Set(
+      (attributionRows || [])
+        .map((row: any) => String(row?.applied_project_id || row?.project_id || ""))
+        .filter(Boolean),
+    ),
+  ];
+  const { data: projectRows, error: projectErr } = await timeDb("db_projects", () =>
+    batchIn<any>(
+      projectIds,
+      (chunk: string[]) =>
+        db
+          .from("projects")
+          .select("id, name")
+          .in("id", chunk),
+    ));
   if (projectErr) {
     return json({ ok: false, error_code: "triage_projects_query_failed", error: projectErr.message }, 500);
   }
@@ -830,14 +848,18 @@ async function handleTriageQueue(db: any, url: URL, t0: number): Promise<Respons
   const computeMs = Math.max(0, performance.now() - computeStart - dbMs);
   const serverTiming = buildServerTimingHeader({ db_ms: dbMs, compute_ms: computeMs, ...stageMs }, totalMs);
 
-  return json({
-    ok: true,
-    items,
-    count: items.length,
-    total_pending: totalPending ?? items.length,
-    function_version: FUNCTION_VERSION,
-    ms: totalMs,
-  }, 200, serverTiming ? { "Server-Timing": serverTiming } : {});
+  return json(
+    {
+      ok: true,
+      items,
+      count: items.length,
+      total_pending: totalPending ?? items.length,
+      function_version: FUNCTION_VERSION,
+      ms: totalMs,
+    },
+    200,
+    serverTiming ? { "Server-Timing": serverTiming } : {},
+  );
 }
 
 async function handleUndoVerdict(db: any, req: Request, t0: number): Promise<Response> {
@@ -1035,16 +1057,15 @@ async function handleThread(
 
   const { data: contact, error: contactErr } = await timeDb("db_contact", () =>
     db
-      .from("contacts")
-      .select("id, name, phone")
-      .eq("id", contactId)
-      .single()
-  );
+      .from("redline_contacts_unified_matview")
+      .select("contact_id, contact_name, contact_phone")
+      .eq("contact_id", contactId)
+      .single());
 
   if (contactErr || !contact) {
     return json({ ok: false, error_code: "contact_not_found", error: contactErr?.message || "not found" }, 404);
   }
-  const contactPhoneVariants = buildPhoneVariants(contact.phone);
+  const contactPhoneVariants = buildPhoneVariants(contact.contact_phone);
 
   const scanWindow = Math.min(Math.max(offset + limit + 20, 40), 120);
   const queryPageSize = 40;
@@ -1144,21 +1165,60 @@ async function handleThread(
 
   const pagedTimeline = timeline.slice(offset, offset + limit);
   if (pagedTimeline.length === 0) {
-    return json({ ok: true, contact: { id: contact.id, name: contact.name, phone: contact.phone }, thread: [], pagination: { limit, offset, total: timeline.length }, function_version: FUNCTION_VERSION, ms: Date.now() - t0 });
+    return json({
+      ok: true,
+      contact: { id: contact.contact_id, name: contact.contact_name, phone: contact.contact_phone },
+      thread: [],
+      pagination: { limit, offset, total: timeline.length },
+      function_version: FUNCTION_VERSION,
+      ms: Date.now() - t0,
+    });
   }
 
   const pagedCallIds = Array.from(new Set(pagedTimeline.filter((e: any) => e.kind === "call").map((e: any) => e.key)));
-  const pagedSmsMessages = smsMessages.filter((s: any) => pagedTimeline.some(e => e.kind === "sms" && e.key === s.id));
+  const pagedSmsMessages = smsMessages.filter((s: any) =>
+    pagedTimeline.some((e) => e.kind === "sms" && e.key === s.id)
+  );
 
   // Parallel 3: Fetch all details for paged items
   const [callsRawRes, spansRes, claimsRes, pendingSmsRes] = await Promise.all([
-    pagedCallIds.length > 0 ? timeDb("db_calls_raw", () => db.from("calls_raw").select("interaction_id, direction, transcript").in("interaction_id", pagedCallIds)) : { data: [] },
-    pagedCallIds.length > 0 ? timeDb("db_conversation_spans", () => batchIn<any>(pagedCallIds, chunk => db.from("conversation_spans").select("id, interaction_id, span_index, transcript_segment, word_count").in("interaction_id", chunk).eq("is_superseded", false))) : { data: [] },
-    pagedCallIds.length > 0 ? timeDb("db_journal_claims", () => batchIn<any>(pagedCallIds, chunk => db.from("journal_claims").select("id, call_id, source_span_id, claim_type, claim_text, speaker_label").in("call_id", chunk))) : { data: [] },
-    pagedSmsMessages.length > 0 ? timeDb("db_pending_sms_reviews", () => {
-      const keys = [...new Set(pagedSmsMessages.flatMap(s => deriveSmsInteractionKeys(s, contact.phone)))];
-      return db.from("review_queue").select("id, interaction_id, created_at").eq("status", "pending").in("interaction_id", keys);
-    }) : { data: [] },
+    pagedCallIds.length > 0
+      ? timeDb(
+        "db_calls_raw",
+        () => db.from("calls_raw").select("interaction_id, direction, transcript").in("interaction_id", pagedCallIds),
+      )
+      : { data: [] },
+    pagedCallIds.length > 0
+      ? timeDb(
+        "db_conversation_spans",
+        () =>
+          batchIn<any>(pagedCallIds, (chunk) =>
+            db.from("conversation_spans").select("id, interaction_id, span_index, transcript_segment, word_count").in(
+              "interaction_id",
+              chunk,
+            ).eq("is_superseded", false)),
+      )
+      : { data: [] },
+    pagedCallIds.length > 0
+      ? timeDb(
+        "db_journal_claims",
+        () =>
+          batchIn<any>(pagedCallIds, (chunk) =>
+            db.from("journal_claims").select("id, call_id, source_span_id, claim_type, claim_text, speaker_label").in(
+              "call_id",
+              chunk,
+            )),
+      )
+      : { data: [] },
+    pagedSmsMessages.length > 0
+      ? timeDb("db_pending_sms_reviews", () => {
+        const keys = [...new Set(pagedSmsMessages.flatMap((s) => deriveSmsInteractionKeys(s, contact.phone)))];
+        return db.from("review_queue").select("id, interaction_id, created_at").eq("status", "pending").in(
+          "interaction_id",
+          keys,
+        );
+      })
+      : { data: [] },
   ]);
 
   const spanIds = (spansRes.data || []).map((s: any) => s.id);
@@ -1166,9 +1226,36 @@ async function handleThread(
 
   // Parallel 4: Fetch deep details
   const [attrRes, pendingSpansRes, gradesRes] = await Promise.all([
-    spanIds.length > 0 ? timeDb("db_span_attributions", () => batchIn<any>(spanIds, chunk => db.from("span_attributions").select("span_id, project_id, applied_project_id, confidence").in("span_id", chunk))) : { data: [] },
-    spanIds.length > 0 ? timeDb("db_pending_span_reviews", () => batchIn<any>(spanIds, chunk => db.from("review_queue").select("id, span_id, interaction_id, created_at").eq("status", "pending").in("span_id", chunk))) : { data: [] },
-    claimIds.length > 0 ? timeDb("db_claim_grades", () => batchIn<any>(claimIds, chunk => db.from("claim_grades").select("claim_id, grade, correction_text, graded_by").in("claim_id", chunk))) : { data: [] },
+    spanIds.length > 0
+      ? timeDb(
+        "db_span_attributions",
+        () =>
+          batchIn<any>(spanIds, (chunk) =>
+            db.from("span_attributions").select("span_id, project_id, applied_project_id, confidence").in(
+              "span_id",
+              chunk,
+            )),
+      )
+      : { data: [] },
+    spanIds.length > 0
+      ? timeDb(
+        "db_pending_span_reviews",
+        () =>
+          batchIn<any>(spanIds, (chunk) =>
+            db.from("review_queue").select("id, span_id, interaction_id, created_at").eq("status", "pending").in(
+              "span_id",
+              chunk,
+            )),
+      )
+      : { data: [] },
+    claimIds.length > 0
+      ? timeDb(
+        "db_claim_grades",
+        () =>
+          batchIn<any>(claimIds, (chunk) =>
+            db.from("claim_grades").select("claim_id, grade, correction_text, graded_by").in("claim_id", chunk)),
+      )
+      : { data: [] },
   ]);
 
   // Map everything back
@@ -1182,13 +1269,18 @@ async function handleThread(
   const pendingSmsByInteraction = new Map((pendingSmsRes.data || []).map((p: any) => [p.interaction_id, p]));
 
   // Project names fetch
-  const projectIds = [...new Set((attrRes.data || []).map((a: any) => a.applied_project_id || a.project_id).filter(Boolean))];
-  const projectNamesRes = projectIds.length > 0 ? await timeDb("db_projects", () => db.from("projects").select("id, name").in("id", projectIds)) : { data: [] };
+  const projectIds = [
+    ...new Set((attrRes.data || []).map((a: any) => a.applied_project_id || a.project_id).filter(Boolean)),
+  ];
+  const projectNamesRes = projectIds.length > 0
+    ? await timeDb("db_projects", () => db.from("projects").select("id, name").in("id", projectIds))
+    : { data: [] };
   const projectNameById = new Map((projectNamesRes.data || []).map((p: any) => [p.id, p.name]));
 
   const callEntries = allInteractions.filter((i: any) => pagedCallIds.includes(i.interaction_id)).map((i: any) => {
     const interactionClaims = (claimsByCall.get(i.interaction_id) || []).map((c: any) => ({
-      ...c, ...gradeByClaim.get(c.id)
+      ...c,
+      ...gradeByClaim.get(c.id),
     }));
     return {
       type: "call",
@@ -1205,7 +1297,7 @@ async function handleThread(
           project_name: projectNameById.get(attr?.applied_project_id || attr?.project_id),
           confidence: attr?.confidence,
         };
-      })
+      }),
     };
   });
 
@@ -1215,24 +1307,32 @@ async function handleThread(
     event_at: s.sent_at,
     direction: s.direction,
     content: s.content,
-    review_queue_id: deriveSmsInteractionKeys(s, contact.phone).map(k => pendingSmsByInteraction.get(k)).find(p => !!p)?.id
+    review_queue_id: deriveSmsInteractionKeys(s, contact.phone).map((k) => pendingSmsByInteraction.get(k)).find((p) =>
+      !!p
+    )?.id,
   }));
 
-  const thread = [...callEntries, ...smsEntries].sort((a, b) => new Date(a.event_at).getTime() - new Date(b.event_at).getTime());
+  const thread = [...callEntries, ...smsEntries].sort((a, b) =>
+    new Date(a.event_at).getTime() - new Date(b.event_at).getTime()
+  );
 
   const totalMs = Date.now() - t0;
   const dbMs = Object.entries(stageMs).filter(([s]) => s.startsWith("db_")).reduce((sum, [, ms]) => sum + ms, 0);
   const computeMs = Math.max(0, performance.now() - computeStart - dbMs);
   const serverTiming = buildServerTimingHeader({ db_ms: dbMs, compute_ms: computeMs, ...stageMs }, totalMs);
 
-  return json({
-    ok: true,
-    contact: { id: contact.id, name: contact.name, phone: contact.phone },
-    thread,
-    pagination: { limit, offset, total: timeline.length },
-    function_version: FUNCTION_VERSION,
-    ms: totalMs,
-  }, 200, { "Server-Timing": serverTiming });
+  return json(
+    {
+      ok: true,
+      contact: { id: contact.contact_id, name: contact.contact_name, phone: contact.contact_phone },
+      thread,
+      pagination: { limit, offset, total: timeline.length },
+      function_version: FUNCTION_VERSION,
+      ms: totalMs,
+    },
+    200,
+    { "Server-Timing": serverTiming },
+  );
 }
 
 async function handleThreadApi(db: any, contactId: string, url: URL, t0: number): Promise<Response> {
@@ -1319,7 +1419,7 @@ async function handleSpansApi(db: any, contactId: string, url: URL, t0: number):
   if (allInteractions.length === 0) {
     return json({
       ok: true,
-      contact: { id: contact.id, name: contact.name, phone: contact.phone },
+      contact: { id: contact.contact_id, name: contact.contact_name, phone: contact.contact_phone },
       spans: [],
       pagination: {
         mode: "offset_cursor_v1",
@@ -1395,11 +1495,13 @@ async function handleSpansApi(db: any, contactId: string, url: URL, t0: number):
     (spanAttributions || []).map((row: any) => [String(row?.span_id || ""), row]),
   );
 
-  const projectIds = [...new Set(
-    (spanAttributions || [])
-      .map((row: any) => String(row?.applied_project_id || row?.project_id || ""))
-      .filter((value: string) => value.length > 0),
-  )];
+  const projectIds = [
+    ...new Set(
+      (spanAttributions || [])
+        .map((row: any) => String(row?.applied_project_id || row?.project_id || ""))
+        .filter((value: string) => value.length > 0),
+    ),
+  ];
   const { data: projectRows, error: projectErr } = await batchIn<any>(
     projectIds,
     (chunk: string[]) =>
@@ -1505,7 +1607,7 @@ async function handleSpansApi(db: any, contactId: string, url: URL, t0: number):
   return json({
     ok: true,
     endpoint: "GET /redline/spans/:contact_id",
-    contact: { id: contact.id, name: contact.name, phone: contact.phone },
+    contact: { id: contact.contact_id, name: contact.contact_name, phone: contact.contact_phone },
     spans: paged,
     pagination: {
       mode: "offset_cursor_v1",
@@ -1637,12 +1739,11 @@ async function handleVerdict(db: any, req: Request, t0: number): Promise<Respons
 
   const resolved = typeof rpcData === "string" ? JSON.parse(rpcData) : rpcData;
   if (!resolved?.ok) {
-    const status =
-      resolved?.error === "review_queue_item_not_found"
-        ? 404
-        : resolved?.error === "human_lock_conflict"
-        ? 409
-        : 400;
+    const status = resolved?.error === "review_queue_item_not_found"
+      ? 404
+      : resolved?.error === "human_lock_conflict"
+      ? 409
+      : 400;
     return json({ ...resolved, ms: Date.now() - t0 }, status);
   }
 
@@ -2227,23 +2328,18 @@ async function handleHealth(db: any, t0: number): Promise<Response> {
   const lastInteractionUtc = lastInteractionRes?.data?.event_at_utc ?? null;
   const pendingReviews = pendingRes?.count ?? 0;
 
-  const callStaleMin = lastCallUtc
-    ? Math.round((nowMs - new Date(lastCallUtc).getTime()) / 60_000)
-    : null;
-  const smsStaleMin = lastSmsUtc
-    ? Math.round((nowMs - new Date(lastSmsUtc).getTime()) / 60_000)
-    : null;
+  const callStaleMin = lastCallUtc ? Math.round((nowMs - new Date(lastCallUtc).getTime()) / 60_000) : null;
+  const smsStaleMin = lastSmsUtc ? Math.round((nowMs - new Date(lastSmsUtc).getTime()) / 60_000) : null;
 
   const lastError = lastErrorRes?.data
     ? {
-        function: lastErrorRes.data.function_name,
-        message: lastErrorRes.data.message,
-        at: lastErrorRes.data.created_at,
-      }
+      function: lastErrorRes.data.function_name,
+      message: lastErrorRes.data.message,
+      at: lastErrorRes.data.created_at,
+    }
     : null;
 
-  const pipelineOk =
-    callStaleMin !== null &&
+  const pipelineOk = callStaleMin !== null &&
     smsStaleMin !== null &&
     callStaleMin < 120 &&
     smsStaleMin < 120;
