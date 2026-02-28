@@ -1,7 +1,12 @@
 import "jsr:@supabase/functions-js/edge-runtime.d.ts";
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
 
-const FUNCTION_VERSION = "redline-thread_v3.1.0";
+const FUNCTION_VERSION = "redline-thread_v3.1.2";
+/**
+ * v3.1.2 - iOS Contract Fix (P0 Unbrick)
+ * - Map DB 'id' to 'span_id' and 'claim_id' for iOS compatibility
+ * - Closes visibility gap for beside_threads
+ */
 const OWNER_SMS_USER_IDS = ["+17066889158", "usr_4PCSTDQ8N161KAC4GG7AF9CR94"];
 const OUTBOUND_INFERENCE_WINDOW_MS = 30 * 60 * 1000;
 const OUTBOUND_INFERENCE_MAX_GAP_MS = 60 * 1000;
@@ -21,20 +26,19 @@ type RedlineApiRoute =
   | { kind: "verdict" }
   | { kind: "unknown"; path: string[] };
 
-function noStoreHeaders(): Record<string, string> {
-  return {
-    "Cache-Control": "no-store, no-cache, must-revalidate, proxy-revalidate, max-age=0",
-    Pragma: "no-cache",
-    Expires: "0",
-    "Surrogate-Control": "no-store",
-  };
-}
-
 function corsHeaders(): Record<string, string> {
   return {
     "Access-Control-Allow-Origin": "*",
     "Access-Control-Allow-Headers": "authorization, x-edge-secret, content-type",
     "Access-Control-Allow-Methods": "GET, POST, OPTIONS",
+  };
+}
+
+function noStoreHeaders(): Record<string, string> {
+  return {
+    "Cache-Control": "no-store, no-cache, must-revalidate, max-age=0",
+    "Pragma": "no-cache",
+    "Expires": "0",
   };
 }
 
@@ -112,7 +116,7 @@ function overlapRatio(a: string, b: string): number {
   return 0;
 }
 
-function deduplicateSpans(spans: any[]): any[] {
+function _deduplicateSpans(spans: any[]): any[] {
   const unique: any[] = [];
   for (const span of spans) {
     const seg = (span.transcript_segment || "").trim();
@@ -132,7 +136,7 @@ function deduplicateSpans(spans: any[]): any[] {
 // extract speaker names from transcript header lines
 const SPEAKER_LINE_RE = /^(?:\[\d+:\d+\]\s*)?([A-Za-z][A-Za-z0-9_ +().-]*?):\s.+/;
 
-function extractParticipants(transcript: string | null): string[] {
+function _extractParticipants(transcript: string | null): string[] {
   if (!transcript) return [];
   const lines = transcript.split("\n").slice(0, 40);
   const seen = new Set<string>();
@@ -496,6 +500,15 @@ async function handleGetCutoff(db: any, t0: number): Promise<Response> {
 
 // contacts endpoint
 async function handleContacts(db: any, url: URL, t0: number): Promise<Response> {
+  const stageMs: Record<string, number> = {};
+  const timeDb = async (stage: string, fn: () => Promise<any>): Promise<any> => {
+    const start = performance.now();
+    const result = await fn();
+    stageMs[stage] = (stageMs[stage] || 0) + (performance.now() - start);
+    return result;
+  };
+  const computeStart = performance.now();
+
   const { resetApplied, cutoff } = await maybeAutoResetGradingCutoff(db);
   if (resetApplied) {
     contactsCache = null;
@@ -518,49 +531,33 @@ async function handleContacts(db: any, url: URL, t0: number): Promise<Response> 
   const selectColumns =
     "contact_id, contact_name, contact_phone, call_count, sms_count, claim_count, ungraded_count, last_activity, last_snippet, last_direction, last_interaction_type";
 
-  // Cascade: unified matview → unified view → legacy view
-  const contactsSources = [
-    "redline_contacts_unified_matview",
-    "redline_contacts_unified",
-    "redline_contacts",
-  ];
-  let data: any = null;
-  let error: any = null;
-  let contactsSource = contactsSources[0];
-  for (const src of contactsSources) {
-    const result = await db
-      .from(src)
+  const contactsSource = "redline_contacts_unified_matview";
+  const { data, error } = await timeDb("db_contacts", () =>
+    db
+      .from(contactsSource)
       .select(selectColumns)
-      .order("last_activity", { ascending: false, nullsFirst: false });
-    if (!result.error) {
-      data = result.data;
-      error = null;
-      contactsSource = src;
-      break;
-    }
-    console.warn(`[redline-thread] ${src} query failed, trying next: ${result.error.message}`);
-    error = result.error;
-  }
+      .order("last_activity", { ascending: false, nullsFirst: false }));
 
   if (error) {
     return json({ ok: false, error_code: "contacts_query_failed", error: error.message }, 500);
   }
 
   const contacts = (data || [])
+    .filter((row: any) => row.contact_id != null)
     .map((row: any) => ({
       contact_id: row.contact_id,
+      contact_key: row.contact_id ?? `sms:${(row.contact_phone || "").replace(/\D/g, "").slice(-10)}`,
       name: row.contact_name,
       phone: row.contact_phone,
       call_count: Number(row.call_count ?? 0),
       sms_count: Number(row.sms_count ?? 0),
       claim_count: Number(row.claim_count ?? 0),
       ungraded_count: Number(row.ungraded_count ?? 0),
-      last_activity: row.last_activity || null,
-      last_summary: deriveContactLastSummary(row),
-      last_direction: row.last_direction || null,
-      last_interaction_type: row.last_interaction_type || null,
+      last_activity: row.last_activity || "",
+      last_summary: deriveContactLastSummary(row) || "",
+      last_direction: row.last_direction || "",
+      last_interaction_type: row.last_interaction_type || "",
     }))
-    .filter((row: any) => !!row.contact_id && (row.call_count > 0 || row.sms_count > 0))
     .sort((a: any, b: any) => {
       const aTime = Date.parse(a.last_activity || "") || 0;
       const bTime = Date.parse(b.last_activity || "") || 0;
@@ -573,16 +570,27 @@ async function handleContacts(db: any, url: URL, t0: number): Promise<Response> 
     contacts,
   };
 
-  return json({
-    ok: true,
-    contacts,
-    cached: false,
-    source: contactsSource,
-    grading_cutoff: cutoff,
-    auto_reset_applied: resetApplied,
-    function_version: FUNCTION_VERSION,
-    ms: Date.now() - t0,
-  });
+  const totalMs = Date.now() - t0;
+  const dbMs = Object.entries(stageMs)
+    .filter(([stage]) => stage.startsWith("db_"))
+    .reduce((sum, [, ms]) => sum + ms, 0);
+  const computeMs = Math.max(0, performance.now() - computeStart - dbMs);
+  const serverTiming = buildServerTimingHeader({ db_ms: dbMs, compute_ms: computeMs, ...stageMs }, totalMs);
+
+  return json(
+    {
+      ok: true,
+      contacts,
+      cached: false,
+      source: contactsSource,
+      grading_cutoff: cutoff,
+      auto_reset_applied: resetApplied,
+      function_version: FUNCTION_VERSION,
+      ms: totalMs,
+    },
+    200,
+    serverTiming ? { "Server-Timing": serverTiming } : {},
+  );
 }
 
 // projects endpoint
@@ -658,21 +666,34 @@ async function handleTopCandidates(db: any, url: URL, t0: number): Promise<Respo
 }
 
 async function handleTriageQueue(db: any, url: URL, t0: number): Promise<Response> {
+  const stageMs: Record<string, number> = {};
+  const timeDb = async (stage: string, fn: () => Promise<any>): Promise<any> => {
+    const start = performance.now();
+    const result = await fn();
+    stageMs[stage] = (stageMs[stage] || 0) + (performance.now() - start);
+    return result;
+  };
+  const computeStart = performance.now();
+
   const rawLimit = parseInt(url.searchParams.get("limit") || "100", 10);
   const limit = Math.min(Math.max(Number.isNaN(rawLimit) ? 100 : rawLimit, 1), 300);
 
-  const [{ data: pendingRows, error: pendingErr }, { count: totalPending, error: totalErr }] = await Promise.all([
-    db
-      .from("review_queue")
-      .select("id, span_id, interaction_id, created_at")
-      .eq("status", "pending")
-      .order("created_at", { ascending: true, nullsFirst: false })
-      .limit(limit),
-    db
-      .from("review_queue")
-      .select("id", { count: "exact", head: true })
-      .eq("status", "pending"),
-  ]);
+  const [{ data: pendingRows, error: pendingErr }, { count: totalPending, error: totalErr }] = await timeDb(
+    "db_pending_queue",
+    () =>
+      Promise.all([
+        db
+          .from("review_queue")
+          .select("id, span_id, interaction_id, created_at")
+          .eq("status", "pending")
+          .order("created_at", { ascending: true, nullsFirst: false })
+          .limit(limit),
+        db
+          .from("review_queue")
+          .select("id", { count: "exact", head: true })
+          .eq("status", "pending"),
+      ]),
+  );
 
   if (pendingErr) {
     return json({ ok: false, error_code: "triage_queue_query_failed", error: pendingErr.message }, 500);
@@ -708,14 +729,15 @@ async function handleTriageQueue(db: any, url: URL, t0: number): Promise<Respons
     ),
   ) as string[];
 
-  const { data: spanRows, error: spanErr } = await batchIn<any>(
-    spanIds,
-    (chunk: string[]) =>
-      db
-        .from("conversation_spans")
-        .select("id, interaction_id, span_index, transcript_segment")
-        .in("id", chunk),
-  );
+  const { data: spanRows, error: spanErr } = await timeDb("db_spans", () =>
+    batchIn<any>(
+      spanIds,
+      (chunk: string[]) =>
+        db
+          .from("conversation_spans")
+          .select("id, interaction_id, span_index, transcript_segment")
+          .in("id", chunk),
+    ));
   if (spanErr) {
     return json({ ok: false, error_code: "triage_spans_query_failed", error: spanErr.message }, 500);
   }
@@ -730,14 +752,15 @@ async function handleTriageQueue(db: any, url: URL, t0: number): Promise<Respons
     ]),
   ];
 
-  const { data: interactionRows, error: interactionErr } = await batchIn<any>(
-    interactionIds,
-    (chunk: string[]) =>
-      db
-        .from("interactions")
-        .select("interaction_id, contact_id, contact_name, event_at_utc, channel")
-        .in("interaction_id", chunk),
-  );
+  const { data: interactionRows, error: interactionErr } = await timeDb("db_interactions", () =>
+    batchIn<any>(
+      interactionIds,
+      (chunk: string[]) =>
+        db
+          .from("interactions")
+          .select("interaction_id, contact_id, contact_name, event_at_utc, channel")
+          .in("interaction_id", chunk),
+    ));
   if (interactionErr) {
     return json({ ok: false, error_code: "triage_interactions_query_failed", error: interactionErr.message }, 500);
   }
@@ -745,15 +768,16 @@ async function handleTriageQueue(db: any, url: URL, t0: number): Promise<Respons
     (interactionRows || []).map((row: any) => [String(row?.interaction_id || ""), row]),
   );
 
-  const { data: attributionRows, error: attributionErr } = await batchIn<any>(
-    spanIds,
-    (chunk: string[]) =>
-      db
-        .from("span_attributions")
-        .select("span_id, project_id, applied_project_id, confidence, attributed_at")
-        .in("span_id", chunk)
-        .order("attributed_at", { ascending: false }),
-  );
+  const { data: attributionRows, error: attributionErr } = await timeDb("db_attributions", () =>
+    batchIn<any>(
+      spanIds,
+      (chunk: string[]) =>
+        db
+          .from("span_attributions")
+          .select("span_id, project_id, applied_project_id, confidence, attributed_at")
+          .in("span_id", chunk)
+          .order("attributed_at", { ascending: false }),
+    ));
   if (attributionErr) {
     return json({ ok: false, error_code: "triage_attributions_query_failed", error: attributionErr.message }, 500);
   }
@@ -771,14 +795,15 @@ async function handleTriageQueue(db: any, url: URL, t0: number): Promise<Respons
         .filter(Boolean),
     ),
   ];
-  const { data: projectRows, error: projectErr } = await batchIn<any>(
-    projectIds,
-    (chunk: string[]) =>
-      db
-        .from("projects")
-        .select("id, name")
-        .in("id", chunk),
-  );
+  const { data: projectRows, error: projectErr } = await timeDb("db_projects", () =>
+    batchIn<any>(
+      projectIds,
+      (chunk: string[]) =>
+        db
+          .from("projects")
+          .select("id, name")
+          .in("id", chunk),
+    ));
   if (projectErr) {
     return json({ ok: false, error_code: "triage_projects_query_failed", error: projectErr.message }, 500);
   }
@@ -813,14 +838,25 @@ async function handleTriageQueue(db: any, url: URL, t0: number): Promise<Respons
     };
   });
 
-  return json({
-    ok: true,
-    items,
-    count: items.length,
-    total_pending: totalPending ?? items.length,
-    function_version: FUNCTION_VERSION,
-    ms: Date.now() - t0,
-  });
+  const totalMs = Date.now() - t0;
+  const dbMs = Object.entries(stageMs)
+    .filter(([stage]) => stage.startsWith("db_"))
+    .reduce((sum, [, ms]) => sum + ms, 0);
+  const computeMs = Math.max(0, performance.now() - computeStart - dbMs);
+  const serverTiming = buildServerTimingHeader({ db_ms: dbMs, compute_ms: computeMs, ...stageMs }, totalMs);
+
+  return json(
+    {
+      ok: true,
+      items,
+      count: items.length,
+      total_pending: totalPending ?? items.length,
+      function_version: FUNCTION_VERSION,
+      ms: totalMs,
+    },
+    200,
+    serverTiming ? { "Server-Timing": serverTiming } : {},
+  );
 }
 
 async function handleUndoVerdict(db: any, req: Request, t0: number): Promise<Response> {
@@ -912,7 +948,7 @@ async function handleSanity(db: any, t0: number): Promise<Response> {
       .order("sent_at", { ascending: false, nullsFirst: false })
       .limit(10),
     db
-      .from("redline_contacts_unified_matview")
+      .from("redline_contacts")
       .select("contact_id, contact_name, last_activity, last_interaction_type")
       .order("last_activity", { ascending: false, nullsFirst: false })
       .limit(5),
@@ -1016,144 +1052,86 @@ async function handleThread(
   };
   const computeStart = performance.now();
 
-  const { data: contactRow, error: contactErr } = await timeDb("db_contact", () =>
+  const { data: contact, error: contactErr } = await timeDb("db_contact", () =>
     db
-      .from("contacts")
-      .select("id, name, phone")
-      .eq("id", contactId)
+      .from("redline_contacts_unified_matview")
+      .select("contact_id, contact_name, contact_phone")
+      .eq("contact_id", contactId)
       .single());
-  let resolvedContact = contactRow;
-  const smsOnlyContactDigits = parseSmsOnlyContactDigits(contactId);
 
-  if (!resolvedContact && smsOnlyContactDigits) {
-    const smsOnlyPhoneVariants = buildPhoneVariants(smsOnlyContactDigits);
-    let lookupQuery = db
-      .from("sms_messages")
-      .select("contact_name, contact_phone")
-      .not("contact_phone", "is", null)
-      .order("sent_at", { ascending: false, nullsFirst: false })
-      .limit(1);
-    if (smsOnlyPhoneVariants.length === 1) {
-      lookupQuery = lookupQuery.eq("contact_phone", smsOnlyPhoneVariants[0]);
-    } else if (smsOnlyPhoneVariants.length > 1) {
-      lookupQuery = lookupQuery.in("contact_phone", smsOnlyPhoneVariants);
-    }
-    const { data: smsContactRows, error: smsContactErr } = await timeDb("db_sms_contact_fallback", () => lookupQuery);
-    if (!smsContactErr && smsContactRows && smsContactRows.length > 0) {
-      const latest = smsContactRows[0];
-      resolvedContact = {
-        id: contactId,
-        name: String(latest?.contact_name || "").trim() || (latest?.contact_phone || smsOnlyContactDigits),
-        phone: String(latest?.contact_phone || "").trim() || smsOnlyContactDigits,
-      };
-    }
-  }
-
-  if (!resolvedContact) {
+  if (contactErr || !contact) {
     return json({ ok: false, error_code: "contact_not_found", error: contactErr?.message || "not found" }, 404);
   }
-  const contact = resolvedContact;
-  const contactPhoneVariants = buildPhoneVariants(resolvedContact.phone);
+  const contactPhoneVariants = buildPhoneVariants(contact.contact_phone);
 
   const scanWindow = Math.min(Math.max(offset + limit + 20, 40), 120);
   const queryPageSize = 40;
 
-  let allInteractions: any[] = [];
-  let interactionsFrom = 0;
-  let hasMoreInteractions = false;
-  while (allInteractions.length < scanWindow) {
-    const interactionsTo = interactionsFrom + queryPageSize - 1;
-    const { data: page, error: intErr } = await timeDb("db_interactions", () =>
-      db
-        .from("interactions")
-        .select("id, interaction_id, event_at_utc, human_summary, contact_name, is_shadow")
-        .eq("contact_id", contactId)
-        // Keep call-only scope while tolerating legacy call-like channel values.
-        .or("channel.eq.call,channel.eq.phone,channel.is.null")
-        .or("is_shadow.is.false,is_shadow.is.null")
-        .not("interaction_id", "like", "cll_SHADOW_%")
-        .not("event_at_utc", "is", null)
-        .order("event_at_utc", { ascending: false })
-        .range(interactionsFrom, interactionsTo));
+  // Parallel 1: Get interactions and probe for SMS
+  const [interactionsRes, inboundProbeRes] = await Promise.all([
+    timeDb("db_interactions_all", async () => {
+      let results: any[] = [];
+      let from = 0;
+      while (results.length < scanWindow) {
+        const to = from + queryPageSize - 1;
+        const { data, error } = await db
+          .from("interactions")
+          .select("id, interaction_id, event_at_utc, human_summary, contact_name, is_shadow")
+          .eq("contact_id", contactId)
+          .or("channel.eq.call,channel.eq.phone,channel.is.null")
+          .or("is_shadow.is.false,is_shadow.is.null")
+          .not("interaction_id", "like", "cll_SHADOW_%")
+          .not("event_at_utc", "is", null)
+          .order("event_at_utc", { ascending: false })
+          .range(from, to);
+        if (error) throw error;
+        if (!data || data.length === 0) break;
+        results = results.concat(data);
+        if (data.length < queryPageSize) break;
+        from += queryPageSize;
+      }
+      return results.slice(0, scanWindow);
+    }),
+    timeDb("db_sms_inbound_probe", () => {
+      let query = db.from("sms_messages").select("id").eq("direction", "inbound").limit(1);
+      if (contactPhoneVariants.length === 1) query = query.eq("contact_phone", contactPhoneVariants[0]);
+      else if (contactPhoneVariants.length > 1) query = query.in("contact_phone", contactPhoneVariants);
+      else query = query.eq("contact_phone", "__no_match__");
+      return query;
+    }),
+  ]);
 
-    if (intErr) {
-      return json({ ok: false, error_code: "interactions_query_failed", error: intErr.message }, 500);
-    }
+  const allInteractions = interactionsRes;
+  const hasInboundSms = (inboundProbeRes.data || []).length > 0;
 
-    if (!page || page.length === 0) break;
-    allInteractions = allInteractions.concat(page);
-    if (page.length < queryPageSize) break;
-    interactionsFrom += queryPageSize;
-    if (allInteractions.length >= scanWindow) {
-      hasMoreInteractions = true;
-      break;
-    }
-  }
-  if (allInteractions.length > scanWindow) {
-    allInteractions = allInteractions.slice(0, scanWindow);
-  }
-
-  let inboundProbeQuery = db
-    .from("sms_messages")
-    .select("id")
-    .eq("direction", "inbound")
-    .limit(1);
-  if (contactPhoneVariants.length === 1) {
-    inboundProbeQuery = inboundProbeQuery.eq("contact_phone", contactPhoneVariants[0]);
-  } else if (contactPhoneVariants.length > 1) {
-    inboundProbeQuery = inboundProbeQuery.in("contact_phone", contactPhoneVariants);
-  } else {
-    inboundProbeQuery = inboundProbeQuery.eq("contact_phone", "__no_contact_phone_match__");
-  }
-  const { data: inboundProbe, error: inboundProbeErr } = await timeDb(
-    "db_sms_inbound_probe",
-    () => inboundProbeQuery,
-  );
-
-  if (inboundProbeErr) {
-    return json({ ok: false, error_code: "sms_inbound_probe_failed", error: inboundProbeErr.message }, 500);
-  }
-
-  const hasInboundSms = (inboundProbe || []).length > 0;
+  // Parallel 2: Get SMS messages (if needed)
   let allSmsMessages: any[] = [];
-  let hasMoreSms = false;
-
   if (hasInboundSms) {
-    let smsFrom = 0;
-    while (allSmsMessages.length < scanWindow) {
-      const smsTo = smsFrom + queryPageSize - 1;
-      let smsQuery = db
-        .from("sms_messages")
-        .select("id, sent_at, content, direction, contact_name, contact_phone, sender_user_id")
-        .order("sent_at", { ascending: false })
-        .range(smsFrom, smsTo);
-      if (contactPhoneVariants.length === 1) {
-        smsQuery = smsQuery.eq("contact_phone", contactPhoneVariants[0]);
-      } else if (contactPhoneVariants.length > 1) {
-        smsQuery = smsQuery.in("contact_phone", contactPhoneVariants);
-      } else {
-        smsQuery = smsQuery.eq("contact_phone", "__no_contact_phone_match__");
+    allSmsMessages = await timeDb("db_sms_messages_all", async () => {
+      let results: any[] = [];
+      let from = 0;
+      while (results.length < scanWindow) {
+        const to = from + queryPageSize - 1;
+        let query = db
+          .from("sms_messages")
+          .select("id, sent_at, content, direction, contact_name, contact_phone, sender_user_id")
+          .order("sent_at", { ascending: false })
+          .range(from, to);
+        if (contactPhoneVariants.length === 1) query = query.eq("contact_phone", contactPhoneVariants[0]);
+        else if (contactPhoneVariants.length > 1) query = query.in("contact_phone", contactPhoneVariants);
+        else query = query.eq("contact_phone", "__no_match__");
+        const { data, error } = await query;
+        if (error) throw error;
+        if (!data || data.length === 0) break;
+        results = results.concat(data);
+        if (data.length < queryPageSize) break;
+        from += queryPageSize;
       }
-      const { data: page, error: smsErr } = await timeDb("db_sms_messages", () => smsQuery);
-
-      if (smsErr) {
-        return json({ ok: false, error_code: "sms_query_failed", error: smsErr.message }, 500);
-      }
-
-      if (!page || page.length === 0) break;
-      allSmsMessages = allSmsMessages.concat(page);
-      if (page.length < queryPageSize) break;
-      smsFrom += queryPageSize;
-      if (allSmsMessages.length >= scanWindow) {
-        hasMoreSms = true;
-        break;
-      }
-    }
-    if (allSmsMessages.length > scanWindow) {
-      allSmsMessages = allSmsMessages.slice(0, scanWindow);
-    }
+      return results.slice(0, scanWindow);
+    });
   }
 
+  // Interleave and page
   const inboundSms = allSmsMessages.filter((s: any) => String(s.direction || "").toLowerCase() === "inbound");
   const outboundSms = allSmsMessages.filter((s: any) => String(s.direction || "").toLowerCase() === "outbound");
   const hasAnyInbound = inboundSms.length > 0;
@@ -1172,459 +1150,196 @@ async function handleThread(
       );
       if (inferredOutbound.length > 0) {
         smsMessages = smsMessages.concat(inferredOutbound);
-        smsMessages.sort((a: any, b: any) => {
-          const aTime = Date.parse(a.sent_at || "") || 0;
-          const bTime = Date.parse(b.sent_at || "") || 0;
-          if (aTime !== bTime) return bTime - aTime;
-          return String(b.id).localeCompare(String(a.id));
-        });
+        smsMessages.sort((a: any, b: any) => (Date.parse(b.sent_at) || 0) - (Date.parse(a.sent_at) || 0));
       }
     }
   }
 
   const timeline = [
-    ...allInteractions.map((i: any) => ({
-      kind: "call",
-      key: i.interaction_id,
-      event_at: i.event_at_utc,
-    })),
-    ...smsMessages
-      .filter((s: any) => !!s.sent_at)
-      .map((s: any) => ({
-        kind: "sms",
-        key: s.id,
-        event_at: s.sent_at,
-      })),
-  ].sort((a: any, b: any) => {
-    const aTime = Date.parse(a.event_at || "") || 0;
-    const bTime = Date.parse(b.event_at || "") || 0;
-    if (aTime !== bTime) return bTime - aTime;
-    return String(b.key).localeCompare(String(a.key));
-  });
+    ...allInteractions.map((i: any) => ({ kind: "call", key: i.interaction_id, event_at: i.event_at_utc })),
+    ...smsMessages.filter((s: any) => !!s.sent_at).map((s: any) => ({ kind: "sms", key: s.id, event_at: s.sent_at })),
+  ].sort((a: any, b: any) => (Date.parse(b.event_at) || 0) - (Date.parse(a.event_at) || 0));
 
   const pagedTimeline = timeline.slice(offset, offset + limit);
-  const likelyMore = hasMoreInteractions || hasMoreSms;
-  const totalCount = likelyMore
-    ? Math.max(offset + pagedTimeline.length + 1, timeline.length)
-    : offset + pagedTimeline.length;
-
   if (pagedTimeline.length === 0) {
     return json({
       ok: true,
-      contact: { id: contact.id, name: contact.name, phone: contact.phone },
+      contact: { id: contact.contact_id, name: contact.contact_name, phone: contact.contact_phone },
       thread: [],
-      pagination: { limit, offset, total: totalCount },
+      pagination: { limit, offset, total: timeline.length },
       function_version: FUNCTION_VERSION,
       ms: Date.now() - t0,
     });
   }
 
-  const pagedCallIds = new Set(
-    pagedTimeline
-      .filter((entry: any) => entry.kind === "call")
-      .map((entry: any) => entry.key),
-  );
-  const pagedSmsIds = new Set(
-    pagedTimeline
-      .filter((entry: any) => entry.kind === "sms")
-      .map((entry: any) => entry.key),
+  const pagedCallIds = Array.from(new Set(pagedTimeline.filter((e: any) => e.kind === "call").map((e: any) => e.key)));
+  const pagedSmsMessages = smsMessages.filter((s: any) =>
+    pagedTimeline.some((e) => e.kind === "sms" && e.key === s.id)
   );
 
-  const interactions = allInteractions.filter((i: any) => pagedCallIds.has(i.interaction_id));
-  const interactionIds = interactions.map((i: any) => i.interaction_id);
-  const interactionAliasToCanonical = new Map<string, string>();
-  for (const interaction of interactions) {
-    if (interaction?.interaction_id) {
-      interactionAliasToCanonical.set(String(interaction.interaction_id), String(interaction.interaction_id));
-    }
-    if (interaction?.id) {
-      interactionAliasToCanonical.set(String(interaction.id), String(interaction.interaction_id));
-    }
-  }
-  const pagedSmsMessages = smsMessages.filter((s: any) => pagedSmsIds.has(s.id));
+  // Parallel 3: Fetch all details for paged items
+  const [callsRawRes, spansRes, claimsRes, pendingSmsRes] = await Promise.all([
+    pagedCallIds.length > 0
+      ? timeDb(
+        "db_calls_raw",
+        () => db.from("calls_raw").select("interaction_id, direction, transcript").in("interaction_id", pagedCallIds),
+      )
+      : { data: [] },
+    pagedCallIds.length > 0
+      ? timeDb(
+        "db_conversation_spans",
+        () =>
+          batchIn<any>(pagedCallIds, (chunk) =>
+            db.from("conversation_spans").select("id, interaction_id, span_index, transcript_segment, word_count").in(
+              "interaction_id",
+              chunk,
+            ).eq("is_superseded", false)),
+      )
+      : { data: [] },
+    pagedCallIds.length > 0
+      ? timeDb(
+        "db_journal_claims",
+        () =>
+          batchIn<any>(pagedCallIds, (chunk) =>
+            db.from("journal_claims").select("id, call_id, source_span_id, claim_type, claim_text, speaker_label").in(
+              "call_id",
+              chunk,
+            )),
+      )
+      : { data: [] },
+    pagedSmsMessages.length > 0
+      ? timeDb("db_pending_sms_reviews", () => {
+        const keys = [...new Set(pagedSmsMessages.flatMap((s) => deriveSmsInteractionKeys(s, contact.phone)))];
+        return db.from("review_queue").select("id, interaction_id, created_at").eq("status", "pending").in(
+          "interaction_id",
+          keys,
+        );
+      })
+      : { data: [] },
+  ]);
 
-  const pendingSmsReviewByInteractionId = new Map<string, any>();
-  const pendingSmsReviewByMessageId = new Map<string, any>();
-  const smsInteractionKeys = [
-    ...new Set(
-      pagedSmsMessages.flatMap((sms: any) => deriveSmsInteractionKeys(sms, contact.phone)),
-    ),
+  const spanIds = (spansRes.data || []).map((s: any) => s.id);
+  const claimIds = (claimsRes.data || []).map((c: any) => c.id);
+
+  // Parallel 4: Fetch deep details
+  const [attrRes, pendingSpansRes, gradesRes] = await Promise.all([
+    spanIds.length > 0
+      ? timeDb(
+        "db_span_attributions",
+        () =>
+          batchIn<any>(spanIds, (chunk) =>
+            db.from("span_attributions").select("span_id, project_id, applied_project_id, confidence").in(
+              "span_id",
+              chunk,
+            )),
+      )
+      : { data: [] },
+    spanIds.length > 0
+      ? timeDb(
+        "db_pending_span_reviews",
+        () =>
+          batchIn<any>(spanIds, (chunk) =>
+            db.from("review_queue").select("id, span_id, interaction_id, created_at").eq("status", "pending").in(
+              "span_id",
+              chunk,
+            )),
+      )
+      : { data: [] },
+    claimIds.length > 0
+      ? timeDb(
+        "db_claim_grades",
+        () =>
+          batchIn<any>(claimIds, (chunk) =>
+            db.from("claim_grades").select("claim_id, grade, correction_text, graded_by").in("claim_id", chunk)),
+      )
+      : { data: [] },
+  ]);
+
+  // Map everything back
+  const directionMap = new Map((callsRawRes.data || []).map((c: any) => [c.interaction_id, c.direction]));
+  const _transcriptMap = new Map((callsRawRes.data || []).map((c: any) => [c.interaction_id, c.transcript]));
+  const spansPerInteraction = groupBy(spansRes.data || [], (s: any) => s.interaction_id);
+  const attrBySpan = new Map((attrRes.data || []).map((a: any) => [a.span_id, a]));
+  const pendingBySpan = new Map((pendingSpansRes.data || []).map((p: any) => [p.span_id, p]));
+  const gradeByClaim = new Map((gradesRes.data || []).map((g: any) => [g.claim_id, g]));
+  const claimsByCall = groupBy(claimsRes.data || [], (c: any) => c.call_id);
+  const pendingSmsByInteraction = new Map((pendingSmsRes.data || []).map((p: any) => [p.interaction_id, p]));
+
+  // Project names fetch
+  const projectIds = [
+    ...new Set((attrRes.data || []).map((a: any) => a.applied_project_id || a.project_id).filter(Boolean)),
   ];
+  const projectNamesRes = projectIds.length > 0
+    ? await timeDb("db_projects", () => db.from("projects").select("id, name").in("id", projectIds))
+    : { data: [] };
+  const projectNameById = new Map((projectNamesRes.data || []).map((p: any) => [p.id, p.name]));
 
-  if (smsInteractionKeys.length > 0) {
-    const { data: pendingSmsReviewRows, error: pendingSmsReviewErr } = await timeDb(
-      "db_pending_sms_reviews",
-      () =>
-        db
-          .from("review_queue")
-          .select("id, interaction_id, created_at")
-          .eq("status", "pending")
-          .in("interaction_id", smsInteractionKeys)
-          .order("created_at", { ascending: false }),
-    );
-
-    if (pendingSmsReviewErr) {
-      return json(
-        { ok: false, error_code: "pending_sms_review_query_failed", error: pendingSmsReviewErr.message },
-        500,
-      );
-    }
-
-    for (const row of pendingSmsReviewRows || []) {
-      const interactionId = String(row?.interaction_id || "");
-      if (!interactionId) continue;
-      if (!pendingSmsReviewByInteractionId.has(interactionId)) {
-        pendingSmsReviewByInteractionId.set(interactionId, row);
-      }
-    }
-
-    for (const sms of pagedSmsMessages) {
-      const matchingReview = deriveSmsInteractionKeys(sms, contact.phone)
-        .map((key) => pendingSmsReviewByInteractionId.get(key))
-        .find((value) => !!value);
-      if (matchingReview) {
-        pendingSmsReviewByMessageId.set(String(sms.id), matchingReview);
-      }
-    }
-  }
-
-  let callsRaw: any[] = [];
-  if (interactionIds.length > 0) {
-    const { data, error } = await timeDb("db_calls_raw", () =>
-      db
-        .from("calls_raw")
-        .select("interaction_id, direction, transcript")
-        .in("interaction_id", interactionIds));
-
-    if (error) {
-      return json({ ok: false, error_code: "calls_raw_query_failed", error: error.message }, 500);
-    }
-    callsRaw = data || [];
-  }
-
-  const directionMap = new Map((callsRaw || []).map((c: any) => [c.interaction_id, c.direction]));
-  const transcriptMap = new Map((callsRaw || []).map((c: any) => [c.interaction_id, c.transcript]));
-
-  let spans: any[] = [];
-  if (interactionIds.length > 0) {
-    const { data, error } = await timeDb("db_conversation_spans", () =>
-      batchIn<any>(
-        interactionIds,
-        (chunk: string[]) =>
-          db
-            .from("conversation_spans")
-            .select("id, interaction_id, span_index, transcript_segment, word_count")
-            .in("interaction_id", chunk)
-            .eq("is_superseded", false)
-            .order("span_index", { ascending: true }),
-      ));
-
-    if (error) {
-      return json({ ok: false, error_code: "spans_query_failed", error: error.message }, 500);
-    }
-    spans = (data || []).sort((a: any, b: any) => {
-      const interactionCmp = String(a?.interaction_id || "").localeCompare(String(b?.interaction_id || ""));
-      if (interactionCmp !== 0) return interactionCmp;
-      return Number(a?.span_index || 0) - Number(b?.span_index || 0);
-    });
-  }
-
-  const spansPerInteraction = groupBy(spans || [], (s: any) => s.interaction_id);
-  const spanIds = (spans || [])
-    .map((span: any) => String(span.id || ""))
-    .filter((id: string) => id.length > 0);
-
-  let spanAttributionRows: any[] = [];
-  if (spanIds.length > 0) {
-    const { data, error } = await timeDb("db_span_attributions", () =>
-      batchIn<any>(
-        spanIds,
-        (chunk: string[]) =>
-          db
-            .from("span_attributions")
-            .select("span_id, project_id, applied_project_id, confidence")
-            .in("span_id", chunk),
-      ));
-
-    if (error) {
-      return json({ ok: false, error_code: "span_attributions_query_failed", error: error.message }, 500);
-    }
-    spanAttributionRows = data || [];
-  }
-
-  const spanAttributionBySpanId = new Map<string, any>();
-  for (const row of spanAttributionRows) {
-    const spanId = String(row?.span_id || "");
-    if (!spanId) continue;
-    const existing = spanAttributionBySpanId.get(spanId);
-    if (!existing) {
-      spanAttributionBySpanId.set(spanId, row);
-      continue;
-    }
-
-    const score = (candidate: any) => {
-      const applied = candidate?.applied_project_id ? 1000 : 0;
-      const confidence = Number(candidate?.confidence ?? 0);
-      return applied + (Number.isFinite(confidence) ? Math.round(confidence * 100) : 0);
-    };
-    if (score(row) > score(existing)) {
-      spanAttributionBySpanId.set(spanId, row);
-    }
-  }
-
-  const spanProjectIds = [
-    ...new Set(
-      [...spanAttributionBySpanId.values()]
-        .map((row: any) => String(row?.applied_project_id || row?.project_id || ""))
-        .filter((value: string) => value.length > 0),
-    ),
-  ];
-
-  const projectNameById = new Map<string, string>();
-  if (spanProjectIds.length > 0) {
-    const { data, error } = await timeDb("db_projects", () =>
-      batchIn<any>(
-        spanProjectIds,
-        (chunk: string[]) =>
-          db
-            .from("projects")
-            .select("id, name")
-            .in("id", chunk),
-      ));
-
-    if (error) {
-      return json({ ok: false, error_code: "projects_for_spans_query_failed", error: error.message }, 500);
-    }
-
-    for (const project of data || []) {
-      const id = String(project?.id || "");
-      const name = String(project?.name || "");
-      if (!id || !name) continue;
-      projectNameById.set(id, name);
-    }
-  }
-
-  let pendingReviewRows: any[] = [];
-  if (spanIds.length > 0) {
-    const { data, error } = await timeDb("db_pending_span_reviews", () =>
-      batchIn<any>(
-        spanIds,
-        (chunk: string[]) =>
-          db
-            .from("review_queue")
-            .select("id, span_id, interaction_id, created_at")
-            .eq("status", "pending")
-            .in("span_id", chunk)
-            .order("created_at", { ascending: false }),
-      ));
-
-    if (error) {
-      return json({ ok: false, error_code: "pending_review_query_failed", error: error.message }, 500);
-    }
-    pendingReviewRows = (data || []).sort((a: any, b: any) => {
-      const bTs = Date.parse(String(b?.created_at || "")) || 0;
-      const aTs = Date.parse(String(a?.created_at || "")) || 0;
-      if (bTs !== aTs) return bTs - aTs;
-      return String(a?.id || "").localeCompare(String(b?.id || ""));
-    });
-  }
-
-  const pendingReviewBySpanId = new Map<string, any>();
-  for (const row of pendingReviewRows) {
-    const spanId = String(row?.span_id || "");
-    if (!spanId) continue;
-    if (!pendingReviewBySpanId.has(spanId)) {
-      pendingReviewBySpanId.set(spanId, row);
-    }
-  }
-
-  const pendingCountByInteraction = new Map<string, number>();
-  for (const row of pendingReviewRows) {
-    const rawInteraction = String(row?.interaction_id || "");
-    if (!rawInteraction) continue;
-    const interactionKey = interactionAliasToCanonical.get(rawInteraction) || rawInteraction;
-    pendingCountByInteraction.set(
-      interactionKey,
-      (pendingCountByInteraction.get(interactionKey) || 0) + 1,
-    );
-  }
-
-  let callClaims: any[] = [];
-  if (interactionIds.length > 0) {
-    const claimCallKeys = [
-      ...new Set(
-        interactions.flatMap((interaction: any) => [
-          interaction?.interaction_id ? String(interaction.interaction_id) : "",
-          interaction?.id ? String(interaction.id) : "",
-        ]).filter((value: string) => value.length > 0),
-      ),
-    ];
-    const { data: claimData, error: claimsErr } = await timeDb("db_journal_claims", () =>
-      batchIn<any>(
-        claimCallKeys,
-        (chunk: string[]) =>
-          db
-            .from("journal_claims")
-            .select("id, call_id, source_span_id, claim_type, claim_text, speaker_label")
-            .in("call_id", chunk),
-      ));
-
-    if (claimsErr) {
-      return json({ ok: false, error_code: "claims_query_failed", error: claimsErr.message }, 500);
-    }
-    const dedupedClaims = new Map<string, any>();
-    for (const claim of claimData || []) {
-      if (claim?.id) {
-        dedupedClaims.set(String(claim.id), claim);
-      }
-    }
-    callClaims = [...dedupedClaims.values()];
-  }
-
-  const allClaimIds = callClaims.map((c: any) => c.id);
-  const claimsPerCall = groupBy(
-    callClaims,
-    (claim: any) => interactionAliasToCanonical.get(String(claim.call_id)) || String(claim.call_id),
-  );
-
-  let grades: any[] = [];
-  if (allClaimIds.length > 0) {
-    const { data: gradeData, error: gradesErr } = await timeDb("db_claim_grades", () =>
-      batchIn<any>(
-        allClaimIds,
-        (chunk: string[]) =>
-          db
-            .from("claim_grades")
-            .select("claim_id, grade, correction_text, graded_by")
-            .in("claim_id", chunk),
-      ));
-
-    if (gradesErr) {
-      return json({ ok: false, error_code: "grades_query_failed", error: gradesErr.message }, 500);
-    }
-    grades = gradeData || [];
-  }
-
-  const gradeMap = new Map((grades || []).map((g: any) => [g.claim_id, g]));
-
-  const callEntries = interactions.map((i: any) => {
-    const rawTranscript: string | null = transcriptMap.get(i.interaction_id) || null;
-    const rawSpans = spansPerInteraction.get(i.interaction_id) || [];
-    const dedupedSpans = deduplicateSpans(rawSpans);
-    const participants = extractParticipants(rawTranscript);
-    let pendingSpanCount = 0;
-
-    const interactionClaims = (claimsPerCall.get(i.interaction_id) || []).map((c: any) => {
-      const g = gradeMap.get(c.id);
+  const callEntries = allInteractions.filter((i: any) => pagedCallIds.includes(i.interaction_id)).map((i: any) => {
+    const _interactionClaims = (claimsByCall.get(i.interaction_id) || []).map((c: any) => {
+      const g = gradeByClaim.get(c.id);
       return {
+        ...c,
         claim_id: c.id,
-        source_span_id: c.source_span_id || null,
-        claim_type: c.claim_type,
-        claim_text: c.claim_text,
-        grade: g?.grade || null,
-        correction_text: g?.correction_text || null,
-        graded_by: g?.graded_by || null,
+        grade: g?.grade,
+        correction_text: g?.correction_text,
+        graded_by: g?.graded_by,
       };
     });
-    const interactionClaimPayload = interactionClaims.map(({ source_span_id: _sourceSpanId, ...claim }) => claim);
-    const claimsPerSpan = groupBy(
-      interactionClaims.filter((claim: any) => !!claim.source_span_id),
-      (claim: any) => String(claim.source_span_id),
-    );
-    const unscopedClaims = interactionClaims.filter((claim: any) => !claim.source_span_id);
-
     return {
       type: "call",
       interaction_id: i.interaction_id,
       event_at: i.event_at_utc,
-      direction: directionMap.get(i.interaction_id) || null,
+      direction: directionMap.get(i.interaction_id),
       summary: i.human_summary,
-      contact_name: i.contact_name || contact.name,
-      raw_transcript: rawTranscript,
-      participants,
-      spans: dedupedSpans.map((s: any, index: number) => {
-        const pendingReview = pendingReviewBySpanId.get(String(s.id));
-        const attribution = spanAttributionBySpanId.get(String(s.id));
-        const projectId = String(
-          attribution?.applied_project_id || attribution?.project_id || "",
-        );
-        const projectName = projectId ? projectNameById.get(projectId) || null : null;
-        const confidenceValue = Number(attribution?.confidence);
-        if (pendingReview) pendingSpanCount += 1;
-        const scopedClaims = (claimsPerSpan.get(String(s.id)) || [])
-          .map(({ source_span_id: _sourceSpanId, ...claim }: any) => claim);
-        const fallbackUnscopedClaims = index === 0
-          ? unscopedClaims.map(({ source_span_id: _sourceSpanId, ...claim }: any) => claim)
-          : [];
+      contact_name: i.contact_name || contact.contact_name,
+      spans: (spansPerInteraction.get(i.interaction_id) || []).map((s: any) => {
+        const attr = attrBySpan.get(s.id);
         return {
+          ...s,
           span_id: s.id,
-          span_index: s.span_index,
-          transcript_segment: s.transcript_segment,
-          word_count: s.word_count,
-          review_queue_id: pendingReview?.id || null,
-          needs_attribution: !!pendingReview,
-          project_id: projectId || null,
-          project_name: projectName,
-          confidence: Number.isFinite(confidenceValue) ? confidenceValue : null,
-          claims: [...scopedClaims, ...fallbackUnscopedClaims],
+          review_queue_id: pendingBySpan.get(s.id)?.id,
+          project_name: projectNameById.get(attr?.applied_project_id || attr?.project_id),
+          confidence: attr?.confidence,
         };
       }),
-      pending_attribution_count: Math.max(
-        pendingSpanCount,
-        pendingCountByInteraction.get(i.interaction_id) || 0,
-      ),
-      claims: interactionClaimPayload,
+      claims: interactionClaims,
     };
   });
 
   const smsEntries = pagedSmsMessages.map((s: any) => {
-    const pendingReview = pendingSmsReviewByMessageId.get(String(s.id));
+    const reviewQueueId = deriveSmsInteractionKeys(s, contact.contact_phone).map((k) => pendingSmsByInteraction.get(k))
+      .find((p) => !!p)?.id;
     return {
       type: "sms",
       sms_id: s.id,
       event_at: s.sent_at,
       direction: s.direction,
       content: s.content,
-      sender_name: s.direction === "outbound" ? "Zack" : (s.contact_name || contact.name),
-      review_queue_id: pendingReview?.id || null,
-      needs_attribution: !!pendingReview,
+      review_queue_id: reviewQueueId,
+      needs_attribution: !!reviewQueueId,
     };
   });
 
-  const thread = [...callEntries, ...smsEntries].sort(
-    (a, b) => new Date(a.event_at).getTime() - new Date(b.event_at).getTime(),
+  const thread = [...callEntries, ...smsEntries].sort((a, b) =>
+    new Date(a.event_at).getTime() - new Date(b.event_at).getTime()
   );
 
   const totalMs = Date.now() - t0;
-  const dbMs = Object.entries(stageMs)
-    .filter(([stage]) => stage.startsWith("db_"))
-    .reduce((sum, [, ms]) => sum + ms, 0);
+  const dbMs = Object.entries(stageMs).filter(([s]) => s.startsWith("db_")).reduce((sum, [, ms]) => sum + ms, 0);
   const computeMs = Math.max(0, performance.now() - computeStart - dbMs);
-  const serverTiming = buildServerTimingHeader(
-    {
-      db_ms: dbMs,
-      compute_ms: computeMs,
-      db_interactions: stageMs.db_interactions || 0,
-      db_sms_messages: stageMs.db_sms_messages || 0,
-      db_calls_raw: stageMs.db_calls_raw || 0,
-      db_conversation_spans: stageMs.db_conversation_spans || 0,
-      db_journal_claims: stageMs.db_journal_claims || 0,
-      db_claim_grades: stageMs.db_claim_grades || 0,
-    },
-    totalMs,
-  );
+  const serverTiming = buildServerTimingHeader({ db_ms: dbMs, compute_ms: computeMs, ...stageMs }, totalMs);
 
   return json(
     {
       ok: true,
-      contact: { id: contact.id, name: contact.name, phone: contact.phone },
+      contact: { id: contact.contact_id, name: contact.contact_name, phone: contact.contact_phone },
       thread,
-      pagination: { limit, offset, total: totalCount },
+      pagination: { limit, offset, total: timeline.length },
       function_version: FUNCTION_VERSION,
       ms: totalMs,
     },
     200,
-    serverTiming ? { "Server-Timing": serverTiming } : {},
+    { "Server-Timing": serverTiming },
   );
 }
 
@@ -1712,7 +1427,7 @@ async function handleSpansApi(db: any, contactId: string, url: URL, t0: number):
   if (allInteractions.length === 0) {
     return json({
       ok: true,
-      contact: { id: contact.id, name: contact.name, phone: contact.phone },
+      contact: { id: contact.contact_id, name: contact.contact_name, phone: contact.contact_phone },
       spans: [],
       pagination: {
         mode: "offset_cursor_v1",
@@ -1900,7 +1615,7 @@ async function handleSpansApi(db: any, contactId: string, url: URL, t0: number):
   return json({
     ok: true,
     endpoint: "GET /redline/spans/:contact_id",
-    contact: { id: contact.id, name: contact.name, phone: contact.phone },
+    contact: { id: contact.contact_id, name: contact.contact_name, phone: contact.contact_phone },
     spans: paged,
     pagination: {
       mode: "offset_cursor_v1",
@@ -2106,1114 +1821,478 @@ const _ICON_192 =
 const _ICON_512 =
   "iVBORw0KGgoAAAANSUhEUgAAAgAAAAIACAYAAAD0eNT6AAAXbUlEQVR4nO3de4yld13H8e+ZM2dmzs7s7Ozvfda2DoEAobTgqCJAgwq9qCRSsFIoBaVuTHwhuEKibap8lapS1EaldakqggNyTMBCKQWKrFwELimVSeQkmGJhJQ12cNhdh7t3zs7O3C9nTg9eHJxsdn1+w/Pn+37d99kvO/vmeZ55fs/zeJJCAUbl4h4AiBMBwDQCgGkEANMIAKYRAEwjAJhGADCNAGAaAcA0AoBpBADTCACmEQBMIwCYRgAwjQBgGgHANAKAaQQA0wgAphEATCMAmEYAMI0AYBoBwDQCgGkEANMIAKYRAEwjAJhGADCNAGAaAcA0AoBpBADTCACmEQBMIwCYRgAwjQBgGgHANAKAaQQA0wgAphEATCMAmEYAMI0AYBoBwLRC3AMk1a2lko76vpYLBXkxzTAKQ/XDUP3xWOtBoMtBoPPDoS5tb8c0UfZ4ksK4h0iabxWLOrO6qrIX17/+zjZHI/2t39f7vZ7e7XbVGo3iHim1CGCKJ2o1Pbu8HPcYuzIMQ53pdHSq1dJ/rl2Le5zU4Rxgin2F9BwZljxPD1SreuuWW/TCwYOq5fNxj5QqBDBFMg98dpaT9FC1qjOrq7qnUol7nNQggIzZn8/r1MqKHllainuUVCCADMpLeu7AAf2sVot7lMQjgAz7xfKy7vf9uMdINALIMF/Sr266SSvFYtyjJBYBZJyfy+mXBw7IPUaCAACShAAAhAQAAISEAACSEgAAkJAAAICEBAAAJCQAACAhAQAACQkAAEhIAABAQgIAABISAACQkAAAgIQEAAAkJAAAICEBAAAJCQAASEgAAEBCAgAAEhIAAJCQAACAhAQAACQkAAEhIAABAQgIAABISAACQkAAAgIQEAAAkJAAAICEBAAAJCQAASEgAAEBCAgAAEhIAAJCQAACAhAQAACQkAAEhIAABAQgIAABISAACQkAAAgIQEAAAkJAAAICEBAAAJCQAASEgAAEBCAgAAEhIAAJCQAACAhAQAACQkAAEhIAABAQgIAABISAACQkAAAgIQEAAAkJAAAICEBAAAJCQAASEgAAEBCAgAAEhIAAJCQAACAhAQAACQkAAEhIAABAQgIAABISAACQkAAAgIQEAAAkJAAAICEBAAAJCQAASEgAAEBCAgAAEhIAAJCQAACAhAQAACQkAAEhIAABAQgIAABISAACQkAAAgIQEAAAkJAAAICEBAAAJCQAASEgAAEBCAgAAEhIAAJCQAACAhAQAACQkAAEhIAABAQgIAABISAACQkAAAgIQEAAAkJAAAICEBAAAJCQAASEgAAEBCAgAAEhIAAJCQAACAhAQAACQkAAEhIAABAQgIAABISAACQkAAAgIQEAAAkJAAAICEBAAAJCQAASEgAAEBCAgAAEhIAAJCQAACAhAQAACQkAAEhIAABAQgIAABISAACQkAAAgIQEAAAkJAAAICEBAAAJCQAASEgAAEBCAgAAEhIAAJCQAACAhAQAACQkAAEhIAABAQgIAABISAACQkAAAgIQEAAAkJAAAICEBAAAJCQAASEgAAEBCAgAAEhIAAJCQAACAhAQAACQkAAEhIAABAQgIAABISAACQkAAAgIQEAAAkJAAAICEBAAAJCQAASEgAAEBCAgAAEhIAAJCQAACAhAQAACQkAAEhIAABAQgIAABISAACQkAAAgIQEAAAkJAAAICEBAAAJCQAASEgAAEBCAgAAEhIAAJCQAACAhAQAACQkAAEhIAABAQgIAABISAACQkAAAgIQEAAAkJAAAICEBAAAJCQAASEgAAEBCAgAAEhIAAJCQAACAhAQAACQkAAEhIAABAQgIAABISAACQkAAAgIQEAAAkJAAAICEBAAAJCQAASEgAAEBCAgAAEhIAAJCQAACAhAQAACQkAAEhIAABAQgIAABISAACQkAAAgIQEAAAkJAAAICEBAAAJCQAASEgAAEBCAgAAEhIAAJCQAACAhAQAACQkAAEhIAABAQgIAABISAACQkAAAgIQEAAAkJAAAICEBAAAJCQAASEgAAEBCAgAAEhIAAJCQAACAhAQAACQkAAEhIAABAQgIAABISAACQkAAAgIQEAAAkJAAAICEBAAAJCQAASEgAAEBCAgAAEhIAAJCQAACAhAQAACQkAAEhIAABAQgIAABISAACQkAAAgIQEAAAkJAAAICEBAAAJCQAASEgAAEBCAgAAEhIAAJCQAACAhAQAACQkAAEhIAABAQgIAABISAACQkAAAgIQEAAAkJAAAICEBAAAJCQAASEgAAEBCAgAAEhIAAJCQAACAhAQAACQkAAEhIAABAQgIAABISAACQkAAAgIQEAAAkJAAAICEBAAAJCQAASEgAAEBCAgAAEhIAAJCQAACAhAQAACQkAAEhIAABAQgIAABISAACQkAAAgIQEAAAkJAAAICEBAAAJCQ==";
 
-// HTML UI — single-card triage for pending review_queue items.
+// HTML UI — Modern multi-view PWA (Contacts, Thread, Triage)
 const HTML = `<!DOCTYPE html>
 <html lang="en">
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no,viewport-fit=cover" />
-  <title>Redline Triage</title>
+  <title>Redline</title>
   <style>
     :root {
       color-scheme: dark;
-      --bg: #0b0c10;
-      --surface: #151821;
-      --surface-2: #1c2130;
-      --text: #e7ebf3;
-      --muted: #98a2b3;
-      --border: #2a3144;
-      --accent: #3fb950;
-      --danger: #f85149;
-      --warning: #f2cc60;
-      --chip: #20283a;
-      --radius: 14px;
+      --bg: #000000;
+      --surface: #121212;
+      --surface-2: #1c1c1e;
+      --text: #ffffff;
+      --muted: #8e8e93;
+      --border: #2c2c2e;
+      --accent: #0a84ff;
+      --danger: #ff453a;
+      --success: #32d74b;
+      --warning: #ffd60a;
+      --radius: 12px;
       --safe-top: env(safe-area-inset-top);
       --safe-bottom: env(safe-area-inset-bottom);
     }
-    * { box-sizing: border-box; }
+    * { box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
     body {
       margin: 0;
-      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
-      background: radial-gradient(circle at top, #151a25 0%, #0b0c10 50%, #0b0c10 100%);
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+      background: var(--bg);
       color: var(--text);
-      min-height: 100dvh;
-      padding: max(12px, var(--safe-top)) 12px max(12px, var(--safe-bottom));
+      line-height: 1.4;
+      overflow-x: hidden;
     }
-    #app { max-width: 840px; margin: 0 auto; }
-    #header {
+    #app {
+      display: flex;
+      flex-direction: column;
+      min-height: 100dvh;
+      padding-top: var(--safe-top);
+      padding-bottom: var(--safe-bottom);
+    }
+    
+    /* Navigation Bar */
+    header {
+      position: sticky;
+      top: 0;
+      z-index: 100;
+      background: rgba(0, 0, 0, 0.8);
+      backdrop-filter: blur(20px);
+      -webkit-backdrop-filter: blur(20px);
+      border-bottom: 0.5px solid var(--border);
+      padding: 12px 16px;
       display: flex;
       align-items: center;
       justify-content: space-between;
-      gap: 12px;
-      margin-bottom: 10px;
+      min-height: 54px;
     }
-    #title-wrap { display: flex; flex-direction: column; gap: 4px; }
-    #title { font-size: 20px; font-weight: 700; letter-spacing: -0.02em; }
-    #subtitle { font-size: 12px; color: var(--muted); }
-    #meta {
-      display: inline-flex;
+    .nav-left, .nav-right { flex: 1; display: flex; align-items: center; }
+    .nav-right { justify-content: flex-end; }
+    .nav-center { flex: 2; text-align: center; font-weight: 700; font-size: 17px; }
+    
+    .btn-nav {
+      background: none;
+      border: none;
+      color: var(--accent);
+      font-size: 17px;
+      padding: 0;
+      cursor: pointer;
+      display: flex;
       align-items: center;
-      gap: 8px;
-      font-size: 12px;
-      color: var(--muted);
-      background: var(--surface);
-      border: 1px solid var(--border);
-      border-radius: 999px;
-      padding: 8px 10px;
-      white-space: nowrap;
+      gap: 4px;
     }
-    #card {
-      background: var(--surface);
+    .btn-nav:disabled { color: var(--muted); opacity: 0.5; }
+
+    /* Views */
+    .view { display: none; flex: 1; flex-direction: column; }
+    .view.active { display: flex; }
+
+    /* Contact List */
+    .list-container { flex: 1; }
+    .list-row {
+      display: flex;
+      padding: 12px 16px;
+      border-bottom: 0.5px solid var(--border);
+      cursor: pointer;
+      text-decoration: none;
+      color: inherit;
+      position: relative;
+    }
+    .list-row:active { background: var(--surface-2); }
+    .avatar {
+      width: 48px;
+      height: 48px;
+      border-radius: 50%;
+      background: #333;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-weight: 600;
+      font-size: 18px;
+      margin-right: 12px;
+      flex-shrink: 0;
+    }
+    .content-wrap { flex: 1; min-width: 0; }
+    .row-top { display: flex; justify-content: space-between; align-items: baseline; margin-bottom: 2px; }
+    .contact-name { font-weight: 600; font-size: 16px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+    .row-time { font-size: 14px; color: var(--muted); margin-left: 8px; flex-shrink: 0; }
+    .row-preview {
+      font-size: 14px;
+      color: var(--muted);
+      display: -webkit-box;
+      -webkit-line-clamp: 2;
+      -webkit-box-orient: vertical;
+      overflow: hidden;
+      line-height: 1.3;
+    }
+    .unread-dot {
+      width: 10px;
+      height: 10px;
+      background: var(--accent);
+      border-radius: 50%;
+      position: absolute;
+      left: 4px;
+      top: 31px;
+    }
+
+    /* Thread View */
+    .message-list { padding: 16px; display: flex; flex-direction: column; gap: 12px; }
+    .bubble {
+      max-width: 85%;
+      padding: 10px 14px;
+      border-radius: 18px;
+      font-size: 16px;
+      position: relative;
+      word-wrap: break-word;
+    }
+    .bubble.inbound {
+      align-self: flex-start;
+      background: var(--surface-2);
+      border-bottom-left-radius: 4px;
+    }
+    .bubble.outbound {
+      align-self: flex-end;
+      background: var(--accent);
+      color: white;
+      border-bottom-right-radius: 4px;
+    }
+    .bubble.call {
+      align-self: center;
+      background: transparent;
       border: 1px solid var(--border);
+      color: var(--muted);
+      font-size: 13px;
+      text-align: center;
+      border-radius: 10px;
+      max-width: 90%;
+    }
+    .bubble-meta { font-size: 11px; margin-top: 4px; opacity: 0.7; }
+    
+    /* Triage View (Existing logic preservation) */
+    #triage-card {
+      margin: 16px;
+      background: var(--surface-2);
       border-radius: var(--radius);
       padding: 16px;
-      min-height: 220px;
-    }
-    #contact-row {
       display: flex;
-      align-items: center;
-      justify-content: space-between;
-      gap: 10px;
-      margin-bottom: 8px;
+      flex-direction: column;
+      gap: 12px;
     }
-    #contact-name {
-      font-size: 17px;
-      font-weight: 650;
-      letter-spacing: -0.01em;
-    }
-    .search-item:last-child { border-bottom: none; }
-    .search-item:active, .search-item.selected { background: #2C2C2E; }
-    .search-item-name { flex: 1; font-weight: 500; }
-    .search-item-meta { color: #8E8E93; font-size: 13px; margin-left: 10px; flex-shrink: 0; }
-    #contact-header { display: none; padding: 12px 16px 4px; max-width: 800px; margin: 0 auto; }
-    #contact-header-name { font-size: 20px; font-weight: 700; }
-    #contact-header-meta { font-size: 13px; color: #8E8E93; margin-top: 2px; }
-    #thread-container { max-width: 1200px; margin: 0 auto; padding: 8px 16px 120px; }
-    .thread-layout { display: flex; gap: 16px; align-items: flex-start; }
-    .thread-main { flex: 1; min-width: 0; }
-    .decision-rail {
-      width: 260px; flex-shrink: 0; position: sticky; top: 68px;
-      background: #1C1C1E; border-radius: 14px; border: 0.5px solid #38383A;
-      padding: 12px; max-height: calc(100dvh - 92px); overflow-y: auto;
-    }
-    .decision-rail h3 {
-      font-size: 13px; font-weight: 600; color: #8E8E93;
-      margin-bottom: 8px; text-transform: uppercase; letter-spacing: 0.4px;
-    }
-    .decision-row {
-      padding: 9px 10px; border-radius: 10px; background: #2C2C2E;
-      margin-bottom: 6px; font-size: 13px; line-height: 1.35;
-    }
-    .decision-row:last-child { margin-bottom: 0; }
-    .decision-row-time { color: #8E8E93; font-size: 11px; margin-top: 4px; }
-    .triage-pane {
-      background: #1C1C1E; border-radius: 14px; border: 0.5px solid #38383A;
-      padding: 12px; margin-bottom: 10px;
-    }
-    .triage-header {
-      display: flex; flex-wrap: wrap; gap: 8px; align-items: center;
-      justify-content: space-between; margin-bottom: 8px;
-    }
-    .triage-order-label, .triage-progress-label {
-      font-size: 12px; color: #8E8E93; background: #2C2C2E;
-      border-radius: 999px; padding: 5px 9px;
-    }
-    .triage-claim-text { font-size: 14px; line-height: 1.45; margin: 8px 0 10px; color: #fff; }
-    .triage-empty { color: #8E8E93; font-size: 13px; }
-    .triage-actions { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 8px; }
-    .triage-btn {
-      border: none; border-radius: 10px; padding: 10px 8px; font-size: 13px;
-      font-weight: 600; min-height: 44px; cursor: pointer;
-    }
-    .triage-btn.accept { background: #30D158; color: #000; }
-    .triage-btn.reject { background: #FF453A; color: #fff; }
-    .triage-btn.skip { background: #2C2C2E; color: #fff; }
-    .triage-btn.undo { background: #0A84FF; color: #fff; }
-    .triage-status { margin-top: 8px; color: #8E8E93; font-size: 12px; min-height: 15px; }
-    .claim-item.current-claim { outline: 2px solid #0A84FF; }
-    .date-separator {
-      text-align: center; color: #8E8E93; font-size: 12px; font-weight: 500;
-      padding: 18px 0 6px; letter-spacing: 0.2px;
-    }
-    #created-at {
-      font-size: 12px;
-      color: var(--muted);
-    }
-    #chips {
-      display: flex;
-      flex-wrap: wrap;
-      gap: 6px;
-      margin-bottom: 12px;
-    }
-    .chip {
-      display: inline-flex;
-      align-items: center;
-      gap: 5px;
-      font-size: 12px;
-      color: var(--muted);
-      background: var(--chip);
-      border: 1px solid var(--border);
+    #triage-snippet {
+      background: rgba(0,0,0,0.2);
       border-radius: 8px;
-      padding: 5px 8px;
-    }
-    .chip.suggested { color: var(--accent); border-color: rgba(63,185,80,0.35); }
-    .chip.warning { color: var(--warning); border-color: rgba(242,204,96,0.35); }
-    #snippet {
-      background: var(--surface-2);
-      border: 1px solid var(--border);
-      border-radius: 10px;
       padding: 12px;
-      min-height: 110px;
-      white-space: pre-wrap;
-      line-height: 1.5;
       font-size: 15px;
-      color: #f1f3f8;
+      min-height: 120px;
+      white-space: pre-wrap;
     }
-    #actions {
-      margin-top: 12px;
-      display: grid;
-      grid-template-columns: repeat(4, minmax(0, 1fr));
-      gap: 8px;
-    }
-    button {
-      appearance: none;
-      border: 1px solid var(--border);
+    .triage-actions { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
+    .btn-triage {
+      padding: 12px;
       border-radius: 10px;
-      background: #242c40;
-      color: var(--text);
-      font-size: 14px;
+      border: none;
       font-weight: 600;
-      min-height: 44px;
+      font-size: 15px;
       cursor: pointer;
-      padding: 10px 8px;
     }
-    button:disabled { opacity: 0.45; cursor: not-allowed; }
-    #accept { background: rgba(63,185,80,0.2); border-color: rgba(63,185,80,0.55); color: #9beaac; }
-    #reject { background: rgba(248,81,73,0.18); border-color: rgba(248,81,73,0.45); color: #ffb4ae; }
-    #skip { background: rgba(152,162,179,0.12); }
-    #undo { background: rgba(242,204,96,0.14); border-color: rgba(242,204,96,0.4); color: #ffe399; }
-    #legend {
-      margin-top: 12px;
-      font-size: 12px;
-      color: var(--muted);
-      display: flex;
-      flex-wrap: wrap;
-      gap: 10px;
-    }
-    #empty {
-      text-align: center;
-      color: var(--muted);
-      padding: 46px 12px;
-      border: 1px dashed var(--border);
-      border-radius: 12px;
-      margin-top: 8px;
-      display: none;
-    }
+    .btn-accept { background: var(--success); color: black; }
+    .btn-reject { background: var(--danger); color: white; }
+    .btn-skip { background: var(--muted); color: white; }
+    .btn-undo { background: var(--warning); color: black; }
+
+    /* Utilities */
+    .loading { padding: 40px; text-align: center; color: var(--muted); }
+    .empty { padding: 40px; text-align: center; color: var(--muted); }
     #toast {
       position: fixed;
       left: 50%;
-      bottom: calc(14px + var(--safe-bottom));
+      bottom: calc(20px + var(--safe-bottom));
       transform: translateX(-50%);
-      background: rgba(12, 15, 22, 0.94);
-      border: 1px solid var(--border);
-      color: var(--text);
-      border-radius: 10px;
-      padding: 10px 12px;
-      font-size: 13px;
+      background: rgba(30, 30, 30, 0.95);
+      padding: 10px 20px;
+      border-radius: 20px;
+      font-size: 14px;
+      z-index: 1000;
       display: none;
-      z-index: 100;
-    }
-    @media (max-width: 640px) {
-      #actions { grid-template-columns: 1fr 1fr; }
-      #meta { font-size: 11px; }
-    }
-    @media (max-width: 980px) {
-      .thread-layout { flex-direction: column; }
-      .decision-rail { width: 100%; position: static; max-height: none; }
-      .triage-actions { grid-template-columns: repeat(2, minmax(0, 1fr)); }
     }
   </style>
 </head>
 <body>
   <div id="app">
-    <div id="header">
-      <div id="title-wrap">
-        <div id="title">Redline Triage</div>
-        <div id="subtitle">Single-item review flow (A accept, X reject, Space skip, U undo)</div>
+    <header>
+      <div class="nav-left">
+        <button id="btn-back" class="btn-nav" style="display:none">Back</button>
+        <button id="btn-refresh" class="btn-nav">Refresh</button>
       </div>
-      <div id="meta">
-        <span id="position">0 / 0</span>
-        <span>·</span>
-        <span id="pending-total">0 pending</span>
+      <div class="nav-center" id="nav-title">Redline</div>
+      <div class="nav-right">
+        <button id="btn-triage-toggle" class="btn-nav">Triage</button>
+      </div>
+    </header>
+
+    <div id="view-contacts" class="view active">
+      <div id="contact-list" class="list-container">
+        <div class="loading">Loading contacts…</div>
       </div>
     </div>
 
-    <div id="card">
-      <div id="contact-row">
-        <div id="contact-name">Loading…</div>
-        <div id="created-at"></div>
-      </div>
-      <div id="chips"></div>
-      <div id="snippet">Loading review queue…</div>
-      <div id="actions">
-        <button id="accept" type="button">Accept (A)</button>
-        <button id="reject" type="button">Reject (X)</button>
-        <button id="skip" type="button">Skip (Space)</button>
-        <button id="undo" type="button">Undo (U)</button>
-      </div>
-      <div id="legend">
-        <span>Accept assigns suggested project.</span>
-        <span>Reject resolves as no-project.</span>
-        <span>Skip moves item to back.</span>
+    <div id="view-thread" class="view">
+      <div id="message-list" class="message-list">
+        <div class="loading">Loading thread…</div>
       </div>
     </div>
 
-    <div id="empty">No pending review items right now.</div>
+    <div id="view-triage" class="view">
+      <div id="triage-card">
+        <div style="display:flex; justify-content:space-between; font-size:13px; color:var(--muted)">
+          <span id="triage-pos">0 / 0</span>
+          <span id="triage-contact">Loading…</span>
+        </div>
+        <div id="triage-snippet"></div>
+        <div id="triage-chips" style="display:flex; flex-wrap:wrap; gap:6px"></div>
+        <div class="triage-actions">
+          <button id="triage-accept" class="btn-triage btn-accept">Accept (A)</button>
+          <button id="triage-reject" class="btn-triage btn-reject">Reject (X)</button>
+          <button id="triage-skip" class="btn-triage btn-muted" style="grid-column: span 2">Skip (Space)</button>
+          <button id="triage-undo" class="btn-triage btn-warning" style="grid-column: span 2">Undo (U)</button>
+        </div>
+      </div>
+      <div id="triage-empty" class="empty" style="display:none">No pending items.</div>
+    </div>
   </div>
+
   <div id="toast"></div>
 
   <script>
-    (function () {
-      "use strict";
-      var BASE_URL = window.location.origin + window.location.pathname;
-      var currentClaimId = null;
-      var allContacts = [];
-      var selectedContactId = null;
-      var triageQueue = [];
-      var triageCursor = 0;
-      var triageHistory = [];
-      var triageStatusText = "";
-
-      var BASE = window.location.origin + window.location.pathname;
-      var S = { items: [], idx: 0, totalPending: 0, busy: false, lastAction: null };
-
-      function esc(v) {
-        var d = document.createElement("div");
-        d.textContent = v == null ? "" : String(v);
-        return d.innerHTML;
-      }
-
-      function fmtDate(value) {
-        if (!value) return "";
-        var dt = new Date(value);
-        if (isNaN(dt.getTime())) return "";
-        return dt.toLocaleString("en-US", { month: "short", day: "numeric", hour: "numeric", minute: "2-digit" });
-      }
-
-      function currentItem() {
-        if (!S.items.length) return null;
-        if (S.idx < 0) S.idx = 0;
-        if (S.idx >= S.items.length) S.idx = S.items.length - 1;
-        return S.items[S.idx] || null;
-      }
+    (function() {
+      const BASE = window.location.origin + window.location.pathname;
+      const S = {
+        view: 'contacts',
+        contacts: [],
+        items: [],
+        idx: 0,
+        currentThread: null,
+        busy: false,
+        lastAction: null
+      };
 
       function toast(msg) {
-        var el = document.getElementById("toast");
-        el.textContent = msg || "";
-        el.style.display = "block";
+        const el = document.getElementById('toast');
+        el.textContent = msg;
+        el.style.display = 'block';
         clearTimeout(toast._t);
-        toast._t = setTimeout(function () { el.style.display = "none"; }, 1800);
+        toast._t = setTimeout(() => el.style.display = 'none', 2000);
       }
 
-      async function apiQueue() {
-        var res = await fetch(BASE + "?action=triage_queue&limit=200", { cache: "no-store" });
-        return await res.json();
+      function relTime(dateStr) {
+        if (!dateStr) return '';
+        const date = new Date(dateStr);
+        const now = new Date();
+        const diff = (now - date) / 1000;
+        if (diff < 60) return 'now';
+        if (diff < 3600) return Math.floor(diff / 60) + 'm';
+        if (diff < 86400) return Math.floor(diff / 3600) + 'h';
+        if (diff < 604800) return Math.floor(diff / 86400) + 'd';
+        return date.toLocaleDateString(undefined, { month: 'short', day: 'numeric' });
       }
 
-      async function apiVerdict(reviewQueueId, verdict, projectId) {
-        var body = {
-          review_queue_id: reviewQueueId,
-          verdict: verdict,
-          user_id: "chad",
-          source: "redline"
-        };
-        if (projectId) body.project_id = projectId;
-        var res = await fetch(BASE + "/redline/verdict", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          cache: "no-store",
-          body: JSON.stringify(body)
-        });
-        return await res.json();
-      }
+      function showView(viewName) {
+        S.view = viewName;
+        document.querySelectorAll('.view').forEach(v => v.classList.remove('active'));
+        document.getElementById('view-' + viewName).classList.add('active');
+        
+        const back = document.getElementById('btn-back');
+        const refresh = document.getElementById('btn-refresh');
+        const triage = document.getElementById('btn-triage-toggle');
+        const title = document.getElementById('nav-title');
 
-      function formatRelativeTime(ts) {
-        var d = new Date(ts);
-        if (isNaN(d.getTime())) return "";
-        return d.toLocaleTimeString("en-US", { hour: "numeric", minute: "2-digit" });
-      }
-
-      function isInputElement(el) {
-        if (!el) return false;
-        var tag = (el.tagName || "").toLowerCase();
-        return tag === "input" || tag === "textarea" || el.isContentEditable;
-      }
-
-      function normalizeQueue(threadItems) {
-        var queue = [];
-        threadItems.forEach(function (item) {
-          if (item.type !== "call") return;
-          (item.claims || []).forEach(function (claim) {
-            queue.push({
-              claim_id: claim.claim_id,
-              claim_text: claim.claim_text || "",
-              claim_type: claim.claim_type || "",
-              event_at: item.event_at,
-              contact_name: item.contact_name || "",
-              grade: claim.grade || null,
-            });
-          });
-        });
-        queue.sort(function (a, b) {
-          var ap = a.grade ? 1 : 0;
-          var bp = b.grade ? 1 : 0;
-          if (ap !== bp) return ap - bp; // unresolved first (confidence proxy)
-          var at = Date.parse(a.event_at || "") || 0;
-          var bt = Date.parse(b.event_at || "") || 0;
-          return bt - at;
-        });
-        return queue;
-      }
-
-      function updateClaimHighlight() {
-        document.querySelectorAll(".claim-item.current-claim").forEach(function (el) {
-          el.classList.remove("current-claim");
-        });
-        var current = triageQueue[triageCursor];
-        if (!current) return;
-        var target = document.querySelector('.claim-item[data-claim-id="' + current.claim_id + '"]');
-        if (target) target.classList.add("current-claim");
-      }
-
-      function renderDecisionRail() {
-        var list = document.getElementById("decision-rail-list");
-        if (!list) return;
-        list.textContent = "";
-        if (triageHistory.length === 0) {
-          var empty = document.createElement("div");
-          empty.className = "decision-row";
-          empty.textContent = "No decisions yet.";
-          list.appendChild(empty);
-          return;
-        }
-        triageHistory.slice(0, 10).forEach(function (entry) {
-          var row = document.createElement("div");
-          row.className = "decision-row";
-          var actionWord = entry.action === "confirm"
-            ? "Accepted"
-            : entry.action === "reject"
-            ? "Rejected"
-            : entry.action === "skip"
-            ? "Skipped"
-            : "Undid";
-          row.textContent = actionWord + ": " + (entry.claim_text || "").slice(0, 100);
-          var t = document.createElement("div");
-          t.className = "decision-row-time";
-          t.textContent = formatRelativeTime(entry.at);
-          row.appendChild(t);
-          list.appendChild(row);
-        });
-      }
-
-      function renderTriagePane(main) {
-        var existing = document.getElementById("triage-pane");
-        if (existing) existing.remove();
-
-        var pane = document.createElement("div");
-        pane.id = "triage-pane";
-        pane.className = "triage-pane";
-
-        var hdr = document.createElement("div");
-        hdr.className = "triage-header";
-        var order = document.createElement("div");
-        order.className = "triage-order-label";
-        order.textContent = "Queue: lowest confidence first (ungraded-first proxy)";
-        var progress = document.createElement("div");
-        progress.className = "triage-progress-label";
-        var total = triageQueue.length;
-        var currentN = total === 0 ? 0 : Math.min(triageCursor + 1, total);
-        progress.textContent = "Progress " + currentN + "/" + total;
-        hdr.appendChild(order);
-        hdr.appendChild(progress);
-        pane.appendChild(hdr);
-
-        var current = triageQueue[triageCursor];
-        if (!current) {
-          var empty = document.createElement("div");
-          empty.className = "triage-empty";
-          empty.textContent = "No claims available for triage.";
-          pane.appendChild(empty);
-        } else {
-          var text = document.createElement("div");
-          text.className = "triage-claim-text";
-          text.textContent = (current.claim_type ? "[" + current.claim_type + "] " : "") + current.claim_text;
-          pane.appendChild(text);
-
-          var actions = document.createElement("div");
-          actions.className = "triage-actions";
-          [
-            { cls: "accept", label: "A Accept", action: "triage-accept" },
-            { cls: "reject", label: "X Reject", action: "triage-reject" },
-            { cls: "skip", label: "Space Skip", action: "triage-skip" },
-            { cls: "undo", label: "U Undo", action: "triage-undo" },
-          ].forEach(function (cfg) {
-            var b = document.createElement("button");
-            b.className = "triage-btn " + cfg.cls;
-            b.setAttribute("data-action", cfg.action);
-            b.textContent = cfg.label;
-            actions.appendChild(b);
-          });
-          pane.appendChild(actions);
-        }
-
-        var status = document.createElement("div");
-        status.className = "triage-status";
-        status.id = "triage-status";
-        status.textContent = triageStatusText;
-        pane.appendChild(status);
-        main.prepend(pane);
-      }
-
-      function findNextQueueIndex(startIdx) {
-        for (var i = startIdx + 1; i < triageQueue.length; i++) {
-          if (!triageQueue[i].grade) return i;
-        }
-        for (var j = 0; j < triageQueue.length; j++) {
-          if (!triageQueue[j].grade) return j;
-        }
-        return Math.min(startIdx + 1, Math.max(0, triageQueue.length - 1));
-      }
-
-      function indexByClaimId(claimId) {
-        for (var i = 0; i < triageQueue.length; i++) {
-          if (triageQueue[i].claim_id === claimId) return i;
-        }
-        return -1;
-      }
-
-      function applyClaimGradeDom(claimId, grade) {
-        var item = document.querySelector('.claim-item[data-claim-id="' + claimId + '"]');
-        if (!item) return;
-        item.classList.remove("graded-confirm", "graded-reject", "graded-correct");
-        var oldBadge = item.querySelector(".claim-badge");
-        if (oldBadge) oldBadge.remove();
-        if (grade) {
-          item.classList.add("graded-" + grade);
-          var badge = document.createElement("span");
-          badge.className = "claim-badge";
-          badge.textContent = grade === "confirm" ? "✅" : grade === "reject" ? "❌" : "✏️";
-          item.appendChild(badge);
+        if (viewName === 'contacts') {
+          back.style.display = 'none';
+          refresh.style.display = 'block';
+          triage.style.display = 'block';
+          triage.textContent = 'Triage';
+          title.textContent = 'Redline';
+          loadContacts();
+        } else if (viewName === 'thread') {
+          back.style.display = 'block';
+          refresh.style.display = 'none';
+          triage.style.display = 'none';
+          title.textContent = S.currentThread?.name || 'Thread';
+        } else if (viewName === 'triage') {
+          back.style.display = 'block';
+          refresh.style.display = 'none';
+          triage.style.display = 'none';
+          title.textContent = 'Triage';
+          loadTriage();
         }
       }
 
-      var searchInput = document.getElementById("contact-search");
-      var searchClear = document.getElementById("contact-clear");
-      var searchDropdown = document.getElementById("contact-dropdown");
-
-      async function apiUndo(reviewQueueId) {
-        var res = await fetch(BASE + "?action=undo_verdict", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          cache: "no-store",
-          body: JSON.stringify({ review_queue_id: reviewQueueId })
-        });
-        return await res.json();
-      }
-
-      function updateHeader() {
-        var pos = S.items.length ? (S.idx + 1) : 0;
-        document.getElementById("position").textContent = pos + " / " + S.items.length;
-        document.getElementById("pending-total").textContent = S.totalPending + " pending";
-      }
-
-      function renderCard(item) {
-        var contactName = item.contact_name || "Unknown contact";
-        var createdAt = fmtDate(item.created_at);
-        var reason = item.reason || "review";
-        var channel = item.channel || "unknown";
-        var module = item.module || "unset";
-        var confidence = typeof item.confidence === "number" ? Math.round(item.confidence * 100) + "%" : "n/a";
-        var suggestedName = item.suggested_project_name || null;
-        var suggestedId = item.suggested_project_id || null;
-        var snippet = item.transcript_snippet || "(no transcript snippet)";
-
-        document.getElementById("contact-name").textContent = contactName;
-        document.getElementById("created-at").textContent = createdAt;
-        document.getElementById("snippet").textContent = snippet;
-
-        var chipsHtml = "";
-        chipsHtml += '<span class="chip">reason: ' + esc(reason) + '</span>';
-        chipsHtml += '<span class="chip">channel: ' + esc(channel) + '</span>';
-        chipsHtml += '<span class="chip">module: ' + esc(module) + '</span>';
-        chipsHtml += '<span class="chip">confidence: ' + esc(confidence) + '</span>';
-        if (suggestedId) {
-          chipsHtml += '<span class="chip suggested">suggested: ' + esc(suggestedName || suggestedId) + '</span>';
-        } else {
-          chipsHtml += '<span class="chip warning">no suggested project</span>';
-        }
-        document.getElementById("chips").innerHTML = chipsHtml;
-
-        document.getElementById("accept").disabled = S.busy || !suggestedId;
-        document.getElementById("reject").disabled = S.busy;
-        document.getElementById("skip").disabled = S.busy;
-        document.getElementById("undo").disabled = S.busy || !S.lastAction;
-      }
-
-      function render() {
-        updateHeader();
-        var item = currentItem();
-        var empty = document.getElementById("empty");
-        var card = document.getElementById("card");
-
-        if (!item) {
-          card.style.display = "none";
-          empty.style.display = "block";
-          return;
-        }
-        empty.style.display = "none";
-        card.style.display = "block";
-        renderCard(item);
-      }
-
-      function removeCurrent() {
-        if (!S.items.length) return null;
-        var removed = S.items.splice(S.idx, 1)[0];
-        if (S.idx >= S.items.length) {
-          S.idx = Math.max(0, S.items.length - 1);
-        }
-        return removed;
-      }
-
-      async function doAccept() {
-        var item = currentItem();
-        if (!item || S.busy) return;
-        if (!item.suggested_project_id) {
-          toast("No suggested project for this item");
-          return;
-        }
-        S.busy = true;
-        render();
-        var result = await apiVerdict(item.review_queue_id, "assign", item.suggested_project_id);
-        S.busy = false;
-        if (!result.ok) {
-          toast("Accept failed: " + (result.error || result.error_code || "unknown"));
-          render();
-          return;
-        }
-        var removed = removeCurrent();
-        S.totalPending = Math.max(0, S.totalPending - 1);
-        S.lastAction = { kind: "accept", item: removed };
-        render();
-        toast("Accepted");
-      }
-
-      async function doReject() {
-        var item = currentItem();
-        if (!item || S.busy) return;
-        S.busy = true;
-        render();
-        var result = await apiVerdict(item.review_queue_id, "dismiss", null);
-        S.busy = false;
-        if (!result.ok) {
-          toast("Reject failed: " + (result.error || result.error_code || "unknown"));
-          render();
-          return;
-        }
-        var removed = removeCurrent();
-        S.totalPending = Math.max(0, S.totalPending - 1);
-        S.lastAction = { kind: "reject", item: removed };
-        render();
-        toast("Rejected");
-      }
-
-      function doSkip() {
-        var item = currentItem();
-        if (!item || S.busy) return;
-        var from = S.idx;
-        S.items.splice(from, 1);
-        S.items.push(item);
-        if (from >= S.items.length) S.idx = 0;
-        S.lastAction = { kind: "skip", item: item, from: from };
-        render();
-        toast("Skipped");
-      }
-
-      async function doUndo() {
-        if (!S.lastAction || S.busy) return;
-        var last = S.lastAction;
-        S.busy = true;
-        render();
-
-        if (last.kind === "skip") {
-          var pos = S.items.findIndex(function (it) { return it.review_queue_id === last.item.review_queue_id; });
-          if (pos >= 0) {
-            S.items.splice(pos, 1);
-            var target = Math.max(0, Math.min(last.from, S.items.length));
-            S.items.splice(target, 0, last.item);
-            S.idx = target;
-          }
-          S.lastAction = null;
-          S.busy = false;
-          render();
-          toast("Undo complete");
+      async function loadContacts() {
+        const listEl = document.getElementById('contact-list');
+        const res = await fetch(BASE + '?action=contacts&refresh=1');
+        const data = await res.json();
+        if (!data.ok) return toast('Failed to load contacts');
+        S.contacts = data.contacts;
+        
+        if (S.contacts.length === 0) {
+          listEl.innerHTML = '<div class="empty">No active contacts.</div>';
           return;
         }
 
-        var result = await apiUndo(last.item.review_queue_id);
-        S.busy = false;
-        if (!result.ok) {
-          toast("Undo failed: " + (result.error || result.error_code || "unknown"));
-          render();
-          return;
-        }
-        var insertAt = Math.max(0, Math.min(S.idx, S.items.length));
-        S.items.splice(insertAt, 0, last.item);
-        S.idx = insertAt;
-        S.totalPending += 1;
-        S.lastAction = null;
-        render();
-        toast("Undo complete");
+        listEl.innerHTML = S.contacts.map(c => \`
+          <div class="list-row" onclick="window.app.openThread('\${c.contact_id}', '\${c.name}')">
+            \${c.ungraded_count > 0 ? '<div class="unread-dot"></div>' : ''}
+            <div class="avatar">\${(c.name || 'U')[0]}</div>
+            <div class="content-wrap">
+              <div class="row-top">
+                <div class="contact-name">\${c.name || c.phone || 'Unknown'}</div>
+                <div class="row-time">\${relTime(c.last_activity)}</div>
+              </div>
+              <div class="row-preview">\${c.last_summary || 'No messages'}</div>
+            </div>
+          </div>
+        \`).join('');
       }
-
-      document.getElementById("accept").addEventListener("click", function () { doAccept(); });
-      document.getElementById("reject").addEventListener("click", function () { doReject(); });
-      document.getElementById("skip").addEventListener("click", function () { doSkip(); });
-      document.getElementById("undo").addEventListener("click", function () { doUndo(); });
-
-      document.addEventListener("keydown", function (e) {
-        var tag = (e.target && e.target.tagName ? e.target.tagName : "").toLowerCase();
-        if (tag === "input" || tag === "textarea" || (e.target && e.target.isContentEditable)) return;
-        if (e.repeat) return;
-        var key = (e.key || "").toLowerCase();
-        if (key === "a") { e.preventDefault(); doAccept(); return; }
-        if (key === "x") { e.preventDefault(); doReject(); return; }
-        if (key === "u") { e.preventDefault(); doUndo(); return; }
-        if (e.code === "Space" || key === " ") { e.preventDefault(); doSkip(); }
-      });
 
       async function loadThread(contactId) {
-        var container = document.getElementById("thread-container");
-        container.textContent = "";
-        var loadDiv = document.createElement("div");
-        loadDiv.className = "loading";
-        var spinDiv = document.createElement("div");
-        spinDiv.className = "spinner";
-        var msgDiv = document.createElement("div");
-        msgDiv.style.marginTop = "14px";
-        msgDiv.textContent = "Loading thread\u2026";
-        loadDiv.appendChild(spinDiv);
-        loadDiv.appendChild(msgDiv);
-        container.appendChild(loadDiv);
-        try {
-          var res = await fetch(BASE_URL + "?contact_id=" + encodeURIComponent(contactId) + "&limit=100");
-          var data = await res.json();
-          if (!data.ok) throw new Error(data.error || "Failed to load thread");
-          renderThread(data, container);
-          history.replaceState(null, "", "?contact_id=" + encodeURIComponent(contactId));
-        } catch (e) {
-          container.textContent = "Error: " + e.message;
-        }
-      }
-
-      function renderThread(data, container) {
-        container.textContent = "";
-        var layout = document.createElement("div");
-        layout.className = "thread-layout";
-        var main = document.createElement("div");
-        main.className = "thread-main";
-        var rail = document.createElement("aside");
-        rail.className = "decision-rail";
-        var railTitle = document.createElement("h3");
-        railTitle.textContent = "Last 10 Decisions";
-        var railList = document.createElement("div");
-        railList.id = "decision-rail-list";
-        rail.appendChild(railTitle);
-        rail.appendChild(railList);
-        layout.appendChild(main);
-        layout.appendChild(rail);
-        container.appendChild(layout);
-
-        var hdr = document.getElementById("contact-header");
-        document.getElementById("contact-header-name").textContent = data.contact.name;
-        document.getElementById("contact-header-meta").textContent =
-          data.pagination.total + " calls \u00b7 " + (data.contact.phone || "");
-        hdr.style.display = "block";
-
-        if (!data.thread || data.thread.length === 0) {
-          var es = document.createElement("div");
-          es.className = "empty-state";
-          es.textContent = "No messages found";
-          main.appendChild(es);
-          renderDecisionRail();
-          return;
-        }
-
-        triageQueue = normalizeQueue(data.thread);
-        triageCursor = 0;
-        for (var idx = 0; idx < triageQueue.length; idx++) {
-          if (!triageQueue[idx].grade) {
-            triageCursor = idx;
-            break;
+        const listEl = document.getElementById('message-list');
+        listEl.innerHTML = '<div class="loading">Loading messages…</div>';
+        const res = await fetch(BASE + '?contact_id=' + contactId + '&limit=100');
+        const data = await res.json();
+        if (!data.ok) return toast('Failed to load thread');
+        
+        listEl.innerHTML = data.thread.map(m => {
+          if (m.type === 'call') {
+            return \`<div class="bubble call">
+              Call \${m.direction === 'inbound' ? 'from' : 'to'} \${m.contact_name}<br/>
+              \${m.summary || 'No summary'}<br/>
+              <span class="bubble-meta">\${relTime(m.event_at)}</span>
+            </div>\`;
           }
-        }
-        renderTriagePane(main);
-
-        var gradeStats = { confirm: 0, reject: 0, correct: 0, ungraded: 0 };
-        data.thread.forEach(function (item) {
-          if (item.type !== "call") return;
-          (item.claims || []).forEach(function (c) {
-            if (c.grade) gradeStats[c.grade] = (gradeStats[c.grade] || 0) + 1;
-            else gradeStats.ungraded++;
-          });
-        });
-        var totalClaims = gradeStats.confirm + gradeStats.reject + gradeStats.correct + gradeStats.ungraded;
-        if (totalClaims > 0) {
-          var statsDiv = document.createElement("div");
-          statsDiv.className = "stats-bar";
-          [
-            { cls: "green", count: gradeStats.confirm, label: " confirmed" },
-            { cls: "red", count: gradeStats.reject, label: " rejected" },
-            { cls: "yellow", count: gradeStats.correct, label: " corrected" },
-            { cls: "gray", count: gradeStats.ungraded, label: " ungraded" },
-          ].forEach(function (s) {
-            if (s.count === 0) return;
-            var si = document.createElement("div");
-            si.className = "stat-item";
-            var dot = document.createElement("span");
-            dot.className = "stat-dot " + s.cls;
-            si.appendChild(dot);
-            si.appendChild(document.createTextNode(s.count + s.label));
-            statsDiv.appendChild(si);
-          });
-          main.appendChild(statsDiv);
-        }
-
-        var lastDateKey = "";
-        data.thread.forEach(function (item) {
-          var eventDate = new Date(item.event_at);
-          var dateKey = eventDate.toDateString();
-          if (dateKey !== lastDateKey) {
-            var sep = document.createElement("div");
-            sep.className = "date-separator";
-            sep.textContent = formatDateSep(eventDate);
-            main.appendChild(sep);
-            lastDateKey = dateKey;
-          }
-          if (item.type === "call") main.appendChild(buildCallCard(item, data.contact));
-          else if (item.type === "sms") main.appendChild(buildSmsItem(item));
-        });
-
-        updateClaimHighlight();
-        renderDecisionRail();
+          const cls = m.direction === 'inbound' ? 'inbound' : 'outbound';
+          return \`<div class="bubble \${cls}">
+            \${m.content}
+            <div class="bubble-meta">\${relTime(m.event_at)}</div>
+          </div>\`;
+        }).join('');
+        
         window.scrollTo(0, document.body.scrollHeight);
       }
 
-      function buildCallCard(item, contact) {
-        var card = document.createElement("div");
-        card.className = "call-card";
-
-        var hdr = document.createElement("div");
-        hdr.className = "call-card-header";
-        var dir = item.direction || "unknown";
-        var iconEl = document.createElement("div");
-        iconEl.className = "call-icon" + (dir === "outbound" ? " outbound" : dir === "unknown" ? " unknown" : "");
-        iconEl.textContent = "\uD83D\uDCDE";
-        hdr.appendChild(iconEl);
-
-        var topInfo = document.createElement("div");
-        topInfo.className = "call-card-top";
-        var typeRow = document.createElement("div");
-        typeRow.className = "call-card-type-row";
-        var typeLabel = document.createElement("span");
-        typeLabel.className = "call-card-type";
-        typeLabel.textContent = "Phone Call";
-        var timeLabel = document.createElement("span");
-        timeLabel.className = "call-card-time";
-        timeLabel.textContent = formatTime(item.event_at);
-        typeRow.appendChild(typeLabel);
-        typeRow.appendChild(timeLabel);
-        topInfo.appendChild(typeRow);
-        hdr.appendChild(topInfo);
-        card.appendChild(hdr);
-
-        if (item.summary) {
-          var titleEl = document.createElement("div");
-          titleEl.className = "call-card-title";
-          var firstLine = item.summary.split("\\n")[0].trim();
-          titleEl.textContent = firstLine.length > 80 ? firstLine.slice(0, 80) + "\u2026" : firstLine;
-          card.appendChild(titleEl);
-        }
-
-        var contactName = item.contact_name || (contact && contact.name) || "Contact";
-        var partEl = document.createElement("div");
-        partEl.className = "call-card-participants";
-        partEl.textContent = "\uD83D\uDC64 Zack \u2194 " + contactName;
-        card.appendChild(partEl);
-
-        if (item.summary) {
-          var sumEl = document.createElement("div");
-          sumEl.className = "call-card-summary";
-          var full = item.summary;
-          sumEl.textContent = full.length > 200 ? full.slice(0, 200) + "\u2026" : full;
-          card.appendChild(sumEl);
-        }
-
-        var hasTranscript = (item.raw_transcript && item.raw_transcript.trim().length > 0) ||
-          (item.spans || []).some(function (s) { return s.transcript_segment; });
-
-        if (hasTranscript) {
-          var btn = document.createElement("button");
-          btn.className = "read-convo-btn";
-          btn.setAttribute("data-action", "toggle-transcript");
-          btn.textContent = "\uD83D\uDCAC Read Conversation";
-          card.appendChild(btn);
-          var bubblesContainer = buildTranscriptBubbles(item);
-          if (bubblesContainer) card.appendChild(bubblesContainer);
-        }
-
-        var claims = item.claims || [];
-        if (claims.length > 0) {
-          var section = document.createElement("div");
-          section.className = "claims-section";
-          var claimsHdr = document.createElement("div");
-          claimsHdr.className = "claims-header";
-          claimsHdr.textContent = "Claims (" + claims.length + ")";
-          section.appendChild(claimsHdr);
-          claims.forEach(function (claim) {
-            var el = document.createElement("div");
-            el.className = "claim-item" + (claim.grade ? " graded-" + claim.grade : "");
-            el.setAttribute("data-claim-id", claim.claim_id);
-            el.setAttribute("data-claim-text", claim.claim_text || "");
-            var bullet = document.createElement("div");
-            bullet.className = "claim-bullet";
-            el.appendChild(bullet);
-            var tw = document.createElement("div");
-            tw.className = "claim-text-wrap";
-            if (claim.claim_type) {
-              var tag = document.createElement("span");
-              tag.className = "claim-type-tag";
-              tag.textContent = claim.claim_type;
-              tw.appendChild(tag);
-            }
-            tw.appendChild(document.createTextNode(claim.claim_text || ""));
-            el.appendChild(tw);
-            if (claim.grade) {
-              var badge = document.createElement("span");
-              badge.className = "claim-badge";
-              badge.textContent =
-                claim.grade === "confirm" ? "\u2705" : claim.grade === "reject" ? "\u274C" : "\u270F\uFE0F";
-              el.appendChild(badge);
-            }
-            section.appendChild(el);
-          });
-          card.appendChild(section);
-        }
-
-        return card;
+      async function loadTriage() {
+        if (S.items.length > 0) return renderTriage();
+        const res = await fetch(BASE + "?action=triage_queue&limit=200");
+        const data = await res.json();
+        if (!data.ok) return toast('Triage load failed');
+        S.items = data.items || [];
+        S.idx = 0;
+        renderTriage();
       }
 
-      function buildSmsItem(item) {
-        var dir = item.direction || "inbound";
-        var group = document.createElement("div");
-        group.className = "sms-group";
-        var senderLabel = document.createElement("div");
-        senderLabel.className = "sms-sender-label" + (dir === "outbound" ? " outbound" : "");
-        senderLabel.textContent = item.sender_name || (dir === "outbound" ? "Zack" : "Contact");
-        group.appendChild(senderLabel);
-        var row = document.createElement("div");
-        row.className = "sms-row " + dir;
-        var bubble = document.createElement("div");
-        bubble.className = "sms-bubble";
-        bubble.textContent = item.content || "";
-        row.appendChild(bubble);
-        group.appendChild(row);
-        return group;
-      }
+      function renderTriage() {
+        const card = document.getElementById('triage-card');
+        const empty = document.getElementById('triage-empty');
+        const item = S.items[S.idx];
 
-      function openGradeSheet(claimId, claimText) {
-        currentClaimId = claimId;
-        document.getElementById("grade-claim-preview").textContent = claimText;
-        document.getElementById("correction-area").style.display = "none";
-        document.getElementById("correction-text").value = "";
-        document.getElementById("grade-overlay").classList.add("open");
-      }
-
-      function closeGradeSheet() {
-        document.getElementById("grade-overlay").classList.remove("open");
-        currentClaimId = null;
-      }
-
-      async function submitGrade(grade) {
-        if (!currentClaimId) return;
-        var correctionText = null;
-        if (grade === "correct") {
-          correctionText = document.getElementById("correction-text").value.trim();
-          if (!correctionText) { alert("Enter a correction"); return; }
+        if (!item) {
+          card.style.display = 'none';
+          empty.style.display = 'block';
+          return;
         }
-        try {
-          var res = await fetch(BASE_URL, {
-            method: "POST",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({ claim_id: currentClaimId, grade: grade, correction_text: correctionText, graded_by: "chad" }),
-          });
-          var data = await res.json();
-          if (!data.ok) throw new Error(data.error || "Failed to save grade");
-          closeGradeSheet();
-          if (selectedContactId) loadThread(selectedContactId);
-        } catch (e) {
-          alert("Grade failed: " + e.message);
-        }
+        card.style.display = 'flex';
+        empty.style.display = 'none';
+
+        document.getElementById('triage-pos').textContent = (S.idx + 1) + ' / ' + S.items.length;
+        document.getElementById('triage-contact').textContent = item.contact_name;
+        document.getElementById('triage-snippet').textContent = item.transcript_snippet || '(No transcript)';
+        
+        const chips = document.getElementById('triage-chips');
+        chips.innerHTML = \`<span style="background:var(--surface); padding:4px 8px; border-radius:6px; font-size:11px">Suggested: \${item.suggested_project_name || 'None'}</span>\`;
+        
+        document.getElementById('triage-accept').disabled = !item.suggested_project_id;
       }
 
-      async function submitGradeForClaim(claimId, grade, correctionText) {
-        var res = await fetch(BASE_URL, {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ claim_id: claimId, grade: grade, correction_text: correctionText || null, graded_by: "chad" }),
+      async function triageAction(verdict) {
+        const item = S.items[S.idx];
+        if (!item || S.busy) return;
+        S.busy = true;
+        
+        const body = { review_queue_id: item.review_queue_id, verdict, user_id: 'chad', source: 'redline' };
+        if (verdict === 'assign') body.project_id = item.suggested_project_id;
+        
+        const res = await fetch(BASE + '/redline/verdict', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(body)
         });
-        var data = await res.json();
-        if (!data.ok) throw new Error(data.error || "Failed to save grade");
+        const data = await res.json();
+        S.busy = false;
+        if (!data.ok) return toast('Action failed');
+        
+        S.lastAction = { kind: verdict, item: S.items.splice(S.idx, 1)[0] };
+        if (S.idx >= S.items.length) S.idx = Math.max(0, S.items.length - 1);
+        renderTriage();
+        toast(verdict.toUpperCase());
       }
 
-      async function runTriageAction(action) {
-        var current = triageQueue[triageCursor];
-        if (!current) return;
-        var prevGrade = current.grade || null;
-        try {
-          if (action === "confirm" || action === "reject") {
-            await submitGradeForClaim(current.claim_id, action, null);
-            current.grade = action;
-            applyClaimGradeDom(current.claim_id, action);
-          }
-
-          triageHistory.unshift({
-            action: action,
-            claim_id: current.claim_id,
-            claim_text: current.claim_text,
-            prev_grade: prevGrade,
-            at: new Date().toISOString(),
-          });
-          triageHistory = triageHistory.slice(0, 10);
-
-          triageCursor = findNextQueueIndex(triageCursor);
-          triageStatusText = action === "skip"
-            ? "Skipped claim."
-            : (action === "confirm" ? "Accepted claim." : "Rejected claim.");
-          var main = document.querySelector(".thread-main");
-          if (main) renderTriagePane(main);
-          updateClaimHighlight();
-          renderDecisionRail();
-        } catch (e) {
-          triageStatusText = "Action failed: " + e.message;
-          var mainFail = document.querySelector(".thread-main");
-          if (mainFail) renderTriagePane(mainFail);
+      // Public API for HTML
+      window.app = {
+        openThread: (id, name) => {
+          S.currentThread = { id, name };
+          showView('thread');
+          loadThread(id);
         }
-      }
+      };
 
-      async function undoTriageAction() {
-        if (triageHistory.length === 0) {
-          triageStatusText = "Nothing to undo.";
-          var mainEmpty = document.querySelector(".thread-main");
-          if (mainEmpty) renderTriagePane(mainEmpty);
-          return;
-        }
+      document.getElementById('btn-back').onclick = () => showView('contacts');
+      document.getElementById('btn-refresh').onclick = () => loadContacts();
+      document.getElementById('btn-triage-toggle').onclick = () => showView('triage');
+      
+      document.getElementById('triage-accept').onclick = () => triageAction('assign');
+      document.getElementById('triage-reject').onclick = () => triageAction('dismiss');
+      document.getElementById('triage-skip').onclick = () => {
+        const item = S.items.splice(S.idx, 1)[0];
+        S.items.push(item);
+        if (S.idx >= S.items.length) S.idx = 0;
+        renderTriage();
+      };
+      document.getElementById('triage-undo').onclick = async () => {
+        if (!S.lastAction || S.busy) return;
+        S.busy = true;
+        const res = await fetch(BASE + '?action=undo_verdict', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ review_queue_id: S.lastAction.item.review_queue_id })
+        });
+        const data = await res.json();
+        S.busy = false;
+        if (!data.ok) return toast('Undo failed');
+        S.items.splice(S.idx, 0, S.lastAction.item);
+        S.lastAction = null;
+        renderTriage();
+        toast('UNDONE');
+      };
 
-        var last = triageHistory.shift();
-        var idx = indexByClaimId(last.claim_id);
-        if (idx >= 0) triageCursor = idx;
-
-        if ((last.action === "confirm" || last.action === "reject") && last.prev_grade) {
-          try {
-            await submitGradeForClaim(last.claim_id, last.prev_grade, null);
-            triageQueue[triageCursor].grade = last.prev_grade;
-            applyClaimGradeDom(last.claim_id, last.prev_grade);
-            triageStatusText = "Undid last decision.";
-          } catch (e) {
-            triageStatusText = "Undo failed: " + e.message;
-          }
-        } else if (last.action === "skip") {
-          triageStatusText = "Undid skip.";
-        } else {
-          triageStatusText = "Undo returned focus to prior claim.";
-        }
-
-        var main = document.querySelector(".thread-main");
-        if (main) renderTriagePane(main);
-        updateClaimHighlight();
-        renderDecisionRail();
-      }
-
-      document.addEventListener("click", function (e) {
-        if (e.target.closest(".search-container")) return;
-        var claimItem = e.target.closest(".claim-item");
-        if (claimItem) { openGradeSheet(claimItem.dataset.claimId, claimItem.dataset.claimText); return; }
-        var actionEl = e.target.closest("[data-action]");
-        var action = actionEl ? actionEl.dataset.action : null;
-        if (action === "toggle-transcript") {
-          var area = actionEl.nextElementSibling;
-          if (area && area.classList.contains("transcript-area")) {
-            area.classList.toggle("open");
-            actionEl.textContent = area.classList.contains("open")
-              ? "\uD83D\uDCAC Hide Conversation"
-              : "\uD83D\uDCAC Read Conversation";
-          }
-          return;
-        }
-        if (action === "grade-confirm") { submitGrade("confirm"); return; }
-        if (action === "grade-reject") { submitGrade("reject"); return; }
-        if (action === "grade-show-correct") { document.getElementById("correction-area").style.display = "block"; return; }
-        if (action === "grade-submit-correct") { submitGrade("correct"); return; }
-        if (action === "grade-cancel") { closeGradeSheet(); return; }
-        if (action === "triage-accept") { runTriageAction("confirm"); return; }
-        if (action === "triage-reject") { runTriageAction("reject"); return; }
-        if (action === "triage-skip") { runTriageAction("skip"); return; }
-        if (action === "triage-undo") { undoTriageAction(); return; }
+      document.addEventListener('keydown', (e) => {
+        if (S.view !== 'triage') return;
+        if (e.key === 'a') document.getElementById('triage-accept').click();
+        if (e.key === 'x') document.getElementById('triage-reject').click();
+        if (e.key === 'u') document.getElementById('triage-undo').click();
+        if (e.code === 'Space') document.getElementById('triage-skip').click();
       });
 
-      async function init() {
-        try {
-          var data = await apiQueue();
-          if (!data.ok) {
-            document.getElementById("card").style.display = "none";
-            var empty = document.getElementById("empty");
-            empty.textContent = "Error: " + (data.error || data.error_code || "failed to load queue");
-            empty.style.display = "block";
-            return;
-          }
-          S.items = data.items || [];
-          S.totalPending = Number(data.total_pending || S.items.length || 0);
-          S.idx = 0;
-          S.lastAction = null;
-          render();
-        } catch (err) {
-          document.getElementById("card").style.display = "none";
-          var empty = document.getElementById("empty");
-          empty.textContent = "Error: " + (err && err.message ? err.message : "failed to load queue");
-          empty.style.display = "block";
-        }
-      }
-
-      document.addEventListener("keydown", function (e) {
-        if (document.getElementById("grade-overlay").classList.contains("open")) return;
-        if (isInputElement(e.target)) return;
-        var key = (e.key || "").toLowerCase();
-        if (key === "a") {
-          e.preventDefault();
-          runTriageAction("confirm");
-        } else if (key === "x") {
-          e.preventDefault();
-          runTriageAction("reject");
-        } else if (e.key === " " || key === "spacebar") {
-          e.preventDefault();
-          runTriageAction("skip");
-        } else if (key === "u") {
-          e.preventDefault();
-          undoTriageAction();
-        }
-      });
-
-      loadContacts();
-      init();
+      showView('contacts');
     })();
   </script>
 </body>
