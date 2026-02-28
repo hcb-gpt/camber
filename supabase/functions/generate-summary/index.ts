@@ -451,7 +451,12 @@ Deno.serve(async (req: Request) => {
     Deno.env.get("SUPABASE_URL")!,
     Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!,
   );
-  let modelConfig: { modelId: string; maxTokens: number; temperature: number; source: "pipeline_model_config" | "default" } = {
+  let modelConfig: {
+    modelId: string;
+    maxTokens: number;
+    temperature: number;
+    source: "pipeline_model_config" | "default";
+  } = {
     modelId: DEFAULT_MODEL_ID,
     maxTokens: DEFAULT_MAX_TOKENS,
     temperature: DEFAULT_TEMPERATURE,

@@ -118,7 +118,9 @@ async function fetchReviewQueueMetaByIds(
   for (let start = 0; start < uniqueIds.length; start += chunkSize) {
     const chunk = uniqueIds.slice(start, start + chunkSize);
     const inClause = `(${chunk.join(",")})`;
-    const endpoint = `${supabaseUrl}/rest/v1/review_queue?select=id,module,reason_codes,reasons&id=in.${encodeURIComponent(inClause)}`;
+    const endpoint = `${supabaseUrl}/rest/v1/review_queue?select=id,module,reason_codes,reasons&id=in.${
+      encodeURIComponent(inClause)
+    }`;
     const resp = await fetch(endpoint, {
       method: "GET",
       headers: {
@@ -698,7 +700,9 @@ async function handleContacts(db: any, url: URL, t0: number): Promise<Response> 
   }
 
   const contacts = liveRowsWithIds
-    .filter((row: any) => String(row.source || "") !== "contacts" || validIdSet === null || validIdSet.has(row.contact_id))
+    .filter((row: any) =>
+      String(row.source || "") !== "contacts" || validIdSet === null || validIdSet.has(row.contact_id)
+    )
     .sort((a: any, b: any) => {
       const aTime = Date.parse(a.last_activity || "") || 0;
       const bTime = Date.parse(b.last_activity || "") || 0;
