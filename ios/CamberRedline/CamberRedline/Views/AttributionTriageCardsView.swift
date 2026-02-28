@@ -8,12 +8,17 @@ private extension Color {
     static let yesGreen = Color(red: 0.188, green: 0.82, blue: 0.345)     // #30D158
     static let noRed = Color(red: 1.0, green: 0.231, blue: 0.188)         // #FF3B30
     static let undoAmber = Color(red: 1.0, green: 0.624, blue: 0.04)      // #FF9F0A
+    static let laterBlue = Color(red: 0.25, green: 0.52, blue: 1.0)      // #4085FF
+    static let noteViolet = Color(red: 0.69, green: 0.32, blue: 1.0)     // #B052FF
 }
 
 struct AttributionTriageCardsView: View {
     @State private var viewModel = CardTriageViewModel()
     @State private var showProjectPicker = false
     @State private var pickerCard: CardItem?
+    @State private var showCommentSheet = false
+    @State private var commentCard: CardItem?
+    @State private var commentText = ""
 
     var body: some View {
         NavigationStack {
@@ -61,6 +66,22 @@ struct AttributionTriageCardsView: View {
                             Task { await viewModel.dismiss(card) }
                         }
                     )
+                }
+            }
+            .sheet(isPresented: $showCommentSheet) {
+                if let card = commentCard {
+                    CommentSheet(
+                        contactName: card.contactName,
+                        text: $commentText,
+                        onSubmit: {
+                            let text = commentText.trimmingCharacters(in: .whitespacesAndNewlines)
+                            guard !text.isEmpty else { return }
+                            Task { await viewModel.addComment(card, comment: text) }
+                            showCommentSheet = false
+                        },
+                        onCancel: { showCommentSheet = false }
+                    )
+                    .presentationDetents([.medium])
                 }
             }
         }
@@ -120,6 +141,14 @@ struct AttributionTriageCardsView: View {
                     onSwipeLeft: {
                         pickerCard = card
                         showProjectPicker = true
+                    },
+                    onSwipeUp: {
+                        Task { await viewModel.markUndecided(card) }
+                    },
+                    onSwipeDown: {
+                        commentCard = card
+                        commentText = ""
+                        showCommentSheet = true
                     }
                 )
                 .zIndex(isTop ? 1 : 0)
@@ -135,18 +164,33 @@ struct AttributionTriageCardsView: View {
     // MARK: - Action Hints
 
     private var actionHints: some View {
-        HStack(spacing: 0) {
-            Label("NO", systemImage: "arrow.left")
+        VStack(spacing: 6) {
+            // Up hint
+            Label("LATER", systemImage: "arrow.up")
                 .font(.caption)
                 .fontWeight(.semibold)
-                .foregroundStyle(Color.noRed.opacity(0.7))
-            Spacer()
-            Label("YES", systemImage: "arrow.right")
+                .foregroundStyle(Color.laterBlue.opacity(0.7))
+
+            // Left / Right hints
+            HStack(spacing: 0) {
+                Label("NO", systemImage: "arrow.left")
+                    .font(.caption)
+                    .fontWeight(.semibold)
+                    .foregroundStyle(Color.noRed.opacity(0.7))
+                Spacer()
+                Label("YES", systemImage: "arrow.right")
+                    .font(.caption)
+                    .fontWeight(.semibold)
+                    .foregroundStyle(Color.yesGreen.opacity(0.7))
+            }
+            .padding(.horizontal, 40)
+
+            // Down hint
+            Label("NOTE", systemImage: "arrow.down")
                 .font(.caption)
                 .fontWeight(.semibold)
-                .foregroundStyle(Color.yesGreen.opacity(0.7))
+                .foregroundStyle(Color.noteViolet.opacity(0.7))
         }
-        .padding(.horizontal, 40)
         .padding(.bottom, 12)
     }
 
@@ -215,11 +259,20 @@ private struct SwipeableTriageCard: View {
     let isTop: Bool
     let onSwipeRight: () -> Void
     let onSwipeLeft: () -> Void
+    var onSwipeUp: (() -> Void)?
+    var onSwipeDown: (() -> Void)?
 
     @State private var offset: CGSize = .zero
     @State private var rotation: Double = 0
 
     private let swipeThreshold: CGFloat = 100
+
+    /// Which axis dominates the current drag — prevents conflicting overlays on diagonal drags.
+    private var dominantAxis: DominantAxis {
+        abs(offset.width) >= abs(offset.height) ? .horizontal : .vertical
+    }
+
+    private enum DominantAxis { case horizontal, vertical }
 
     var body: some View {
         VStack(alignment: .leading, spacing: 14) {
@@ -299,36 +352,70 @@ private struct SwipeableTriageCard: View {
                 .stroke(swipeIndicatorColor, lineWidth: swipeIndicatorOpacity > 0 ? 2 : 1)
         )
         .overlay(alignment: .topLeading) {
-            if offset.width < -40 {
+            if dominantAxis == .horizontal, offset.width < -40 {
                 swipeLabel("NO", icon: "xmark", color: .noRed)
                     .padding(16)
                     .opacity(min(1, Double(-offset.width - 40) / 60))
             }
         }
         .overlay(alignment: .topTrailing) {
-            if offset.width > 40 {
+            if dominantAxis == .horizontal, offset.width > 40 {
                 swipeLabel("YES", icon: "checkmark", color: .yesGreen)
                     .padding(16)
                     .opacity(min(1, Double(offset.width - 40) / 60))
             }
         }
-        .offset(x: offset.width)
+        .overlay(alignment: .top) {
+            if dominantAxis == .vertical, offset.height < -40 {
+                swipeLabel("LATER", icon: "clock", color: .laterBlue)
+                    .padding(.top, 16)
+                    .opacity(min(1, Double(-offset.height - 40) / 60))
+            }
+        }
+        .overlay(alignment: .bottom) {
+            if dominantAxis == .vertical, offset.height > 40 {
+                swipeLabel("NOTE", icon: "pencil.line", color: .noteViolet)
+                    .padding(.bottom, 16)
+                    .opacity(min(1, Double(offset.height - 40) / 60))
+            }
+        }
+        .offset(x: offset.width, y: dominantAxis == .vertical ? offset.height : 0)
         .rotationEffect(.degrees(rotation))
         .gesture(
             DragGesture()
                 .onChanged { value in
                     guard isTop else { return }
                     offset = value.translation
-                    rotation = Double(value.translation.width / 20)
+                    // Only rotate on horizontal-dominant drags
+                    if abs(value.translation.width) >= abs(value.translation.height) {
+                        rotation = Double(value.translation.width / 20)
+                    } else {
+                        rotation = 0
+                    }
                 }
                 .onEnded { value in
                     guard isTop else { return }
-                    if value.translation.width > swipeThreshold {
-                        swipeAway(direction: .right)
-                    } else if value.translation.width < -swipeThreshold {
-                        swipeAway(direction: .left)
+                    let tx = value.translation.width
+                    let ty = value.translation.height
+
+                    if abs(tx) >= abs(ty) {
+                        // Horizontal dominant
+                        if tx > swipeThreshold {
+                            swipeAway(direction: .right)
+                        } else if tx < -swipeThreshold {
+                            swipeAway(direction: .left)
+                        } else {
+                            snapBack()
+                        }
                     } else {
-                        snapBack()
+                        // Vertical dominant
+                        if ty < -swipeThreshold {
+                            swipeAway(direction: .up)
+                        } else if ty > swipeThreshold {
+                            swipeAway(direction: .down)
+                        } else {
+                            snapBack()
+                        }
                     }
                 }
         )
@@ -348,13 +435,21 @@ private struct SwipeableTriageCard: View {
     }
 
     private var swipeIndicatorColor: Color {
-        if offset.width > 40 { return Color.yesGreen.opacity(swipeIndicatorOpacity) }
-        if offset.width < -40 { return Color.noRed.opacity(swipeIndicatorOpacity) }
+        let op = swipeIndicatorOpacity
+        if dominantAxis == .horizontal {
+            if offset.width > 40 { return Color.yesGreen.opacity(op) }
+            if offset.width < -40 { return Color.noRed.opacity(op) }
+        } else {
+            if offset.height < -40 { return Color.laterBlue.opacity(op) }
+            if offset.height > 40 { return Color.noteViolet.opacity(op) }
+        }
         return Color.cardStroke
     }
 
     private var swipeIndicatorOpacity: Double {
-        let magnitude = abs(offset.width)
+        let magnitude = dominantAxis == .horizontal
+            ? abs(offset.width)
+            : abs(offset.height)
         guard magnitude > 40 else { return 0 }
         return min(1, Double(magnitude - 40) / 60)
     }
@@ -367,10 +462,21 @@ private struct SwipeableTriageCard: View {
     }
 
     private func swipeAway(direction: SwipeDirection) {
-        let offscreen: CGFloat = direction == .right ? 500 : -500
         withAnimation(.easeIn(duration: 0.25)) {
-            offset = CGSize(width: offscreen, height: 0)
-            rotation = direction == .right ? 15 : -15
+            switch direction {
+            case .right:
+                offset = CGSize(width: 500, height: 0)
+                rotation = 15
+            case .left:
+                offset = CGSize(width: -500, height: 0)
+                rotation = -15
+            case .up:
+                offset = CGSize(width: 0, height: -800)
+                rotation = 0
+            case .down:
+                offset = CGSize(width: 0, height: 800)
+                rotation = 0
+            }
         }
         DispatchQueue.main.asyncAfter(deadline: .now() + 0.25) {
             offset = .zero
@@ -378,6 +484,8 @@ private struct SwipeableTriageCard: View {
             switch direction {
             case .right: onSwipeRight()
             case .left: onSwipeLeft()
+            case .up: onSwipeUp?()
+            case .down: onSwipeDown?()
             }
         }
     }
@@ -389,5 +497,60 @@ private struct SwipeableTriageCard: View {
         }
     }
 
-    private enum SwipeDirection { case left, right }
+    private enum SwipeDirection { case left, right, up, down }
+}
+
+// MARK: - Comment Sheet
+
+private struct CommentSheet: View {
+    let contactName: String
+    @Binding var text: String
+    let onSubmit: () -> Void
+    let onCancel: () -> Void
+
+    @FocusState private var isFocused: Bool
+
+    var body: some View {
+        NavigationStack {
+            VStack(spacing: 16) {
+                Text("Add note for \(contactName)")
+                    .font(.subheadline)
+                    .foregroundStyle(.secondary)
+
+                TextField("Your comment...", text: $text, axis: .vertical)
+                    .textFieldStyle(.plain)
+                    .font(.body)
+                    .foregroundStyle(.white)
+                    .padding(12)
+                    .background(Color.cardFace, in: RoundedRectangle(cornerRadius: 12))
+                    .overlay(
+                        RoundedRectangle(cornerRadius: 12)
+                            .stroke(Color.cardStroke, lineWidth: 1)
+                    )
+                    .lineLimit(3...8)
+                    .focused($isFocused)
+
+                Spacer()
+            }
+            .padding(.horizontal, 16)
+            .padding(.top, 12)
+            .background(Color.cardsBg.ignoresSafeArea())
+            .navigationTitle("Note")
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                ToolbarItem(placement: .cancellationAction) {
+                    Button("Cancel", action: onCancel)
+                        .foregroundStyle(.secondary)
+                }
+                ToolbarItem(placement: .confirmationAction) {
+                    Button("Save", action: onSubmit)
+                        .fontWeight(.semibold)
+                        .foregroundStyle(Color.noteViolet)
+                        .disabled(text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+                }
+            }
+        }
+        .presentationBackground(Color.cardsBg)
+        .onAppear { isFocused = true }
+    }
 }
