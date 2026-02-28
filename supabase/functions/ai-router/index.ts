@@ -1496,47 +1496,72 @@ Deno.serve(async (req: Request) => {
   const t0 = Date.now();
 
   if (req.method !== "POST") {
-    return new Response(JSON.stringify({ error: "POST only" }), {
-      status: 405,
-      headers: { "Content-Type": "application/json" },
-    });
+    return new Response(
+      JSON.stringify({
+        ok: false,
+        error_code: "method_not_allowed",
+        error: "POST only",
+        version: FUNCTION_VERSION,
+      }),
+      { status: 405, headers: { "Content-Type": "application/json" } },
+    );
   }
 
   const edgeSecretHeader = req.headers.get("X-Edge-Secret");
   const expectedSecret = Deno.env.get("EDGE_SHARED_SECRET");
   if (!expectedSecret || edgeSecretHeader !== expectedSecret) {
-    return new Response(JSON.stringify({ error: "unauthorized" }), {
-      status: 401,
-      headers: { "Content-Type": "application/json" },
-    });
+    return new Response(
+      JSON.stringify({
+        ok: false,
+        error_code: "auth_failed",
+        error: "unauthorized",
+        version: FUNCTION_VERSION,
+      }),
+      { status: 401, headers: { "Content-Type": "application/json" } },
+    );
   }
 
   let body: any;
   try {
     body = await req.json();
   } catch {
-    return new Response(JSON.stringify({ error: "Invalid JSON" }), {
-      status: 400,
-      headers: { "Content-Type": "application/json" },
-    });
+    return new Response(
+      JSON.stringify({
+        ok: false,
+        error_code: "bad_request",
+        error: "Invalid JSON",
+        version: FUNCTION_VERSION,
+      }),
+      { status: 400, headers: { "Content-Type": "application/json" } },
+    );
   }
 
   let context_package: ContextPackage | null = body.context_package || null;
   const dry_run = body.dry_run === true;
 
   if (!context_package) {
-    return new Response(JSON.stringify({ error: "missing_context_package" }), {
-      status: 400,
-      headers: { "Content-Type": "application/json" },
-    });
+    return new Response(
+      JSON.stringify({
+        ok: false,
+        error_code: "missing_context_package",
+        error: "context_package is required",
+        version: FUNCTION_VERSION,
+      }),
+      { status: 400, headers: { "Content-Type": "application/json" } },
+    );
   }
 
   const span_id = context_package.meta?.span_id;
   if (!span_id) {
-    return new Response(JSON.stringify({ error: "missing_span_id_in_context_package" }), {
-      status: 400,
-      headers: { "Content-Type": "application/json" },
-    });
+    return new Response(
+      JSON.stringify({
+        ok: false,
+        error_code: "missing_span_id",
+        error: "span_id is required in context_package.meta",
+        version: FUNCTION_VERSION,
+      }),
+      { status: 400, headers: { "Content-Type": "application/json" } },
+    );
   }
 
   // ── CLOSED-PROJECT HARD FILTER (pre-inference) ─────────────

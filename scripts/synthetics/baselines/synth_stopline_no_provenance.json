@@ -1,0 +1,19 @@
+{
+  "scenario_id": "synth_stopline_no_provenance",
+  "expected_decision": "review",
+  "expected_must_not_be": ["assign"],
+  "expected_guardrails": ["stopline_no_unanchored_assignments"],
+  "baseline_snapshot": {
+    "decision": "review",
+    "confidence_range": [0.0, 0.50],
+    "project_id": null,
+    "applied_project_id": null,
+    "candidates_snapshot_min_length": 2,
+    "matched_terms": null,
+    "match_positions": null,
+    "guardrail_flags": {
+      "stopline_no_unanchored_assignments": true,
+      "stopline_downgrade_reason": "insufficient_provenance_pointer_quality"
+    }
+  }
+}

@@ -1,0 +1,312 @@
+[
+  {
+    "scenario_id": "synth_stopline_no_provenance",
+    "description": "Interaction with no transcript anchor pointers and no world-model provenance. AI-router must NOT assign; must downgrade to review per stopline v1.15.1.",
+    "transcript": "Hey yeah I was just calling to check on things. We had talked about some stuff last week and I wanted to follow up. Can you give me a call back when you get a chance? Thanks.",
+    "contact": {
+      "contact_id": "00000000-0000-0000-0000-000000000001",
+      "contact_name": "Generic Caller",
+      "phone": "+15555550001",
+      "fanout_class": "unknown",
+      "effective_fanout": 0,
+      "is_internal": false
+    },
+    "candidates": [
+      {
+        "project_id": "00000000-0000-0000-0000-000000000101",
+        "project_name": "Alpha Residence",
+        "evidence": {
+          "assigned": false,
+          "affinity_weight": 0.30,
+          "source_strength": 0.05,
+          "claim_crossref_score": 0.02,
+          "sources": ["recent_calls"],
+          "alias_matches": []
+        }
+      },
+      {
+        "project_id": "00000000-0000-0000-0000-000000000102",
+        "project_name": "Beta Residence",
+        "evidence": {
+          "assigned": false,
+          "affinity_weight": 0.25,
+          "source_strength": 0.03,
+          "claim_crossref_score": 0.01,
+          "sources": ["recent_calls"],
+          "alias_matches": []
+        }
+      }
+    ],
+    "expected": {
+      "decision": "review",
+      "decision_alternatives": ["none"],
+      "must_not_be": ["assign"],
+      "invariants": [
+        "stopline_no_unanchored_assignments",
+        "decision_is_not_assign_without_provenance"
+      ],
+      "guardrails_that_should_fire": ["stopline_no_unanchored_assignments"],
+      "confidence_max": 0.50,
+      "notes": "No project name, address, or construction topic in transcript. Zero provenance pointers. Stopline must prevent assignment."
+    }
+  },
+  {
+    "scenario_id": "synth_name_coincidence_permar",
+    "description": "Permar-class name-coincidence bug. Transcript mentions 'Lou Winship' (a person) but construction work (fireplace, stone, windows at Sparta) matches Permar Residence claims. Name-content guardrail must fire.",
+    "transcript": "So I talked to Lou Winship earlier about the fireplace stone. He said they picked out some quartzite for the surround and the mantel is being custom built. The windows at Sparta are getting installed next week and we need to coordinate the stone delivery with the tiler. Also the countertop slab for the kitchen island is on backorder.",
+    "contact": {
+      "contact_id": "00000000-0000-0000-0000-000000000002",
+      "contact_name": "Lou Winship",
+      "phone": "+15555550002",
+      "fanout_class": "floater",
+      "effective_fanout": 5,
+      "is_internal": true
+    },
+    "candidates": [
+      {
+        "project_id": "00000000-0000-0000-0000-000000000201",
+        "project_name": "Winship Residence",
+        "evidence": {
+          "assigned": false,
+          "affinity_weight": 0.55,
+          "source_strength": 0.15,
+          "claim_crossref_score": 0.05,
+          "sources": ["contact_project_link", "recent_calls"],
+          "alias_matches": [{ "term": "Winship", "match_type": "alias" }]
+        }
+      },
+      {
+        "project_id": "00000000-0000-0000-0000-000000000202",
+        "project_name": "Permar Residence",
+        "evidence": {
+          "assigned": false,
+          "affinity_weight": 0.20,
+          "source_strength": 1.22,
+          "claim_crossref_score": 0.90,
+          "sources": ["journal_claims", "transcript_keyword"],
+          "alias_matches": []
+        }
+      }
+    ],
+    "journal_claims": [
+      {
+        "project_id": "00000000-0000-0000-0000-000000000202",
+        "claim_text": "Fireplace stone surround being installed — quartzite selection confirmed. Windows scheduled for Sparta location.",
+        "claim_type": "material_selection"
+      },
+      {
+        "project_id": "00000000-0000-0000-0000-000000000202",
+        "claim_text": "Kitchen island countertop slab on backorder. Tiler coordination needed for stone delivery.",
+        "claim_type": "issue"
+      },
+      {
+        "project_id": "00000000-0000-0000-0000-000000000201",
+        "claim_text": "Exterior paint finalized. Driveway grading complete.",
+        "claim_type": "milestone"
+      }
+    ],
+    "expected": {
+      "decision": "review",
+      "decision_alternatives": [],
+      "must_not_be": ["assign"],
+      "invariants": [
+        "name_content_guardrail_fires_on_name_coincidence",
+        "chosen_low_crossref_rival_high_crossref"
+      ],
+      "guardrails_that_should_fire": ["name_content_guardrail"],
+      "confidence_max": 0.70,
+      "notes": "LLM will likely choose Winship due to name in transcript. Name-content guardrail must detect low crossref on Winship (0.05) vs high crossref on Permar (0.90) and downgrade to review."
+    }
+  },
+  {
+    "scenario_id": "synth_common_alias_only",
+    "description": "Only anchor is a common alias ('mystery white' — a marble color). Alias guardrail must NOT allow assignment when no corroborating strong anchor (exact project name, address, client name) exists.",
+    "transcript": "Yeah so we need to check on the mystery white. The slabs came in and one of them has a crack in it so we might need to reorder. Can you call Arizona Tile and check availability?",
+    "contact": {
+      "contact_id": "00000000-0000-0000-0000-000000000003",
+      "contact_name": "Randy Miller",
+      "phone": "+15555550003",
+      "fanout_class": "floater",
+      "effective_fanout": 6,
+      "is_internal": true
+    },
+    "candidates": [
+      {
+        "project_id": "00000000-0000-0000-0000-000000000301",
+        "project_name": "White Residence",
+        "evidence": {
+          "assigned": false,
+          "affinity_weight": 0.35,
+          "source_strength": 0.10,
+          "claim_crossref_score": 0.08,
+          "sources": ["alias_match"],
+          "alias_matches": [{ "term": "mystery white", "match_type": "alias" }]
+        }
+      },
+      {
+        "project_id": "00000000-0000-0000-0000-000000000302",
+        "project_name": "Skelton Residence",
+        "evidence": {
+          "assigned": false,
+          "affinity_weight": 0.20,
+          "source_strength": 0.80,
+          "claim_crossref_score": 0.75,
+          "sources": ["journal_claims"],
+          "alias_matches": []
+        }
+      }
+    ],
+    "journal_claims": [
+      {
+        "project_id": "00000000-0000-0000-0000-000000000302",
+        "claim_text": "Mystery white marble selected from Arizona Tile. Two slabs ordered, $3000 each.",
+        "claim_type": "material_selection"
+      },
+      {
+        "project_id": "00000000-0000-0000-0000-000000000301",
+        "claim_text": "Exterior siding color approved. Moving to roofing next week.",
+        "claim_type": "approval"
+      }
+    ],
+    "expected": {
+      "decision": "review",
+      "decision_alternatives": ["none"],
+      "must_not_be": ["assign"],
+      "invariants": [
+        "common_alias_requires_corroboration",
+        "mystery_white_is_common_alias"
+      ],
+      "guardrails_that_should_fire": ["alias_guardrails"],
+      "confidence_max": 0.70,
+      "notes": "'mystery white' is in EXPLICIT_COMMON_ALIASES. With no corroborating strong anchor (exact_project_name, address_fragment, client_name, chain_continuity), the alias guardrail must downgrade assign to review."
+    }
+  },
+  {
+    "scenario_id": "synth_homeowner_override",
+    "description": "Homeowner/client linked to exactly one project. Context-assembly must deterministically constrain candidates to that project unless transcript contains contradictory project anchors.",
+    "transcript": "Hi this is Sarah Hurley calling. I wanted to ask about the tile selection for the master bathroom. We decided on the large format porcelain tiles, the ones from the showroom visit last week. Also the plumber said the rough-in is done.",
+    "contact": {
+      "contact_id": "00000000-0000-0000-0000-000000000004",
+      "contact_name": "Sarah Hurley",
+      "phone": "+15555550004",
+      "fanout_class": "anchored",
+      "effective_fanout": 1,
+      "is_internal": false,
+      "is_homeowner": true,
+      "homeowner_project_id": "00000000-0000-0000-0000-000000000401"
+    },
+    "candidates": [
+      {
+        "project_id": "00000000-0000-0000-0000-000000000401",
+        "project_name": "Hurley Residence",
+        "evidence": {
+          "assigned": true,
+          "affinity_weight": 1.00,
+          "source_strength": 1.50,
+          "claim_crossref_score": 0.85,
+          "sources": ["homeowner_override", "contact_project_link", "journal_claims"],
+          "alias_matches": [{ "term": "Hurley", "match_type": "exact_project_name" }]
+        }
+      },
+      {
+        "project_id": "00000000-0000-0000-0000-000000000402",
+        "project_name": "Norris Residence",
+        "evidence": {
+          "assigned": false,
+          "affinity_weight": 0.10,
+          "source_strength": 0.05,
+          "claim_crossref_score": 0.03,
+          "sources": ["recent_calls"],
+          "alias_matches": []
+        }
+      }
+    ],
+    "expected": {
+      "decision": "assign",
+      "decision_alternatives": [],
+      "must_not_be": ["none"],
+      "invariants": [
+        "homeowner_override_forces_single_project",
+        "deterministic_assign_with_strong_anchor"
+      ],
+      "guardrails_that_should_fire": [],
+      "confidence_min": 0.70,
+      "assigned_project_id": "00000000-0000-0000-0000-000000000401",
+      "notes": "Homeowner uniquely linked to Hurley Residence. No contradictory project names in transcript. Must deterministically assign to Hurley."
+    }
+  },
+  {
+    "scenario_id": "synth_floater_continuity_gap",
+    "description": "Floater contact with >4h gap since prior call. Continuity links must respect Tier1 evidence requirements. Without a project_mention in the prior call, floater continuity must NOT override weak evidence.",
+    "transcript": "Hey it's Randy again. I need to check on the drywall progress, the guys were supposed to finish the second floor today. Also need to verify the paint delivery came in.",
+    "contact": {
+      "contact_id": "00000000-0000-0000-0000-000000000005",
+      "contact_name": "Randy Miller",
+      "phone": "+15555550005",
+      "fanout_class": "floater",
+      "effective_fanout": 5,
+      "is_internal": true
+    },
+    "continuity_context": {
+      "prior_interaction_id": "cll_PRIOR_FLOATER_001",
+      "prior_project_id": "00000000-0000-0000-0000-000000000501",
+      "gap_minutes": 300,
+      "gap_hours": 5.0,
+      "tier": "TIER_3",
+      "evidence": {
+        "reason": "recency_only",
+        "spans": [],
+        "callback_phrase_hits": []
+      }
+    },
+    "candidates": [
+      {
+        "project_id": "00000000-0000-0000-0000-000000000501",
+        "project_name": "Gamma Residence",
+        "evidence": {
+          "assigned": false,
+          "affinity_weight": 0.40,
+          "source_strength": 0.10,
+          "claim_crossref_score": 0.15,
+          "sources": ["recent_calls", "continuity_bundle"],
+          "alias_matches": []
+        }
+      },
+      {
+        "project_id": "00000000-0000-0000-0000-000000000502",
+        "project_name": "Delta Residence",
+        "evidence": {
+          "assigned": false,
+          "affinity_weight": 0.35,
+          "source_strength": 0.45,
+          "claim_crossref_score": 0.60,
+          "sources": ["journal_claims", "transcript_keyword"],
+          "alias_matches": []
+        }
+      }
+    ],
+    "journal_claims": [
+      {
+        "project_id": "00000000-0000-0000-0000-000000000502",
+        "claim_text": "Second floor drywall in progress. Paint delivery scheduled for today. Crew finishing upstairs.",
+        "claim_type": "task_status"
+      },
+      {
+        "project_id": "00000000-0000-0000-0000-000000000501",
+        "claim_text": "Foundation pour completed. Waiting on inspection results.",
+        "claim_type": "milestone"
+      }
+    ],
+    "expected": {
+      "decision": "review",
+      "decision_alternatives": ["assign"],
+      "must_not_be": ["none"],
+      "invariants": [
+        "floater_continuity_requires_tier1_for_override",
+        "gap_over_4h_weakens_continuity"
+      ],
+      "guardrails_that_should_fire": [],
+      "notes": "5h gap with only recency_only evidence (TIER_3). Floater rule requires Tier1 (project_mention) for continuity to count. Gamma's weak continuity must not override Delta's strong journal match. Expected: review (floater ambiguity) or assign to Delta if content match is strong enough."
+    }
+  }
+]
