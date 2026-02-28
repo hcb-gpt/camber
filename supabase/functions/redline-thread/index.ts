@@ -1,8 +1,9 @@
 import "jsr:@supabase/functions-js/edge-runtime.d.ts";
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
 
-const FUNCTION_VERSION = "redline-thread_v3.2.1";
+const FUNCTION_VERSION = "redline-thread_v3.2.2";
 /**
+ * v3.2.2 - Batch contacts validation query (P0 Orphan Filter Fix)
  * v3.2.1 - Fix typo interactionClaims -> _interactionClaims
  * v3.1.2 - iOS Contract Fix (P0 Unbrick)
  * - Map DB 'id' to 'span_id' and 'claim_id' for iOS compatibility
@@ -595,14 +596,31 @@ async function handleContacts(db: any, url: URL, t0: number): Promise<Response> 
   const candidateIds = liveRows.map((r: any) => r.contact_id).filter(Boolean);
   let validIdSet: Set<string> | null = null;
   if (candidateIds.length > 0) {
-    const { data: validRows, error: validErr } = await db
-      .from("contacts")
-      .select("id")
-      .in("id", candidateIds);
-    if (!validErr && validRows) {
-      validIdSet = new Set(validRows.map((r: any) => r.id));
+    const validIds: string[] = [];
+    const batchSize = 200;
+    let hasError = false;
+
+    for (let i = 0; i < candidateIds.length; i += batchSize) {
+      const batch = candidateIds.slice(i, i + batchSize);
+      const { data: validRows, error: validErr } = await db
+        .from("contacts")
+        .select("id")
+        .in("id", batch);
+      
+      if (validErr) {
+        console.warn(`[contacts] Contact validation batch ${i / batchSize} failed: ${validErr.message}`);
+        hasError = true;
+        break;
+      }
+      if (validRows) {
+        validIds.push(...validRows.map((r: any) => r.id));
+      }
+    }
+
+    if (!hasError) {
+      validIdSet = new Set(validIds);
     } else {
-      console.warn(`[contacts] Contact validation query failed, skipping orphan filter: ${validErr?.message}`);
+      console.warn(`[contacts] Contact validation failed, skipping orphan filter to maintain availability`);
     }
   }
 
