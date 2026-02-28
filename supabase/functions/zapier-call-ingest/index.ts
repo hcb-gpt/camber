@@ -1,5 +1,5 @@
 /**
- * zapier-call-ingest Edge Function v1.7.1
+ * zapier-call-ingest Edge Function v1.8.0
  *
  * Auth model (consolidated):
  * - Canonical: X-Edge-Secret === EDGE_SHARED_SECRET
@@ -7,21 +7,20 @@
  *
  * Forward: Calls process-call internally using SUPABASE_SERVICE_ROLE_KEY + X-Edge-Secret.
  *
+ * v1.8.0: Beside passthrough now forwards to process-call after upsert for full
+ * pipeline normalization (interactions row, contact link, AI attribution).
+ * Forward is best-effort — upsert success = 200 to Zapier regardless.
+ *
  * v1.7.1: Fix beside auth bypass — move body parse + beside detection BEFORE auth gate.
- * v1.6.0 had beside check pre-auth (worked). v1.7.0 had it post-auth (still 401'd).
- * Now: parse body → beside passthrough (no auth needed) → auth gate → process-call.
- *
  * v1.7.0: Recovered BESIDE_RAW_PASSTHROUGH from lost v1.6.0 deploy (Charter §10).
- * Beside-format payloads (fromPhoneNumber/toPhoneNumber/noteUrl) are normalized
- * and inserted directly into calls_raw with capture_source='beside_zapier'.
  *
- * @version 1.7.1
+ * @version 1.8.0
  * @date 2026-02-28
  */
 import "jsr:@supabase/functions-js/edge-runtime.d.ts";
 import { createClient } from "jsr:@supabase/supabase-js@2";
 
-const VERSION = "v1.7.1";
+const VERSION = "v1.8.0";
 
 async function logDiagnostic(
   message: string,
@@ -169,12 +168,46 @@ Deno.serve(async (req: Request) => {
       );
     }
 
+    // Best-effort forward to process-call for full pipeline normalization
+    // (interactions row, contact link, AI attribution). Upsert already
+    // succeeded so Zapier gets 200 regardless of forward outcome.
+    let forwardStatus: number | null = null;
+    let forwardError: string | null = null;
+    try {
+      const pcUrl = `${supabaseUrl}/functions/v1/process-call`;
+      const edgeSecret = Deno.env.get("EDGE_SHARED_SECRET") || "";
+      const pcResp = await fetch(pcUrl, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          "Authorization": `Bearer ${serviceRoleKey}`,
+          "X-Edge-Secret": edgeSecret,
+        },
+        body: JSON.stringify(payload),
+      });
+      forwardStatus = pcResp.status;
+      if (!pcResp.ok) {
+        forwardError = await pcResp.text().catch(() => "unreadable");
+      }
+    } catch (e: any) {
+      forwardError = e.message || "fetch_failed";
+    }
+
+    await logDiagnostic("BESIDE_PROCESS_CALL_FORWARD", {
+      interaction_id: row.interaction_id,
+      forward_status: forwardStatus,
+      forward_error: forwardError,
+      forward_ok: forwardStatus !== null && forwardStatus >= 200 && forwardStatus < 300,
+    }, forwardError ? "error" : "info");
+
     return new Response(
       JSON.stringify({
         ok: true,
         path: "beside_raw_passthrough",
         interaction_id: row.interaction_id,
         capture_source: "beside_zapier",
+        process_call_status: forwardStatus,
+        process_call_error: forwardError,
         version: VERSION,
         ms: Date.now() - t0,
       }),
