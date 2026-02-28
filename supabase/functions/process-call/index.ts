@@ -85,11 +85,14 @@ import { resolveCallPartyPhones } from "./phone_direction.ts";
 const PROCESS_CALL_VERSION = "v4.3.12"; // adds payload_text transcript fallback + misattribution guards
 const GATE = { PASS: "PASS", SKIP: "SKIP", NEEDS_REVIEW: "NEEDS_REVIEW" };
 const ID_PATTERN = /^cll_[a-zA-Z0-9_]+$/;
+// 6s timeout balances segment-llm LLM latency (~2-4s p95) with Supabase 30s gateway limit
 const SEGMENT_CALL_TIMEOUT_MS = Number(Deno.env.get("PROCESS_CALL_SEGMENT_TIMEOUT_MS") || "6000");
+// 2 attempts: 1 initial + 1 retry; capped at 3 to stay within gateway budget
 const SEGMENT_CALL_MAX_ATTEMPTS = Math.min(
   3,
   Math.max(1, Number(Deno.env.get("PROCESS_CALL_SEGMENT_MAX_ATTEMPTS") || "2")),
 );
+// chain-detect uses same 6s/2-attempt defaults as segment-call (non-blocking path)
 const CHAIN_DETECT_TIMEOUT_MS = Number(Deno.env.get("PROCESS_CALL_CHAIN_DETECT_TIMEOUT_MS") || "6000");
 const CHAIN_DETECT_MAX_ATTEMPTS = Math.min(
   3,
@@ -350,20 +353,30 @@ Deno.serve(async (req: Request) => {
   // REQUEST VALIDATION
   // ============================================================
   if (req.method !== "POST") {
-    return new Response(JSON.stringify({ error: "POST only" }), {
-      status: 405,
-      headers: { "Content-Type": "application/json" },
-    });
+    return new Response(
+      JSON.stringify({
+        ok: false,
+        error_code: "method_not_allowed",
+        error: "POST only",
+        version: PROCESS_CALL_VERSION,
+      }),
+      { status: 405, headers: { "Content-Type": "application/json" } },
+    );
   }
 
   let raw: any;
   try {
     raw = await req.json();
   } catch {
-    return new Response(JSON.stringify({ error: "Invalid JSON" }), {
-      status: 400,
-      headers: { "Content-Type": "application/json" },
-    });
+    return new Response(
+      JSON.stringify({
+        ok: false,
+        error_code: "bad_request",
+        error: "Invalid JSON",
+        version: PROCESS_CALL_VERSION,
+      }),
+      { status: 400, headers: { "Content-Type": "application/json" } },
+    );
   }
 
   // ============================================================
