@@ -5,7 +5,7 @@ import {
 } from "https://esm.sh/@supabase/supabase-js@2";
 import { getModelConfigCached } from "../_shared/model_config.ts";
 
-const FUNCTION_VERSION = "redline-assistant_v0.4.0";
+const FUNCTION_VERSION = "redline-assistant_v0.5.0";
 const CONTRACT_VERSION = "assistant_context_v1";
 const DEFAULT_MODEL_ID = "gpt-4o";
 const DEFAULT_MAX_TOKENS = 2048;
@@ -258,6 +258,108 @@ async function fetchProjectsFallback(
 }
 
 // ---------------------------------------------------------------------------
+// Direct-query fallback for project highlights
+// Covers the 3 data loss points in the RPC:
+//   1) SMS silently dropped by JOIN (sms_messages.id ≠ interactions.id)
+//   2) Unattributed calls excluded by project_id IS NOT NULL
+//   3) Narrow window — we use 7 days here as a safety net
+// ---------------------------------------------------------------------------
+
+type DirectHighlight = {
+  source: "interaction" | "sms";
+  id: string;
+  event_at_utc: string | null;
+  channel: string | null;
+  contact_name: string | null;
+  summary_text: string | null;
+};
+
+async function fetchDirectHighlights(
+  db: SupabaseClient,
+  projectId: string,
+): Promise<DirectHighlight[]> {
+  const sevenDaysAgo = new Date(Date.now() - 7 * 24 * 60 * 60 * 1000).toISOString();
+  const highlights: DirectHighlight[] = [];
+
+  try {
+    // 1) Recent interactions for this project (calls, attributed)
+    const { data: interactions } = await db
+      .from("interactions")
+      .select("id, event_at_utc, channel, contact_name, human_summary")
+      .eq("project_id", projectId)
+      .gte("event_at_utc", sevenDaysAgo)
+      .order("event_at_utc", { ascending: false, nullsFirst: false })
+      .limit(10);
+
+    if (Array.isArray(interactions)) {
+      for (const row of interactions as Array<Record<string, unknown>>) {
+        highlights.push({
+          source: "interaction",
+          id: String(row.id ?? ""),
+          event_at_utc: toStringOrNull(row.event_at_utc),
+          channel: toStringOrNull(row.channel),
+          contact_name: toStringOrNull(row.contact_name),
+          summary_text: toStringOrNull(row.human_summary),
+        });
+      }
+    }
+
+    // 2) Recent SMS for contacts anchored to this project
+    //    sms_messages don't have project_id — we go through project_contacts
+    const { data: smsRows } = await db
+      .from("sms_messages")
+      .select("id, created_at, direction, contact_name, body")
+      .gte("created_at", sevenDaysAgo)
+      .order("created_at", { ascending: false, nullsFirst: false })
+      .limit(20);
+
+    if (Array.isArray(smsRows)) {
+      // Filter to contacts associated with this project via project_contacts
+      const { data: projectContactRows } = await db
+        .from("project_contacts")
+        .select("contact_id")
+        .eq("project_id", projectId)
+        .eq("is_active", true);
+
+      const projectContactIds = new Set(
+        Array.isArray(projectContactRows)
+          ? (projectContactRows as Array<Record<string, unknown>>).map((r) => String(r.contact_id ?? ""))
+          : [],
+      );
+
+      for (const row of smsRows as Array<Record<string, unknown>>) {
+        // SMS might have contact_id — check if it belongs to this project's contacts
+        const contactId = toStringOrNull(row.contact_id);
+        if (contactId && projectContactIds.has(contactId)) {
+          highlights.push({
+            source: "sms",
+            id: String(row.id ?? ""),
+            event_at_utc: toStringOrNull(row.created_at),
+            channel: "sms",
+            contact_name: toStringOrNull(row.contact_name),
+            summary_text: toStringOrNull(row.body)
+              ? String(row.body).slice(0, 280)
+              : null,
+          });
+        }
+      }
+    }
+  } catch (err: unknown) {
+    console.warn(
+      `[redline-assistant] direct highlights query failed: ${
+        err instanceof Error ? err.message : "unknown"
+      }`,
+    );
+  }
+
+  // Sort by event time descending, limit to 10
+  highlights.sort((a, b) =>
+    (b.event_at_utc ?? "").localeCompare(a.event_at_utc ?? "")
+  );
+  return highlights.slice(0, 10);
+}
+
+// ---------------------------------------------------------------------------
 // OpenAI streaming
 // ---------------------------------------------------------------------------
 
@@ -403,11 +505,23 @@ Deno.serve(async (req: Request): Promise<Response> => {
 
     // Extract highlights for the effective project (if any)
     let projectHighlights: unknown[] = [];
+    let highlightsSource = "rpc";
     if (effectiveProjectId && Array.isArray(groundedPayload?.project_recent_highlights)) {
       const entry = (groundedPayload!.project_recent_highlights as Array<Record<string, unknown>>)
         .find((ph) => String(ph.project_id) === effectiveProjectId);
       if (entry && Array.isArray(entry.highlights)) {
         projectHighlights = entry.highlights as unknown[];
+      }
+    }
+
+    // Fallback: if RPC returned empty highlights for a resolved project,
+    // query interactions + SMS directly. This covers the 3 RPC data loss
+    // points (SMS JOIN bug, unattributed filter, narrow window).
+    if (projectHighlights.length === 0 && effectiveProjectId) {
+      const directHits = await fetchDirectHighlights(db, effectiveProjectId);
+      if (directHits.length > 0) {
+        projectHighlights = directHits;
+        highlightsSource = "direct_query_fallback";
       }
     }
 
@@ -439,6 +553,7 @@ Deno.serve(async (req: Request): Promise<Response> => {
         ? groundedPayload!.project_recent_highlights
         : [],
       focused_project_highlights: projectHighlights,
+      focused_highlights_source: highlightsSource,
       contact_project_candidates: contactCandidates,
     };
 
@@ -449,14 +564,14 @@ You answer project questions for operators with concise, factual guidance.
 DATA GROUNDING RULES (strict):
 1) Use ONLY facts present in the CONTEXT_PACKET below. Never hallucinate projects or data.
 2) The projects_roster is the canonical list of all known projects. If a project name is in the roster, it exists.
-3) project_recent_highlights contains recent interaction events per project from the last 48 hours, each with interaction_id pointers back to the source.
-4) focused_project_highlights contains highlights specifically for the resolved project (if any).
+3) project_recent_highlights contains recent interaction events per project, each with interaction_id pointers back to the source.
+4) focused_project_highlights contains highlights specifically for the resolved project (if any). These may come from the RPC (with interaction_id, interaction_type, highlight_text) or from direct queries (with id, channel, contact_name, summary_text). Use whichever fields are present.
 5) If asked about project roster or "what projects", list project names from projects_roster.
-6) For status-style questions, cite at least one concrete highlight (event_at_utc, interaction_type, highlight_text) tied to a project name.
+6) For status-style questions, cite at least one concrete highlight (event_at_utc, channel, summary_text or highlight_text) tied to a project name.
 7) If resolution.mode is "ambiguous", present the matches and ask the user to pick.
 8) If resolution.mode is "none", say no match found and suggest closest roster names.
-9) If context data is missing or grounded_error is set, say exactly what is unavailable.
-10) Cite project names and interaction IDs when available.
+9) If focused_project_highlights is empty, say you don't have recent activity details for this project, but confirm the project exists if it's in the roster.
+10) Cite project names, contact names, and IDs when available.
 
 CONTEXT_PACKET:
 ${JSON.stringify(contextPacket, null, 2)}
