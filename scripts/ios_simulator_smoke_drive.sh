@@ -20,7 +20,7 @@ simctl() {
 }
 
 wait_for_simctl() {
-  local max_tries=8
+  local max_tries=12
   local try
   for try in $(seq 1 "${max_tries}"); do
     if simctl list devices >/dev/null 2>&1; then
@@ -28,9 +28,10 @@ wait_for_simctl() {
     fi
     echo "[smoke] waiting for CoreSimulatorService (${try}/${max_tries})"
     open -a Simulator >/dev/null 2>&1 || true
-    sleep 2
+    sleep 3
   done
-  return 1
+  # Final check after last sleep — avoids off-by-one false-negative
+  simctl list devices >/dev/null 2>&1
 }
 
 echo "[smoke] output: ${OUT_DIR}"
@@ -51,7 +52,11 @@ if [[ -z "${DEVICE_UDID}" ]]; then
 fi
 
 open -a Simulator || true
-simctl bootstatus "${DEVICE_UDID}" -b
+# bootstatus can fail transiently under set -e; retry once after short wait
+simctl bootstatus "${DEVICE_UDID}" -b || {
+  sleep 3
+  simctl bootstatus "${DEVICE_UDID}" -b
+}
 
 echo "[smoke] building for simulator ${DEVICE_UDID}"
 (
