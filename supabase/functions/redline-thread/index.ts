@@ -1,7 +1,7 @@
 import "jsr:@supabase/functions-js/edge-runtime.d.ts";
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
 
-const FUNCTION_VERSION = "redline-thread_v3.1.2";
+const FUNCTION_VERSION = "redline-thread_v3.2.0";
 /**
  * v3.1.2 - iOS Contract Fix (P0 Unbrick)
  * - Map DB 'id' to 'span_id' and 'claim_id' for iOS compatibility
@@ -319,6 +319,30 @@ function parseRedlineApiRoute(url: URL): RedlineApiRoute | null {
   if (tail[0] === "spans" && tail.length >= 2) return { kind: "spans", contactId: decodeURIComponent(tail[1]) };
   if (tail[0] === "verdict" && tail.length === 1) return { kind: "verdict" };
   return { kind: "unknown", path: tail };
+}
+
+// Parse synthetic SMS-only contact keys like "sms:7065551234" → digits, or null
+function parseSmsOnlyContactDigits(contactId: string): string | null {
+  if (!contactId) return null;
+  const match = contactId.match(/^sms:(\d{7,15})$/);
+  return match ? match[1] : null;
+}
+
+// Generate a deterministic UUID from a phone string so iOS can decode contact.id
+function deterministicUUID(input: string): string {
+  let hash = 0;
+  for (let i = 0; i < input.length; i++) {
+    hash = ((hash << 5) - hash + input.charCodeAt(i)) | 0;
+  }
+  const hex = Math.abs(hash).toString(16).padStart(8, "0");
+  const padded = (hex + hex + hex + hex).slice(0, 32);
+  return [
+    padded.slice(0, 8),
+    padded.slice(8, 12),
+    "4" + padded.slice(13, 16),
+    "8" + padded.slice(17, 20),
+    padded.slice(20, 32),
+  ].join("-");
 }
 
 function normalizePhoneDigits(value: unknown): string {
@@ -1052,16 +1076,55 @@ async function handleThread(
   };
   const computeStart = performance.now();
 
-  const { data: contact, error: contactErr } = await timeDb("db_contact", () =>
+  const { data: contactRow, error: contactErr } = await timeDb("db_contact", () =>
     db
       .from("redline_contacts_unified_matview")
       .select("contact_id, contact_name, contact_phone")
       .eq("contact_id", contactId)
       .single());
 
-  if (contactErr || !contact) {
-    return json({ ok: false, error_code: "contact_not_found", error: contactErr?.message || "not found" }, 404);
+  let resolvedContact = contactRow;
+  const smsOnlyDigits = parseSmsOnlyContactDigits(contactId);
+
+  // SMS-only contact fallback: look up name/phone from sms_messages
+  if (!resolvedContact && smsOnlyDigits) {
+    const smsPhoneVariants = buildPhoneVariants(smsOnlyDigits);
+    let lookupQuery = db
+      .from("sms_messages")
+      .select("contact_name, contact_phone")
+      .not("contact_phone", "is", null)
+      .order("sent_at", { ascending: false, nullsFirst: false })
+      .limit(1);
+    if (smsPhoneVariants.length === 1) {
+      lookupQuery = lookupQuery.eq("contact_phone", smsPhoneVariants[0]);
+    } else if (smsPhoneVariants.length > 1) {
+      lookupQuery = lookupQuery.in("contact_phone", smsPhoneVariants);
+    }
+    const { data: smsRows } = await timeDb(
+      "db_sms_contact_fallback",
+      () => lookupQuery,
+    );
+    if (smsRows && smsRows.length > 0) {
+      const latest = smsRows[0];
+      resolvedContact = {
+        contact_id: deterministicUUID("sms:" + smsOnlyDigits),
+        contact_name: String(latest?.contact_name || "").trim() || smsOnlyDigits,
+        contact_phone: String(latest?.contact_phone || "").trim() || smsOnlyDigits,
+      };
+    }
   }
+
+  if (!resolvedContact) {
+    return json(
+      { ok: false, error_code: "contact_not_found", error: contactErr?.message || "not found" },
+      404,
+    );
+  }
+  // Re-bind contact to the resolved value; ensure phone is never null (iOS non-optional)
+  const contact = {
+    ...resolvedContact,
+    contact_phone: resolvedContact.contact_phone || "",
+  };
   const contactPhoneVariants = buildPhoneVariants(contact.contact_phone);
 
   const scanWindow = Math.min(Math.max(offset + limit + 20, 40), 120);
@@ -1164,7 +1227,7 @@ async function handleThread(
   if (pagedTimeline.length === 0) {
     return json({
       ok: true,
-      contact: { id: contact.contact_id, name: contact.contact_name, phone: contact.contact_phone },
+      contact: { id: contact.contact_id, name: contact.contact_name, phone: contact.contact_phone || "" },
       thread: [],
       pagination: { limit, offset, total: timeline.length },
       function_version: FUNCTION_VERSION,
@@ -1209,7 +1272,7 @@ async function handleThread(
       : { data: [] },
     pagedSmsMessages.length > 0
       ? timeDb("db_pending_sms_reviews", () => {
-        const keys = [...new Set(pagedSmsMessages.flatMap((s) => deriveSmsInteractionKeys(s, contact.phone)))];
+        const keys = [...new Set(pagedSmsMessages.flatMap((s) => deriveSmsInteractionKeys(s, contact.contact_phone)))];
         return db.from("review_queue").select("id, interaction_id, created_at").eq("status", "pending").in(
           "interaction_id",
           keys,
@@ -1332,7 +1395,7 @@ async function handleThread(
   return json(
     {
       ok: true,
-      contact: { id: contact.contact_id, name: contact.contact_name, phone: contact.contact_phone },
+      contact: { id: contact.contact_id, name: contact.contact_name, phone: contact.contact_phone || "" },
       thread,
       pagination: { limit, offset, total: timeline.length },
       function_version: FUNCTION_VERSION,
@@ -1382,10 +1445,10 @@ async function handleSpansApi(db: any, contactId: string, url: URL, t0: number):
   const { limit, offset, cursor } = parseLimitOffset(url, { limit: 100, maxLimit: 500, offset: 0 });
 
   const { data: contact, error: contactErr } = await db
-    .from("contacts")
-    .select("id, name, phone")
-    .eq("id", contactId)
-    .single();
+    .from("redline_contacts_unified_matview")
+    .select("contact_id, contact_name, contact_phone")
+    .eq("contact_id", contactId)
+    .maybeSingle();
 
   if (contactErr || !contact) {
     return json({ ok: false, error_code: "contact_not_found", error: contactErr?.message || "not found" }, 404);
@@ -1427,7 +1490,7 @@ async function handleSpansApi(db: any, contactId: string, url: URL, t0: number):
   if (allInteractions.length === 0) {
     return json({
       ok: true,
-      contact: { id: contact.contact_id, name: contact.contact_name, phone: contact.contact_phone },
+      contact: { id: contact.contact_id, name: contact.contact_name, phone: contact.contact_phone || "" },
       spans: [],
       pagination: {
         mode: "offset_cursor_v1",
@@ -1581,8 +1644,8 @@ async function handleSpansApi(db: any, contactId: string, url: URL, t0: number):
       interaction_id: interactionId,
       event_at: interaction?.event_at_utc || null,
       direction: directionByInteraction.get(interactionId) || null,
-      contact_id: contact.id,
-      contact_name: interaction?.contact_name || contact.name,
+      contact_id: contact.contact_id,
+      contact_name: interaction?.contact_name || contact.contact_name,
       span_index: span.span_index,
       transcript_segment: span.transcript_segment,
       word_count: span.word_count,
@@ -1615,7 +1678,7 @@ async function handleSpansApi(db: any, contactId: string, url: URL, t0: number):
   return json({
     ok: true,
     endpoint: "GET /redline/spans/:contact_id",
-    contact: { id: contact.contact_id, name: contact.contact_name, phone: contact.contact_phone },
+    contact: { id: contact.contact_id, name: contact.contact_name, phone: contact.contact_phone || "" },
     spans: paged,
     pagination: {
       mode: "offset_cursor_v1",
@@ -2445,7 +2508,7 @@ Deno.serve(async (req: Request) => {
       return await handleGetCutoff(db, t0);
     }
 
-    const contactId = url.searchParams.get("contact_id");
+    const contactId = url.searchParams.get("contact_id") || url.searchParams.get("contact_key");
     if (contactId) {
       const rawLimit = parseInt(url.searchParams.get("limit") || "20", 10);
       const limit = Math.min(Math.max(isNaN(rawLimit) ? 20 : rawLimit, 1), 200);
