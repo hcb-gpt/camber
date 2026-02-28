@@ -304,43 +304,56 @@ async function fetchDirectHighlights(
       }
     }
 
-    // 2) Recent SMS for contacts anchored to this project
-    //    sms_messages don't have project_id — we go through project_contacts
-    const { data: smsRows } = await db
-      .from("sms_messages")
-      .select("id, created_at, direction, contact_name, body")
-      .gte("created_at", sevenDaysAgo)
-      .order("created_at", { ascending: false, nullsFirst: false })
-      .limit(20);
+    // 2) Recent SMS for contacts anchored to this project.
+    //    sms_messages has contact_phone but no contact_id or project_id.
+    //    Resolve: project_contacts → contacts.phone → sms_messages.contact_phone.
+    const { data: projectContactRows } = await db
+      .from("project_contacts")
+      .select("contact_id")
+      .eq("project_id", projectId)
+      .eq("is_active", true);
 
-    if (Array.isArray(smsRows)) {
-      // Filter to contacts associated with this project via project_contacts
-      const { data: projectContactRows } = await db
-        .from("project_contacts")
-        .select("contact_id")
-        .eq("project_id", projectId)
-        .eq("is_active", true);
+    if (Array.isArray(projectContactRows) && projectContactRows.length > 0) {
+      const contactIds = (projectContactRows as Array<Record<string, unknown>>)
+        .map((r) => String(r.contact_id ?? ""))
+        .filter((id) => id.length > 0);
 
-      const projectContactIds = new Set(
-        Array.isArray(projectContactRows)
-          ? (projectContactRows as Array<Record<string, unknown>>).map((r) => String(r.contact_id ?? ""))
-          : [],
-      );
+      if (contactIds.length > 0) {
+        // Get phones for these contacts
+        const { data: contactPhoneRows } = await db
+          .from("contacts")
+          .select("phone")
+          .in("id", contactIds);
 
-      for (const row of smsRows as Array<Record<string, unknown>>) {
-        // SMS might have contact_id — check if it belongs to this project's contacts
-        const contactId = toStringOrNull(row.contact_id);
-        if (contactId && projectContactIds.has(contactId)) {
-          highlights.push({
-            source: "sms",
-            id: String(row.id ?? ""),
-            event_at_utc: toStringOrNull(row.created_at),
-            channel: "sms",
-            contact_name: toStringOrNull(row.contact_name),
-            summary_text: toStringOrNull(row.body)
-              ? String(row.body).slice(0, 280)
-              : null,
-          });
+        const phones = Array.isArray(contactPhoneRows)
+          ? (contactPhoneRows as Array<Record<string, unknown>>)
+              .map((r) => toStringOrNull(r.phone))
+              .filter((p): p is string => p !== null)
+          : [];
+
+        if (phones.length > 0) {
+          const { data: smsRows } = await db
+            .from("sms_messages")
+            .select("id, sent_at, direction, contact_name, content")
+            .in("contact_phone", phones)
+            .gte("sent_at", sevenDaysAgo)
+            .order("sent_at", { ascending: false, nullsFirst: false })
+            .limit(10);
+
+          if (Array.isArray(smsRows)) {
+            for (const row of smsRows as Array<Record<string, unknown>>) {
+              highlights.push({
+                source: "sms",
+                id: String(row.id ?? ""),
+                event_at_utc: toStringOrNull(row.sent_at),
+                channel: "sms",
+                contact_name: toStringOrNull(row.contact_name),
+                summary_text: toStringOrNull(row.content)
+                  ? String(row.content).slice(0, 280)
+                  : null,
+              });
+            }
+          }
         }
       }
     }
