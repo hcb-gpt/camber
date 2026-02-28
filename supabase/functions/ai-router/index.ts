@@ -174,14 +174,51 @@ const WORLD_MODEL_FACTS_MAX_PER_PROJECT = Math.max(
 );
 const PROMPT_VERSION = WORLD_MODEL_FACTS_ENABLED ? "v1.12.0_world_model_facts" : PROMPT_VERSION_BASE;
 
-// Confidence thresholds (3-band policy v1.15.0, extended v1.17.0)
-const THRESHOLD_AUTO_ASSIGN = 0.75;
-const THRESHOLD_REVIEW = 0.25;
-const THRESHOLD_SAFE_LOW_ASSIGN = 0.40;
-const THRESHOLD_HIGH_CONFIDENCE_GAP_ASSIGN = 0.70;
-const MIN_RUNNER_UP_GAP = 0.20;
-const THRESHOLD_WEAK_REVIEW_CONFIDENCE = 0.30;
-const THRESHOLD_WEAK_REVIEW_CROSSREF = 0.20;
+// Confidence thresholds — defaults; overridden from inference_config at startup
+let THRESHOLD_AUTO_ASSIGN = 0.75;
+let THRESHOLD_REVIEW = 0.25;
+let THRESHOLD_SAFE_LOW_ASSIGN = 0.40;
+let THRESHOLD_HIGH_CONFIDENCE_GAP_ASSIGN = 0.70;
+let MIN_RUNNER_UP_GAP = 0.20;
+let THRESHOLD_WEAK_REVIEW_CONFIDENCE = 0.30;
+let THRESHOLD_WEAK_REVIEW_CROSSREF = 0.20;
+let _thresholdsLoaded = false;
+
+async function loadThresholdsFromConfig(): Promise<void> {
+  if (_thresholdsLoaded) return;
+  try {
+    const url = Deno.env.get("SUPABASE_URL");
+    const key = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY");
+    if (!url || !key) return;
+    const db = createClient(url, key);
+    const { data, error } = await db
+      .from("inference_config")
+      .select("config_key, config_value")
+      .like("config_key", "router_%");
+    if (error || !data) {
+      console.warn(`[ai-router] inference_config load failed: ${error?.message || "no data"}`);
+      return;
+    }
+    const map: Record<string, number> = {};
+    for (const row of data) {
+      const val = typeof row.config_value === "string"
+        ? parseFloat(row.config_value)
+        : typeof row.config_value === "number"
+        ? row.config_value
+        : parseFloat(JSON.stringify(row.config_value));
+      if (!isNaN(val)) map[row.config_key] = val;
+    }
+    if (map.router_auto_assign_threshold !== undefined) THRESHOLD_AUTO_ASSIGN = map.router_auto_assign_threshold;
+    if (map.router_review_threshold !== undefined) THRESHOLD_REVIEW = map.router_review_threshold;
+    if (map.router_safe_low_assign_threshold !== undefined) THRESHOLD_SAFE_LOW_ASSIGN = map.router_safe_low_assign_threshold;
+    if (map.router_high_confidence_gap_assign !== undefined) THRESHOLD_HIGH_CONFIDENCE_GAP_ASSIGN = map.router_high_confidence_gap_assign;
+    if (map.router_weak_review_confidence !== undefined) THRESHOLD_WEAK_REVIEW_CONFIDENCE = map.router_weak_review_confidence;
+    if (map.router_weak_review_crossref !== undefined) THRESHOLD_WEAK_REVIEW_CROSSREF = map.router_weak_review_crossref;
+    _thresholdsLoaded = true;
+  } catch (e) {
+    console.warn(`[ai-router] inference_config load error: ${(e as Error)?.message || e}`);
+  }
+}
 
 // Defense-in-depth: closed-project hard filter (mirrors context-assembly VALID_PROJECT_STATUSES)
 const ATTRIBUTION_ELIGIBLE_STATUSES = new Set(["active", "warranty", "estimating"]);
@@ -1489,11 +1526,60 @@ Consider the journal context for each project — if the conversation topic matc
 }
 
 // ============================================================
+// THRESHOLD LOADER (inference_config, one-shot at startup)
+// ============================================================
+
+async function loadThresholdsOnce(): Promise<void> {
+  if (_thresholdsLoaded) return;
+  _thresholdsLoaded = true;
+  try {
+    const db = createClient(
+      Deno.env.get("SUPABASE_URL")!,
+      Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!,
+    );
+    const { data, error } = await db
+      .from("inference_config")
+      .select("config_key, config_value")
+      .like("config_key", "ai_router.%");
+    if (error || !data) {
+      console.error("[ai-router] inference_config load failed, using defaults:", error?.message);
+      return;
+    }
+    const configMap: Record<string, number> = {};
+    for (const row of data) {
+      const val = typeof row.config_value === "string"
+        ? parseFloat(row.config_value)
+        : typeof row.config_value === "number"
+        ? row.config_value
+        : NaN;
+      if (!isNaN(val)) configMap[row.config_key] = val;
+    }
+    THRESHOLD_AUTO_ASSIGN = configMap["ai_router.threshold_auto_assign"] ?? THRESHOLD_AUTO_ASSIGN;
+    THRESHOLD_REVIEW = configMap["ai_router.threshold_review"] ?? THRESHOLD_REVIEW;
+    THRESHOLD_SAFE_LOW_ASSIGN = configMap["ai_router.threshold_safe_low_assign"] ??
+      THRESHOLD_SAFE_LOW_ASSIGN;
+    THRESHOLD_HIGH_CONFIDENCE_GAP_ASSIGN = configMap["ai_router.threshold_high_confidence_gap_assign"] ??
+      THRESHOLD_HIGH_CONFIDENCE_GAP_ASSIGN;
+    MIN_RUNNER_UP_GAP = configMap["ai_router.min_runner_up_gap"] ?? MIN_RUNNER_UP_GAP;
+    THRESHOLD_WEAK_REVIEW_CONFIDENCE = configMap["ai_router.threshold_weak_review_confidence"] ??
+      THRESHOLD_WEAK_REVIEW_CONFIDENCE;
+    THRESHOLD_WEAK_REVIEW_CROSSREF = configMap["ai_router.threshold_weak_review_crossref"] ??
+      THRESHOLD_WEAK_REVIEW_CROSSREF;
+    console.log(
+      `[ai-router] Loaded ${Object.keys(configMap).length} thresholds from inference_config`,
+    );
+  } catch (err: unknown) {
+    console.error("[ai-router] inference_config load error, using defaults:", err);
+  }
+}
+
+// ============================================================
 // MAIN HANDLER
 // ============================================================
 
 Deno.serve(async (req: Request) => {
   const t0 = Date.now();
+  await loadThresholdsOnce();
 
   if (req.method !== "POST") {
     return new Response(

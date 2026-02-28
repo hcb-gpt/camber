@@ -33,6 +33,7 @@ supabase/functions/<function-name>/<module>_test.ts
 | `gmail-context-lookup` | `extraction_test.ts` | Email context extraction |
 | `morning-manifest-ui` | `view_test.ts` | UI view rendering |
 | `process-call` | `phone_lookup_test.ts`, `phone_direction_test.ts` | Phone normalization, direction detection |
+| `segment-call` | `segment_call_test.ts` | Transcript sanitization, reason codes, deterministic segmentation, max-char enforcement, review queue compat, duplicate key detection, auditor gate |
 | `segment-llm` | `segmentation_guardrails_test.ts` | Channel normalization, quote extraction |
 
 ## What to Test

@@ -8,11 +8,29 @@
  * - Fail closed: if any required downstream step fails, return 500 + error_code=chain_failed.
  * - Downstream auth uses X-Edge-Secret (never service-role bearer).
  *
- * v2.5.3: Backfill interactions.transcript_chars; clear stale G4_EMPTY_TRANSCRIPT reasons.
- * v2.6.0: Canonical transcript lookup via v_canonical_transcripts; Deepgram canonical override.
- * v2.6.1: Stopline R1 coverage invariant — backfill uncovered spans to review_queue.
- * v2.6.2: Immediate coverage_gap enqueue on per-span chain failure (best-effort).
- * v2.6.3: Per-request run_id correlation; stopline evidence pointer guard.
+ * v2.5.3:
+ * - Backfills parent interactions.transcript_chars when segment-call has non-empty transcript content.
+ * - Removes stale G4_EMPTY_TRANSCRIPT/terminal_empty_transcript reasons on parent interactions row.
+ *
+ * v2.6.0:
+ * - Canonical transcript lookup via v_canonical_transcripts view.
+ * - Deepgram canonical overrides request_body transcript; emits warning when overriding.
+ * - Adds transcript_source to response JSON and segment_metadata.
+ *
+ * v2.6.1:
+ * - Stopline R1 guardrail: after span generation + chain attempts, enforce coverage invariant —
+ *   every active span must have span_attributions OR pending review_queue.
+ * - Auto-backfills uncovered spans into review_queue with module='attribution' and reason_codes=['coverage_gap'].
+ * - Fails closed with error_code='coverage_invariant_failed' if uncovered spans remain after backfill.
+ *
+ * v2.6.2:
+ * - On per-span chain failure (context-assembly/ai-router), enqueue coverage_gap review_queue row immediately.
+ * - Coverage-gap enqueue is best-effort: duplicate inserts are ignored; insert failures are logged.
+ *
+ * v2.6.3:
+ * - Adds per-request run_id correlation to stopline/failure diagnostics.
+ * - Stopline evidence pointer guard: before span writes, ensure source_type='call' evidence_events row
+ *   exists. If missing, log warning but do not block (evidence can lag ingestion).
  *
  * v2.7.0:
  * - Per-span chain processing with bounded parallelism (SPAN_PARALLEL_CONCURRENCY env var, default 1).
