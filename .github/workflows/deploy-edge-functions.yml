@@ -8,35 +8,99 @@ on:
     paths:
       - 'supabase/functions/**'
   workflow_dispatch:
+    inputs:
+      deploy_all:
+        description: 'Deploy ALL functions (full reconcile). Leave unchecked to deploy only changed.'
+        required: false
+        type: boolean
+        default: true
 
 jobs:
   discover-functions:
     runs-on: ubuntu-latest
     outputs:
-      functions: ${{ steps.discover.outputs.functions }}
-      count: ${{ steps.discover.outputs.count }}
+      functions: ${{ steps.resolve.outputs.functions }}
+      count: ${{ steps.resolve.outputs.count }}
+      mode: ${{ steps.resolve.outputs.mode }}
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
+        with:
+          fetch-depth: 2
 
-      - name: Discover deployable functions
-        id: discover
+      - name: Resolve which functions to deploy
+        id: resolve
         shell: bash
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+          DEPLOY_ALL: ${{ inputs.deploy_all }}
         run: |
           set -euo pipefail
-          mapfile -t funcs < <(find supabase/functions -mindepth 1 -maxdepth 1 -type d -exec basename {} \; | sort | grep -Ev '^(_shared|shadow-replay|project-query|striking-detect)$')
-          if [[ "${#funcs[@]}" -eq 0 ]]; then
-            echo "No deployable functions found under supabase/functions" >&2
-            exit 1
+          EXCLUDE_PATTERN='^(_shared|shadow-replay|project-query|striking-detect)$'
+
+          # All deployable functions
+          mapfile -t all_funcs < <(find supabase/functions -mindepth 1 -maxdepth 1 -type d -exec basename {} \; | sort | grep -Ev "$EXCLUDE_PATTERN")
+
+          # Determine deploy mode
+          if [[ "$EVENT_NAME" == "workflow_dispatch" ]]; then
+            if [[ "$DEPLOY_ALL" == "true" ]]; then
+              echo "mode=full-reconcile" >> "$GITHUB_OUTPUT"
+            else
+              echo "mode=changed-only-manual" >> "$GITHUB_OUTPUT"
+            fi
+            funcs=("${all_funcs[@]}")
+          else
+            # Push event: detect changed functions only
+            mapfile -t changed_files < <(git diff --name-only HEAD~1 HEAD -- supabase/functions/ 2>/dev/null || true)
+
+            # Check if _shared changed (affects all functions)
+            shared_changed=false
+            for f in "${changed_files[@]}"; do
+              if [[ "$f" == supabase/functions/_shared/* ]]; then
+                shared_changed=true
+                break
+              fi
+            done
+
+            if [[ "$shared_changed" == "true" ]]; then
+              echo "::notice::_shared directory changed — deploying ALL functions"
+              echo "mode=shared-changed" >> "$GITHUB_OUTPUT"
+              funcs=("${all_funcs[@]}")
+            else
+              echo "mode=changed-only" >> "$GITHUB_OUTPUT"
+              # Extract unique function directory names from changed files
+              declare -A seen
+              funcs=()
+              for f in "${changed_files[@]}"; do
+                # supabase/functions/<name>/... -> extract <name>
+                dir=$(echo "$f" | sed -n 's|^supabase/functions/\([^/]*\)/.*|\1|p')
+                if [[ -n "$dir" && -z "${seen[$dir]:-}" ]]; then
+                  if echo "$dir" | grep -qE "$EXCLUDE_PATTERN"; then
+                    continue
+                  fi
+                  seen[$dir]=1
+                  funcs+=("$dir")
+                fi
+              done
+
+              if [[ "${#funcs[@]}" -eq 0 ]]; then
+                echo "::notice::No deployable function directories changed in this push"
+                echo "functions=[]" >> "$GITHUB_OUTPUT"
+                echo "count=0" >> "$GITHUB_OUTPUT"
+                exit 0
+              fi
+            fi
           fi
+
           json=$(printf '%s\n' "${funcs[@]}" | jq -Rsc 'split("\n")[:-1]')
           echo "functions=$json" >> "$GITHUB_OUTPUT"
           echo "count=${#funcs[@]}" >> "$GITHUB_OUTPUT"
-          echo "Discovered ${#funcs[@]} deployable functions"
-          printf '%s\n' "${funcs[@]}"
+          echo "Deploying ${#funcs[@]} of ${#all_funcs[@]} functions"
+          printf '  -> %s\n' "${funcs[@]}"
 
   deploy:
     needs: discover-functions
+    if: needs.discover-functions.outputs.count != '0'
     runs-on: ubuntu-latest
     strategy:
       fail-fast: false
@@ -55,32 +119,41 @@ jobs:
           version: 2.76.8
 
       - name: Deploy function
-        run: |
-          supabase functions deploy "${{ matrix.function }}" \
-            --project-ref ${{ secrets.SUPABASE_PROJECT_ID }} \
-            --no-verify-jwt
         env:
+          FUNCTION_NAME: ${{ matrix.function }}
           SUPABASE_ACCESS_TOKEN: ${{ secrets.SUPABASE_ACCESS_TOKEN }}
+          PROJECT_REF: ${{ secrets.SUPABASE_PROJECT_ID }}
+        run: |
+          supabase functions deploy "$FUNCTION_NAME" \
+            --project-ref "$PROJECT_REF" \
+            --no-verify-jwt
 
       - name: Verify deployed function endpoint
         shell: bash
+        env:
+          FUNCTION_NAME: ${{ matrix.function }}
+          PROJECT_REF: ${{ secrets.SUPABASE_PROJECT_ID }}
         run: |
           set -euo pipefail
-          endpoint="https://${{ secrets.SUPABASE_PROJECT_ID }}.supabase.co/functions/v1/${{ matrix.function }}"
+          endpoint="https://${PROJECT_REF}.supabase.co/functions/v1/${FUNCTION_NAME}"
           status=$(curl -sS -o /tmp/edge-function-response.txt -w "%{http_code}" "$endpoint" || true)
           if [[ "$status" == "000" || "$status" == "404" ]]; then
-            echo "Function verification failed for ${{ matrix.function }} (HTTP $status)"
+            echo "Function verification failed for $FUNCTION_NAME (HTTP $status)"
             cat /tmp/edge-function-response.txt || true
             exit 1
           fi
-          echo "Verified ${{ matrix.function }} (HTTP $status)"
+          echo "Verified $FUNCTION_NAME (HTTP $status)"
 
       - name: Deployment summary
+        env:
+          FUNCTION_NAME: ${{ matrix.function }}
+          PROJECT_REF: ${{ secrets.SUPABASE_PROJECT_ID }}
+          DEPLOY_MODE: ${{ needs.discover-functions.outputs.mode }}
         run: |
-          echo "## Edge Function Deploy Result 🚀" >> $GITHUB_STEP_SUMMARY
+          echo "## Edge Function Deploy Result" >> $GITHUB_STEP_SUMMARY
           echo "" >> $GITHUB_STEP_SUMMARY
-          echo "| Function | Status |" >> $GITHUB_STEP_SUMMARY
-          echo "|----------|--------|" >> $GITHUB_STEP_SUMMARY
-          echo "| ${{ matrix.function }} | ✅ Deployed + Verified |" >> $GITHUB_STEP_SUMMARY
+          echo "| Function | Status | Mode |" >> $GITHUB_STEP_SUMMARY
+          echo "|----------|--------|------|" >> $GITHUB_STEP_SUMMARY
+          echo "| $FUNCTION_NAME | Deployed + Verified | $DEPLOY_MODE |" >> $GITHUB_STEP_SUMMARY
           echo "" >> $GITHUB_STEP_SUMMARY
-          echo "Endpoint: \`https://${{ secrets.SUPABASE_PROJECT_ID }}.supabase.co/functions/v1/${{ matrix.function }}\`" >> $GITHUB_STEP_SUMMARY
+          echo "Endpoint: \`https://${PROJECT_REF}.supabase.co/functions/v1/${FUNCTION_NAME}\`" >> $GITHUB_STEP_SUMMARY
