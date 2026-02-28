@@ -1,0 +1,3 @@
+# audit-attribution: Attribution audit function
+# Auth: verify_jwt=false (internal). Uses X-Edge-Secret + X-Source allowlist.
+verify_jwt = false

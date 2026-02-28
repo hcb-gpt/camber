@@ -1,0 +1,3 @@
+# loop-closure: Closes routing loops
+# Auth: verify_jwt=false (internal). Uses X-Edge-Secret inline check.
+verify_jwt = false

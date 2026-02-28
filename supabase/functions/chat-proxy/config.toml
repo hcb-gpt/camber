@@ -1,0 +1,3 @@
+# chat-proxy: Public Anthropic proxy for camber-map
+# Auth: verify_jwt=false. Uses origin allowlist for CORS.
+verify_jwt = false
