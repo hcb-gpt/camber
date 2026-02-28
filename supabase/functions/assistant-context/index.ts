@@ -2,6 +2,7 @@ import "jsr:@supabase/functions-js/edge-runtime.d.ts";
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
 
 const FUNCTION_VERSION = "assistant-context_v1.0.0";
+const CONTRACT_VERSION = "assistant-context_contract_v1";
 
 function corsHeaders(): Record<string, string> {
   return {
@@ -11,19 +12,32 @@ function corsHeaders(): Record<string, string> {
   };
 }
 
-function json(data: unknown, status = 200): Response {
+function json(data: unknown, status = 200, extraHeaders: Record<string, string> = {}): Response {
   return new Response(JSON.stringify(data), {
     status,
-    headers: { "Content-Type": "application/json", ...corsHeaders() },
+    headers: { "Content-Type": "application/json", ...corsHeaders(), ...extraHeaders },
   });
 }
 
 Deno.serve(async (req: Request): Promise<Response> => {
+  const requestId = req.headers.get("x-request-id") || crypto.randomUUID();
+  const metaHeaders = {
+    "x-request-id": requestId,
+    "x-contract-version": CONTRACT_VERSION,
+    "x-function-version": FUNCTION_VERSION,
+  };
+
   if (req.method === "OPTIONS") {
-    return new Response(null, { status: 204, headers: corsHeaders() });
+    return new Response(null, { status: 204, headers: { ...corsHeaders(), ...metaHeaders } });
   }
   if (req.method !== "GET") {
-    return json({ ok: false, error: "Method not allowed" }, 405);
+    return json({
+      ok: false,
+      error: "Method not allowed",
+      request_id: requestId,
+      contract_version: CONTRACT_VERSION,
+      function_version: FUNCTION_VERSION,
+    }, 405, metaHeaders);
   }
 
   const t0 = Date.now();
@@ -115,6 +129,8 @@ Deno.serve(async (req: Request): Promise<Response> => {
     const packet = {
       ok: true,
       generated_at: new Date().toISOString(),
+      request_id: requestId,
+      contract_version: CONTRACT_VERSION,
       function_version: FUNCTION_VERSION,
       pipeline_health: pipelineHealth ?? [],
       top_projects: projectFeed ?? [],
@@ -128,12 +144,19 @@ Deno.serve(async (req: Request): Promise<Response> => {
       ms: Date.now() - t0,
     };
 
-    return json(packet);
+    return json(packet, 200, metaHeaders);
   } catch (err: unknown) {
     const msg = err instanceof Error ? err.message : String(err);
     return json(
-      { ok: false, error: msg, function_version: FUNCTION_VERSION },
+      {
+        ok: false,
+        error: msg,
+        request_id: requestId,
+        contract_version: CONTRACT_VERSION,
+        function_version: FUNCTION_VERSION,
+      },
       500,
+      metaHeaders,
     );
   }
 });

@@ -142,8 +142,19 @@ final class BootstrapService {
 
         let (data, response) = try await session.data(from: url)
         try validateHTTPResponse(response)
+        let http = response as? HTTPURLResponse
         do {
-            return try decoder.decode(AssistantContextPacket.self, from: data)
+            var decoded = try decoder.decode(AssistantContextPacket.self, from: data)
+            if decoded.requestId == nil {
+                decoded.requestId = http?.value(forHTTPHeaderField: "x-request-id")
+            }
+            if decoded.contractVersion == nil {
+                decoded.contractVersion = http?.value(forHTTPHeaderField: "x-contract-version")
+            }
+            if decoded.functionVersion == nil {
+                decoded.functionVersion = http?.value(forHTTPHeaderField: "x-function-version")
+            }
+            return decoded
         } catch let error as DecodingError {
             let path: String = switch error {
             case .typeMismatch(_, let context),
@@ -197,6 +208,8 @@ final class BootstrapService {
         }
 
         let requestId = http.value(forHTTPHeaderField: "x-request-id")
+        let contractVersion = http.value(forHTTPHeaderField: "x-contract-version")
+        let functionVersion = http.value(forHTTPHeaderField: "x-function-version")
         let provider = http.value(forHTTPHeaderField: "x-assistant-provider")
         let model = http.value(forHTTPHeaderField: "x-assistant-model")
         let providerWarning = http.value(forHTTPHeaderField: "x-assistant-provider-warning")
@@ -254,6 +267,8 @@ final class BootstrapService {
                 payloadJSON: payloadString,
                 statusCode: http.statusCode,
                 requestId: requestId,
+                contractVersion: contractVersion,
+                functionVersion: functionVersion,
                 provider: provider,
                 model: model,
                 providerWarning: providerWarning
@@ -273,6 +288,26 @@ final class BootstrapService {
         let decoded = try decoder.decode(AssistantFeedbackResponse.self, from: data)
         guard decoded.ok else {
             throw BootstrapServiceError.apiError(decoded.error ?? "assistant feedback returned ok=false")
+        }
+        return decoded
+    }
+
+    private let reportDataIssueURL = URL(
+        string: "https://rjhdwidddtfetbwqolof.supabase.co/functions/v1/report-data-issue"
+    )!
+
+    func reportDataIssue(_ payload: ReportDataIssuePayload) async throws -> ReportDataIssueResponse {
+        var request = URLRequest(url: reportDataIssueURL)
+        request.httpMethod = "POST"
+        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        request.httpBody = try encoder.encode(payload)
+
+        let (data, response) = try await session.data(for: request)
+        try validateHTTPResponse(response)
+
+        let decoded = try decoder.decode(ReportDataIssueResponse.self, from: data)
+        guard decoded.ok else {
+            throw BootstrapServiceError.apiError(decoded.error ?? "report-data-issue returned ok=false")
         }
         return decoded
     }
@@ -409,6 +444,8 @@ struct AssistantChatDebugInfo {
     let payloadJSON: String
     let statusCode: Int
     let requestId: String?
+    let contractVersion: String?
+    let functionVersion: String?
     let provider: String?
     let model: String?
     let providerWarning: String?
@@ -453,6 +490,46 @@ struct AssistantFeedbackResponse: Decodable {
         case ok
         case feedbackId = "feedback_id"
         case requestId = "request_id"
+        case error
+    }
+}
+
+struct ReportDataIssuePayload: Encodable {
+    let screen: String
+    let contactId: String?
+    let phone: String?
+    let interactionId: String?
+    let queueId: String?
+    let requestId: String?
+    let contractVersion: String?
+    let note: String?
+
+    enum CodingKeys: String, CodingKey {
+        case screen
+        case contactId = "contact_id"
+        case phone
+        case interactionId = "interaction_id"
+        case queueId = "queue_id"
+        case requestId = "request_id"
+        case contractVersion = "contract_version"
+        case note
+    }
+}
+
+struct ReportDataIssueResponse: Decodable {
+    let ok: Bool
+    let reportId: String?
+    let requestId: String?
+    let functionVersion: String?
+    let contractVersion: String?
+    let error: String?
+
+    enum CodingKeys: String, CodingKey {
+        case ok
+        case reportId = "report_id"
+        case requestId = "request_id"
+        case functionVersion = "function_version"
+        case contractVersion = "contract_version"
         case error
     }
 }

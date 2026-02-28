@@ -3,7 +3,9 @@ import Foundation
 struct AssistantContextPacket: Decodable {
     let ok: Bool
     let generatedAt: String?
-    let functionVersion: String?
+    var requestId: String?
+    var contractVersion: String?
+    var functionVersion: String?
     let pipelineHealth: [PipelineCapability]
     let topProjects: [ProjectSnapshot]
     let whoNeedsYou: [PeopleSignal]
@@ -14,6 +16,8 @@ struct AssistantContextPacket: Decodable {
     enum CodingKeys: String, CodingKey {
         case ok
         case generatedAt = "generated_at"
+        case requestId = "request_id"
+        case contractVersion = "contract_version"
         case functionVersion = "function_version"
         case pipelineHealth = "pipeline_health"
         case topProjects = "top_projects"

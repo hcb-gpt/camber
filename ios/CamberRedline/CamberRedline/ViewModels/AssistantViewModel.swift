@@ -18,6 +18,7 @@ final class AssistantViewModel: ObservableObject {
     @Published var messages: [AssistantMessage] = []
     @Published var isLoading = false
     @Published var currentInput = ""
+    @Published var lastDebugInfo: AssistantChatDebugInfo?
 
     func sendMessage(contactId: String? = nil, projectId: String? = nil) async {
         let input = currentInput.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -33,13 +34,14 @@ final class AssistantViewModel: ObservableObject {
         let assistantIndex = messages.count - 1
 
         do {
-            let stream = try await BootstrapService.shared.streamAssistantChat(
+            let session = try await BootstrapService.shared.streamAssistantChat(
                 message: input,
                 contactId: contactId,
                 projectId: projectId
             )
+            lastDebugInfo = session.debug
 
-            for try await chunk in stream {
+            for try await chunk in session.stream {
                 messages[assistantIndex].content += chunk
             }
         } catch {

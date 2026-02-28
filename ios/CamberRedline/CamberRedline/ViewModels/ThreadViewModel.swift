@@ -31,6 +31,9 @@ final class ThreadViewModel {
     var isLoadingOlderThread = false
     var hasOlderThreadItems = false
     var error: String?
+    var lastThreadRequestId: String?
+    var lastThreadContractVersion: String?
+    var lastThreadFunctionVersion: String?
     var notesByTarget: [String: NoteEntry] = [:]
     var reviewProjects: [ReviewProject] = []
     var contactSequence: [Contact] = []
@@ -103,6 +106,9 @@ final class ThreadViewModel {
         currentThreadOffset = 0
         totalThreadCount = 0
         hasOlderThreadItems = false
+        lastThreadRequestId = nil
+        lastThreadContractVersion = nil
+        lastThreadFunctionVersion = nil
         await loadThreadPage(contactId: contactId, offset: 0, resetItems: true)
         prefetchNextContact(after: contactId)
     }
@@ -138,6 +144,15 @@ final class ThreadViewModel {
             currentThreadOffset = offset
             totalThreadCount = response.pagination.total
             hasOlderThreadItems = (offset + response.pagination.limit) < totalThreadCount
+            if let requestId = response.requestId, !requestId.isEmpty {
+                lastThreadRequestId = requestId
+            }
+            if let contractVersion = response.contractVersion, !contractVersion.isEmpty {
+                lastThreadContractVersion = contractVersion
+            }
+            if let functionVersion = response.functionVersion, !functionVersion.isEmpty {
+                lastThreadFunctionVersion = functionVersion
+            }
         } catch {
             self.error = error.localizedDescription
         }
@@ -330,6 +345,62 @@ final class ThreadViewModel {
         case (.none, .none):
             return nil
         }
+    }
+
+    func reportCurrentThreadDataIssue() async throws -> ReportDataIssueResponse {
+        let contactId = currentContact?.contactId.uuidString
+        let phone = currentContact?.phone
+        let interactionId = firstVisibleInteractionId()
+        let queueId = firstVisibleQueueId()
+
+        let payload = ReportDataIssuePayload(
+            screen: "thread_view",
+            contactId: contactId,
+            phone: phone,
+            interactionId: interactionId,
+            queueId: queueId,
+            requestId: lastThreadRequestId,
+            contractVersion: lastThreadContractVersion,
+            note: nil
+        )
+
+        return try await bootstrapService.reportDataIssue(payload)
+    }
+
+    private func firstVisibleInteractionId() -> String? {
+        for item in threadItems {
+            switch item {
+            case .call(let entry):
+                return entry.interactionId
+            case .callHeader(let header):
+                return header.interactionId
+            case .sms, .speakerTurn:
+                continue
+            }
+        }
+        return nil
+    }
+
+    private func firstVisibleQueueId() -> String? {
+        for item in threadItems {
+            switch item {
+            case .call(let entry):
+                if let queueId = entry.spans.compactMap(\.reviewQueueId).first {
+                    return queueId
+                }
+            case .callHeader(let header):
+                if let queueId = header.spans.compactMap(\.reviewQueueId).first {
+                    return queueId
+                }
+            case .sms(let entry):
+                if let queueId = entry.reviewQueueId {
+                    return queueId
+                }
+            case .speakerTurn:
+                continue
+            }
+        }
+        return nil
     }
 
     // MARK: - Grade Claim
