@@ -434,6 +434,14 @@ language sql
 stable
 as $$
   with anchor_candidates as (
+    -- Primary success anchor: completed/finished successful journal run.
+    select max(coalesce(jr.completed_at, jr.finished_at, jr.started_at)) as ts
+    from public.journal_runs jr
+    where jr.status = 'success'
+      and (p_project_id is null or jr.project_id = p_project_id)
+
+    union all
+
     -- Pipeline log heartbeat (treated as successful progression signal in this environment).
     select max(pl.logged_at_utc) as ts
     from public.pipeline_logs pl
@@ -467,6 +475,43 @@ as $$
       and (p_project_id is null or jc.project_id = p_project_id)
   )
   select max(ts) from anchor_candidates;
+$$;
+
+create or replace function public.refresh_redline_context_matviews()
+returns void
+language plpgsql
+security definer
+set search_path = public
+as $$
+declare
+  v_pipeline_run_id text;
+  v_refreshed_at_utc timestamptz := now();
+begin
+  refresh materialized view public.mat_project_context;
+  refresh materialized view public.mat_contact_context;
+  refresh materialized view public.mat_belief_context;
+
+  select jr.run_id::text
+    into v_pipeline_run_id
+  from public.journal_runs jr
+  where jr.status = 'success'
+  order by coalesce(jr.completed_at, jr.finished_at, jr.started_at) desc nulls last
+  limit 1;
+
+  perform public.upsert_context_surface_refresh_metadata_v1(
+    'mat_project_context',
+    null,
+    'v1',
+    array['v_project_feed']::text[],
+    v_pipeline_run_id,
+    v_refreshed_at_utc,
+    jsonb_build_object(
+      'refresh_fn', 'refresh_redline_context_matviews',
+      'anchor_rule', 'journal_runs_success',
+      'updated_by_migration', '20260228161000_redline_truth_graph_defect_events_and_context_metadata.sql'
+    )
+  );
+end;
 $$;
 
 create or replace view public.v_context_surface_staleness_v1 as
@@ -523,7 +568,10 @@ comment on view public.v_context_surface_staleness_v1 is
   'Staleness view anchored to latest successful pipeline activity, not generic wall-clock timestamps.';
 
 comment on function public.latest_pipeline_success_anchor_utc_v1(uuid) is
-  'Computes latest successful pipeline anchor timestamp from pipeline logs + ingestion/attribution/journal progression.';
+  'Computes latest successful pipeline anchor timestamp (journal_runs success first, then progression fallbacks).';
+
+comment on function public.refresh_redline_context_matviews() is
+  'Refreshes Redline context materialized views and records mat_project_context metadata tied to latest successful journal run.';
 
 comment on function public.upsert_context_surface_refresh_metadata_v1(text, uuid, text, text[], text, timestamptz, jsonb) is
   'Upserts one context-surface metadata row by surface/project scope.';
@@ -541,6 +589,8 @@ grant execute on function public.upsert_context_surface_refresh_metadata_v1(text
   to authenticated, anon, service_role;
 grant execute on function public.latest_pipeline_success_anchor_utc_v1(uuid)
   to authenticated, anon, service_role;
+grant execute on function public.refresh_redline_context_matviews()
+  to service_role;
 
 -- Seed row for the gas-station context surface contract.
 select public.upsert_context_surface_refresh_metadata_v1(
@@ -548,7 +598,13 @@ select public.upsert_context_surface_refresh_metadata_v1(
   null,
   'v1',
   array['v_project_feed']::text[],
-  null,
+  (
+    select jr.run_id::text
+    from public.journal_runs jr
+    where jr.status = 'success'
+    order by coalesce(jr.completed_at, jr.finished_at, jr.started_at) desc nulls last
+    limit 1
+  ),
   now(),
   jsonb_build_object('seeded_by', '20260228161000_redline_truth_graph_defect_events_and_context_metadata.sql')
 );

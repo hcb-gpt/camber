@@ -38,7 +38,7 @@ with tg as (
     jsonb_build_object('proof_source', 'p0_redline_truth_graph_defect_events_materialized_context_proof_20260228.sql'),
     'open',
     null,
-    'data-3:proof'
+    'data-2:proof'
   ) as defect_event_id
   from tg
 )
@@ -56,17 +56,8 @@ where d.interaction_id = 'cll_06E9MVG4K9W9Z8B9VZ5BR4PBN0'
 order by d.last_seen_at_utc desc
 limit 1;
 
-with upsert_meta as (
-  select public.upsert_context_surface_refresh_metadata_v1(
-    'mat_project_context',
-    null,
-    'v1',
-    array['v_project_feed']::text[],
-    'proof_run_20260228',
-    now(),
-    jsonb_build_object('proof_source', 'p0_redline_truth_graph_defect_events_materialized_context_proof_20260228.sql')
-  ) as context_surface_metadata_id
-)
+select public.refresh_redline_context_matviews();
+
 select
   v.context_surface_metadata_id,
   v.surface_name,
@@ -77,8 +68,10 @@ select
   v.pipeline_success_at_utc,
   v.is_stale,
   v.lag_seconds,
-  v.staleness_rule
+  v.staleness_rule,
+  v.metadata->>'anchor_rule' as anchor_rule
 from public.v_context_surface_staleness_v1 v
 where v.surface_name = 'mat_project_context'
+  and v.project_id is null
 order by v.updated_at_utc desc
 limit 1;
