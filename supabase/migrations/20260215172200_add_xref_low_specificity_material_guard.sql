@@ -10,7 +10,6 @@
 DROP FUNCTION IF EXISTS public.xref_search_journal_claims(
   extensions.vector(1536), uuid, text, integer, double precision
 );
-
 CREATE FUNCTION public.xref_search_journal_claims(
   query_embedding extensions.vector(1536),
   scope_contact_id uuid DEFAULT NULL,
@@ -133,11 +132,9 @@ BEGIN
   LIMIT result_limit;
 END;
 $function$;
-
 GRANT EXECUTE ON FUNCTION public.xref_search_journal_claims(
   extensions.vector(1536), uuid, text, integer, double precision, text
 ) TO service_role;
-
 COMMENT ON FUNCTION public.xref_search_journal_claims(
   extensions.vector(1536), uuid, text, integer, double precision, text
 ) IS

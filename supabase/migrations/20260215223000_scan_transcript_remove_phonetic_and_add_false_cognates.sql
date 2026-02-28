@@ -186,7 +186,5 @@ BEGIN
   ORDER BY r.em_score DESC, r.ac_project_name, r.em_matched_alias;
 END;
 $function$;
-
 COMMENT ON FUNCTION public.scan_transcript_for_projects(text, double precision, integer) IS
 'Scans transcript for project aliases using word-boundary exact matches and pg_trgm fuzzy matching (with depluralization variants).\n\nPhonetic matching (soundex/dmetaphone) is intentionally disabled due to common-word collision risk.\n\nIncludes a small, evidence-based false-cognate stoplist that applies to fuzzy paths only (exact matches remain eligible).';
-

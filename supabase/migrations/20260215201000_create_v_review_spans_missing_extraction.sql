@@ -2,7 +2,11 @@
 -- This view exposes review spans that are strong enough (confidence >= 0.70),
 -- currently at review-gate, and not yet written into journal_claims.
 
-CREATE OR REPLACE VIEW public.v_review_spans_missing_extraction AS
+-- Note: We intentionally DROP first because Postgres forbids CREATE OR REPLACE VIEW
+-- from dropping columns. This migration changes the view's column shape vs the
+-- earlier definition.
+DROP VIEW IF EXISTS public.v_review_spans_missing_extraction;
+CREATE VIEW public.v_review_spans_missing_extraction AS
 WITH latest_attribution AS (
   SELECT DISTINCT ON (span_id)
     span_id,
@@ -45,3 +49,5 @@ WHERE
       AND rq.status = 'pending'
   )
 ORDER BY sa.attributed_at DESC;
+COMMENT ON VIEW public.v_review_spans_missing_extraction IS
+  'Review spans (confidence >= 0.70) that are pending review-gate and have no active journal_claims. Used for extraction gap monitoring/backfill.';

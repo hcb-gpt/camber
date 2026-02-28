@@ -11,12 +11,11 @@
  */
 import "jsr:@supabase/functions-js/edge-runtime.d.ts";
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
-import Anthropic from "npm:@anthropic-ai/sdk@0.39.0";
 import { authErrorResponse, requireEdgeSecret } from "../_shared/auth.ts";
 import { parseLlmJson } from "../_shared/llm_json.ts";
 
 const FUNCTION_VERSION = "v0.1.0";
-const MODEL_ID = "claude-sonnet-4-5-20250514";
+const MODEL_ID = "gpt-4o";
 const MAX_TOKENS = 2048;
 
 // Budget caps
@@ -544,9 +543,41 @@ Deno.serve(async (req: Request) => {
     Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!,
   );
 
-  const anthropic = new Anthropic({
-    apiKey: Deno.env.get("ANTHROPIC_API_KEY")!,
-  });
+  const openaiKey = Deno.env.get("OPENAI_API_KEY");
+  if (!openaiKey) {
+    return new Response(
+      JSON.stringify({ ok: false, error: "config_missing: OPENAI_API_KEY not set", version: FUNCTION_VERSION }),
+      { status: 500, headers: { "Content-Type": "application/json" } },
+    );
+  }
+
+  const callOpenAI = async (systemPrompt: string, userPrompt: string, timeoutMs: number) => {
+    const fetchPromise = fetch("https://api.openai.com/v1/chat/completions", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        "Authorization": `Bearer ${openaiKey}`,
+      },
+      body: JSON.stringify({
+        model: MODEL_ID,
+        max_tokens: MAX_TOKENS,
+        messages: [
+          { role: "system", content: systemPrompt },
+          { role: "user", content: userPrompt },
+        ],
+      }),
+    }).then(async (r) => {
+      if (!r.ok) {
+        const errText = await r.text();
+        throw new Error(`openai_${r.status}: ${errText.slice(0, 240)}`);
+      }
+      return r.json();
+    });
+    return await Promise.race([
+      fetchPromise,
+      new Promise<never>((_, reject) => setTimeout(() => reject(new Error("llm_timeout")), timeoutMs)),
+    ]);
+  };
 
   const toolCallLog: ToolCallLog[] = [];
   const priorToolResults: Array<{ tool: string; params: any; result: any }> = [];
@@ -564,21 +595,12 @@ Deno.serve(async (req: Request) => {
 
       iterationsUsed = iter;
 
-      // Ask Sonnet what to do
+      // Ask the model what to do
       const userPrompt = buildAssemblerUserPrompt(context_package, iter, priorToolResults);
 
-      const llmResponse = await Promise.race([
-        anthropic.messages.create({
-          model: MODEL_ID,
-          max_tokens: MAX_TOKENS,
-          system: ASSEMBLER_SYSTEM_PROMPT,
-          messages: [{ role: "user", content: userPrompt }],
-        }),
-        new Promise<never>((_, reject) => setTimeout(() => reject(new Error("llm_timeout")), LLM_TIMEOUT_MS)),
-      ]);
+      const llmPayload = await callOpenAI(ASSEMBLER_SYSTEM_PROMPT, userPrompt, LLM_TIMEOUT_MS);
 
-      const textBlock = (llmResponse as any).content?.find((b: any) => b.type === "text");
-      const responseText = textBlock?.text || "";
+      const responseText = llmPayload?.choices?.[0]?.message?.content || "";
       const parsed = parseLlmJson<any>(responseText).value;
 
       if (parsed.status === "done") {
@@ -698,21 +720,13 @@ Deno.serve(async (req: Request) => {
     }
 
     // If we exhausted iterations without "done", produce a partial brief
-    // by asking Sonnet one final time to synthesize what we have
+    // by asking the model one final time to synthesize what we have
     const finalPrompt = buildAssemblerUserPrompt(context_package, MAX_ITERATIONS + 1, priorToolResults) +
       "\n\nBUDGET EXHAUSTED. You MUST output status='done' with your best assessment now.";
 
-    const finalResponse = await Promise.race([
-      anthropic.messages.create({
-        model: MODEL_ID,
-        max_tokens: MAX_TOKENS,
-        system: ASSEMBLER_SYSTEM_PROMPT,
-        messages: [{ role: "user", content: finalPrompt }],
-      }),
-      new Promise<never>((_, reject) => setTimeout(() => reject(new Error("llm_timeout_final")), LLM_TIMEOUT_MS)),
-    ]);
+    const finalPayload = await callOpenAI(ASSEMBLER_SYSTEM_PROMPT, finalPrompt, LLM_TIMEOUT_MS);
 
-    const finalText = (finalResponse as any).content?.find((b: any) => b.type === "text")?.text || "";
+    const finalText = finalPayload?.choices?.[0]?.message?.content || "";
     const finalParsed = parseLlmJson<any>(finalText).value;
 
     const brief: EvidenceBrief = {

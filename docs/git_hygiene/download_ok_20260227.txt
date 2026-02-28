@@ -1,0 +1,12 @@
+bootstrap-review
+generate-summary
+journal-extract
+process-call
+project-query
+segment-call
+segment-llm
+shadow-replay
+sms-beside-batch-ingest
+sms-thread-assembler
+striking-detect
+training-data-export

@@ -1,8 +1,10 @@
--- add_reseed_interaction_id_check
--- Applied via MCP: 2026-01-31
--- Adds interaction_id validation for reseed safety
+-- Require interaction_id for reseed rows
+ALTER TABLE override_log
+  ADD CONSTRAINT override_log_reseed_interaction_id_check
+  CHECK (
+    entity_type != 'reseed' 
+    OR (interaction_id IS NOT NULL AND interaction_id != '')
+  );
 
--- This migration was applied directly to production via MCP.
--- Stub file created for migration drift closure.
-
-SELECT 1; -- no-op placeholder
+COMMENT ON CONSTRAINT override_log_reseed_interaction_id_check ON override_log IS
+  'Reseed rows must have non-empty interaction_id (canonical link per STRAT TURN:63)';;

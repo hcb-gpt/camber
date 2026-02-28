@@ -8,13 +8,12 @@
  */
 import "jsr:@supabase/functions-js/edge-runtime.d.ts";
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
-import Anthropic from "npm:@anthropic-ai/sdk@0.39.0";
 import { authErrorResponse, requireEdgeSecret } from "../_shared/auth.ts";
 import { parseLlmJson } from "../_shared/llm_json.ts";
 
 const FUNCTION_SLUG = "audit-attribution-reviewer";
 const FUNCTION_VERSION = "v0.1.2";
-const SAFE_FALLBACK_MODEL_ID = "claude-3-haiku-20240307";
+const SAFE_FALLBACK_MODEL_ID = "gpt-4o-mini";
 const REQUESTED_MODEL_ID = Deno.env.get("AUDIT_ATTRIBUTION_REVIEWER_MODEL") ||
   Deno.env.get("AUDIT_ATTRIBUTION_MODEL") ||
   SAFE_FALLBACK_MODEL_ID;
@@ -448,14 +447,16 @@ function shouldRetryModelFallback(errorMessage: string): boolean {
   );
 }
 
-function parseAnthropicTextContent(llmResp: unknown): string {
-  const contentBlocks = asArray(asRecord(llmResp).content).map(asRecord);
-  const textChunks = contentBlocks
-    .filter((b) => asString(b.type) === "text")
-    .map((b) => asString(b.text))
-    .filter(Boolean)
-    .slice(0, 4);
-  return textChunks.join("\n");
+function parseLlmTextContent(llmResp: unknown): string {
+  const record = asRecord(llmResp);
+  // OpenAI chat completions format
+  const choices = asArray(record.choices);
+  if (choices.length > 0) {
+    const message = asRecord(asRecord(choices[0]).message);
+    const content = asString(message.content);
+    if (content) return content;
+  }
+  return "";
 }
 
 function listCandidateModels(requested: string, configuredFallback: string): string[] {
@@ -568,7 +569,7 @@ Deno.serve(async (req: Request) => {
   const requestedOverride = asString(body.reviewer_model);
   const effectiveRequestedModel = requestedOverride || REQUESTED_MODEL_ID;
 
-  const anthropic = new Anthropic({ apiKey: Deno.env.get("ANTHROPIC_API_KEY") || "" });
+  const openaiKey = Deno.env.get("OPENAI_API_KEY") || "";
   let output: ReviewerOutput;
   let llmParseMode = "none";
   let llmRawPreview = "";
@@ -576,14 +577,30 @@ Deno.serve(async (req: Request) => {
 
   try {
     const callReviewer = async (modelId: string) => {
-      return await Promise.race([
-        anthropic.messages.create({
+      const fetchPromise = fetch("https://api.openai.com/v1/chat/completions", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          "Authorization": `Bearer ${openaiKey}`,
+        },
+        body: JSON.stringify({
           model: modelId,
           max_tokens: MAX_TOKENS,
           temperature: 0,
-          system: SYSTEM_PROMPT,
-          messages: [{ role: "user", content: buildUserPrompt(packet) }],
+          messages: [
+            { role: "system", content: SYSTEM_PROMPT },
+            { role: "user", content: buildUserPrompt(packet) },
+          ],
         }),
+      }).then(async (r) => {
+        if (!r.ok) {
+          const errText = await r.text();
+          throw new Error(`openai_${r.status}: ${errText.slice(0, 240)}`);
+        }
+        return r.json();
+      });
+      return await Promise.race([
+        fetchPromise,
         new Promise<never>((_, reject) => setTimeout(() => reject(new Error("llm_timeout")), LLM_TIMEOUT_MS)),
       ]);
     };
@@ -611,7 +628,7 @@ Deno.serve(async (req: Request) => {
       throw lastModelError;
     }
 
-    const rawText = parseAnthropicTextContent(llmResp);
+    const rawText = parseLlmTextContent(llmResp);
     llmRawPreview = rawText.slice(0, 500);
     const parsed = parseLlmJson<JsonRecord>(rawText);
     llmParseMode = parsed.parseMode;

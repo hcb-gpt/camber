@@ -22,7 +22,6 @@ begin
   return v_clean::numeric;
 end;
 $$;
-
 create or replace function public.normalize_scheduler_item_financial(
   p_item jsonb,
   p_interaction_financial jsonb,
@@ -170,7 +169,6 @@ begin
   );
 end;
 $$;
-
 create or replace function public.materialize_scheduler_items()
 returns trigger
 language plpgsql
@@ -256,11 +254,9 @@ begin
   return new;
 end;
 $$;
-
 comment on function public.materialize_scheduler_items() is
   'Materializes scheduler items from interactions.ai_scheduler_json into scheduler_items and normalizes financial_json keys: '
   'total_committed,total_invoiced,total_pending,largest_single_item.';
-
 -- Backfill existing rows where normalized keys are missing or financial_json is null.
 update public.scheduler_items si
 set financial_json = public.normalize_scheduler_item_financial(

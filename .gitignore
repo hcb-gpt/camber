@@ -44,3 +44,12 @@ proofs/
 
 # Claude Code local settings
 .claude/
+
+# Xcode / iOS
+*.xcuserdata/
+xcuserdata/
+build/
+DerivedData/
+*.ipa
+*.dSYM.zip
+*.dSYM

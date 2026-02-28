@@ -1,0 +1,418 @@
+{
+  "measured_at_utc": "20260227T191507Z",
+  "base_url": "https://rjhdwidddtfetbwqolof.supabase.co/functions/v1/redline-thread",
+  "first_contact_id": "c9b2d3e4-f5a6-7890-bcde-f01234567890",
+  "redline_thread_meta": {
+    "created_at": 1772022550234,
+    "entrypoint_path": "file:///home/runner/work/camber-calls/camber-calls/supabase/functions/redline-thread/index.ts",
+    "ezbr_sha256": "04f7cda02a8f2369aff130d89206f5f72cd0d8ee12a51e3ee3ec52e1e87087cf",
+    "id": "f38c3c2a-cedc-4d9b-8565-7d359d94b426",
+    "import_map": false,
+    "name": "redline-thread",
+    "slug": "redline-thread",
+    "status": "ACTIVE",
+    "updated_at": 1772217559251,
+    "verify_jwt": false,
+    "version": 31
+  },
+  "endpoints": {
+    "html_shell": {
+      "runs": 15,
+      "status_codes": [
+        200
+      ],
+      "avg_time_total": 0.29963573333333327,
+      "p50_time_total": 0.301641,
+      "p95_time_total": 0.333611,
+      "avg_ttfb": 0.29446700000000003,
+      "p95_ttfb": 0.330218,
+      "avg_size_download": 33326
+    },
+    "projects": {
+      "runs": 15,
+      "status_codes": [
+        200
+      ],
+      "avg_time_total": 0.30049986666666667,
+      "p50_time_total": 0.299549,
+      "p95_time_total": 0.321228,
+      "avg_ttfb": 0.2950236666666666,
+      "p95_ttfb": 0.317088,
+      "avg_size_download": 33326
+    },
+    "thread_first_contact": {
+      "runs": 15,
+      "status_codes": [
+        200
+      ],
+      "avg_time_total": 1.1360036,
+      "p50_time_total": 1.151301,
+      "p95_time_total": 1.198826,
+      "avg_ttfb": 1.1295676000000001,
+      "p95_ttfb": 1.198390,
+      "avg_size_download": 39696
+    }
+  },
+  "raw": [
+    {
+      "endpoint": "html_shell",
+      "run": 1,
+      "http_code": 200,
+      "time_total": 0.303457,
+      "time_starttransfer": 0.294884,
+      "size_download": 33326
+    },
+    {
+      "endpoint": "html_shell",
+      "run": 2,
+      "http_code": 200,
+      "time_total": 0.311772,
+      "time_starttransfer": 0.307478,
+      "size_download": 33326
+    },
+    {
+      "endpoint": "html_shell",
+      "run": 3,
+      "http_code": 200,
+      "time_total": 0.333611,
+      "time_starttransfer": 0.330218,
+      "size_download": 33326
+    },
+    {
+      "endpoint": "html_shell",
+      "run": 4,
+      "http_code": 200,
+      "time_total": 0.275745,
+      "time_starttransfer": 0.268660,
+      "size_download": 33326
+    },
+    {
+      "endpoint": "html_shell",
+      "run": 5,
+      "http_code": 200,
+      "time_total": 0.302831,
+      "time_starttransfer": 0.300463,
+      "size_download": 33326
+    },
+    {
+      "endpoint": "html_shell",
+      "run": 6,
+      "http_code": 200,
+      "time_total": 0.292054,
+      "time_starttransfer": 0.288243,
+      "size_download": 33326
+    },
+    {
+      "endpoint": "html_shell",
+      "run": 7,
+      "http_code": 200,
+      "time_total": 0.264576,
+      "time_starttransfer": 0.261391,
+      "size_download": 33326
+    },
+    {
+      "endpoint": "html_shell",
+      "run": 8,
+      "http_code": 200,
+      "time_total": 0.300454,
+      "time_starttransfer": 0.295449,
+      "size_download": 33326
+    },
+    {
+      "endpoint": "html_shell",
+      "run": 9,
+      "http_code": 200,
+      "time_total": 0.339843,
+      "time_starttransfer": 0.334594,
+      "size_download": 33326
+    },
+    {
+      "endpoint": "html_shell",
+      "run": 10,
+      "http_code": 200,
+      "time_total": 0.304149,
+      "time_starttransfer": 0.303528,
+      "size_download": 33326
+    },
+    {
+      "endpoint": "html_shell",
+      "run": 11,
+      "http_code": 200,
+      "time_total": 0.301347,
+      "time_starttransfer": 0.295957,
+      "size_download": 33326
+    },
+    {
+      "endpoint": "html_shell",
+      "run": 12,
+      "http_code": 200,
+      "time_total": 0.236089,
+      "time_starttransfer": 0.235345,
+      "size_download": 33326
+    },
+    {
+      "endpoint": "html_shell",
+      "run": 13,
+      "http_code": 200,
+      "time_total": 0.301641,
+      "time_starttransfer": 0.290635,
+      "size_download": 33326
+    },
+    {
+      "endpoint": "html_shell",
+      "run": 14,
+      "http_code": 200,
+      "time_total": 0.331174,
+      "time_starttransfer": 0.325368,
+      "size_download": 33326
+    },
+    {
+      "endpoint": "html_shell",
+      "run": 15,
+      "http_code": 200,
+      "time_total": 0.295793,
+      "time_starttransfer": 0.284792,
+      "size_download": 33326
+    },
+    {
+      "endpoint": "projects",
+      "run": 1,
+      "http_code": 200,
+      "time_total": 0.305691,
+      "time_starttransfer": 0.298409,
+      "size_download": 33326
+    },
+    {
+      "endpoint": "projects",
+      "run": 2,
+      "http_code": 200,
+      "time_total": 0.321228,
+      "time_starttransfer": 0.317088,
+      "size_download": 33326
+    },
+    {
+      "endpoint": "projects",
+      "run": 3,
+      "http_code": 200,
+      "time_total": 0.305729,
+      "time_starttransfer": 0.303563,
+      "size_download": 33326
+    },
+    {
+      "endpoint": "projects",
+      "run": 4,
+      "http_code": 200,
+      "time_total": 0.296883,
+      "time_starttransfer": 0.293473,
+      "size_download": 33326
+    },
+    {
+      "endpoint": "projects",
+      "run": 5,
+      "http_code": 200,
+      "time_total": 0.290974,
+      "time_starttransfer": 0.281605,
+      "size_download": 33326
+    },
+    {
+      "endpoint": "projects",
+      "run": 6,
+      "http_code": 200,
+      "time_total": 0.317096,
+      "time_starttransfer": 0.312576,
+      "size_download": 33326
+    },
+    {
+      "endpoint": "projects",
+      "run": 7,
+      "http_code": 200,
+      "time_total": 0.304805,
+      "time_starttransfer": 0.300589,
+      "size_download": 33326
+    },
+    {
+      "endpoint": "projects",
+      "run": 8,
+      "http_code": 200,
+      "time_total": 0.299549,
+      "time_starttransfer": 0.292860,
+      "size_download": 33326
+    },
+    {
+      "endpoint": "projects",
+      "run": 9,
+      "http_code": 200,
+      "time_total": 0.263730,
+      "time_starttransfer": 0.260004,
+      "size_download": 33326
+    },
+    {
+      "endpoint": "projects",
+      "run": 10,
+      "http_code": 200,
+      "time_total": 0.293486,
+      "time_starttransfer": 0.290333,
+      "size_download": 33326
+    },
+    {
+      "endpoint": "projects",
+      "run": 11,
+      "http_code": 200,
+      "time_total": 0.343374,
+      "time_starttransfer": 0.331472,
+      "size_download": 33326
+    },
+    {
+      "endpoint": "projects",
+      "run": 12,
+      "http_code": 200,
+      "time_total": 0.308522,
+      "time_starttransfer": 0.303143,
+      "size_download": 33326
+    },
+    {
+      "endpoint": "projects",
+      "run": 13,
+      "http_code": 200,
+      "time_total": 0.261586,
+      "time_starttransfer": 0.253605,
+      "size_download": 33326
+    },
+    {
+      "endpoint": "projects",
+      "run": 14,
+      "http_code": 200,
+      "time_total": 0.298977,
+      "time_starttransfer": 0.294954,
+      "size_download": 33326
+    },
+    {
+      "endpoint": "projects",
+      "run": 15,
+      "http_code": 200,
+      "time_total": 0.295868,
+      "time_starttransfer": 0.291681,
+      "size_download": 33326
+    },
+    {
+      "endpoint": "thread_first_contact",
+      "run": 1,
+      "http_code": 200,
+      "time_total": 1.194831,
+      "time_starttransfer": 1.188868,
+      "size_download": 39696
+    },
+    {
+      "endpoint": "thread_first_contact",
+      "run": 2,
+      "http_code": 200,
+      "time_total": 1.301524,
+      "time_starttransfer": 1.295006,
+      "size_download": 39696
+    },
+    {
+      "endpoint": "thread_first_contact",
+      "run": 3,
+      "http_code": 200,
+      "time_total": 1.095425,
+      "time_starttransfer": 1.086897,
+      "size_download": 39696
+    },
+    {
+      "endpoint": "thread_first_contact",
+      "run": 4,
+      "http_code": 200,
+      "time_total": 1.162240,
+      "time_starttransfer": 1.158349,
+      "size_download": 39696
+    },
+    {
+      "endpoint": "thread_first_contact",
+      "run": 5,
+      "http_code": 200,
+      "time_total": 1.060170,
+      "time_starttransfer": 1.054710,
+      "size_download": 39696
+    },
+    {
+      "endpoint": "thread_first_contact",
+      "run": 6,
+      "http_code": 200,
+      "time_total": 1.151301,
+      "time_starttransfer": 1.144338,
+      "size_download": 39696
+    },
+    {
+      "endpoint": "thread_first_contact",
+      "run": 7,
+      "http_code": 200,
+      "time_total": 1.183327,
+      "time_starttransfer": 1.177517,
+      "size_download": 39696
+    },
+    {
+      "endpoint": "thread_first_contact",
+      "run": 8,
+      "http_code": 200,
+      "time_total": 1.028211,
+      "time_starttransfer": 1.020033,
+      "size_download": 39696
+    },
+    {
+      "endpoint": "thread_first_contact",
+      "run": 9,
+      "http_code": 200,
+      "time_total": 1.187014,
+      "time_starttransfer": 1.182038,
+      "size_download": 39696
+    },
+    {
+      "endpoint": "thread_first_contact",
+      "run": 10,
+      "http_code": 200,
+      "time_total": 0.991065,
+      "time_starttransfer": 0.982712,
+      "size_download": 39696
+    },
+    {
+      "endpoint": "thread_first_contact",
+      "run": 11,
+      "http_code": 200,
+      "time_total": 1.147951,
+      "time_starttransfer": 1.139215,
+      "size_download": 39696
+    },
+    {
+      "endpoint": "thread_first_contact",
+      "run": 12,
+      "http_code": 200,
+      "time_total": 1.076542,
+      "time_starttransfer": 1.073920,
+      "size_download": 39696
+    },
+    {
+      "endpoint": "thread_first_contact",
+      "run": 13,
+      "http_code": 200,
+      "time_total": 1.176240,
+      "time_starttransfer": 1.170103,
+      "size_download": 39696
+    },
+    {
+      "endpoint": "thread_first_contact",
+      "run": 14,
+      "http_code": 200,
+      "time_total": 1.085387,
+      "time_starttransfer": 1.071418,
+      "size_download": 39696
+    },
+    {
+      "endpoint": "thread_first_contact",
+      "run": 15,
+      "http_code": 200,
+      "time_total": 1.198826,
+      "time_starttransfer": 1.198390,
+      "size_download": 39696
+    }
+  ]
+}

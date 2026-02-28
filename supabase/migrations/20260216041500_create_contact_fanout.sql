@@ -18,15 +18,12 @@ CREATE TABLE IF NOT EXISTS public.contact_fanout (
                             CHECK (fanout_class IN ('anchored','semi_anchored','drifter','floater','unknown')),
     fanout_computed_at      timestamptz NOT NULL DEFAULT now()
 );
-
 -- Index for joins on fanout_class (p2-eval-scorer stratification)
 CREATE INDEX IF NOT EXISTS idx_contact_fanout_class
     ON public.contact_fanout (fanout_class);
-
 -- Index for effective_fanout range queries
 CREATE INDEX IF NOT EXISTS idx_contact_fanout_effective
     ON public.contact_fanout (effective_fanout);
-
 COMMENT ON TABLE public.contact_fanout IS
     'Per-contact fanout classification derived from correspondent_project_affinity. '
     'One row per contact. Consumed by context-assembly v1.5.0 and eval scorer.';
@@ -40,7 +37,6 @@ COMMENT ON COLUMN public.contact_fanout.affinity_project_count IS
     'Count of distinct projects with positive weight in correspondent_project_affinity';
 COMMENT ON COLUMN public.contact_fanout.fanout_computed_at IS
     'When this row was last recomputed from affinity/interaction data';
-
 -- 2) Populate from correspondent_project_affinity + interactions (idempotent upsert)
 -- Classification logic:
 --   0 projects (or no data) → unknown

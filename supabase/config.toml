@@ -53,3 +53,9 @@ verify_jwt = false
 
 [functions.decision-auditor]
 verify_jwt = false
+
+[functions.redline-thread]
+verify_jwt = false
+
+[functions.bootstrap-review]
+verify_jwt = false

@@ -23,13 +23,10 @@ CREATE TABLE IF NOT EXISTS public.speaker_resolution_audit (
   match_type TEXT,
   applied_at TIMESTAMPTZ DEFAULT now()
 );
-
 CREATE INDEX IF NOT EXISTS idx_speaker_resolution_audit_call_id
 ON public.speaker_resolution_audit(call_id);
-
 COMMENT ON TABLE public.speaker_resolution_audit IS
   'Audit log for speaker_contact_id backfills, especially Deepgram diarization SPEAKER_N labels.';
-
 -- ----------------------------------------------------------------------------
 -- 2) Resolve speaker label → contact (v2: call-aware Deepgram path)
 -- ----------------------------------------------------------------------------
@@ -225,14 +222,11 @@ BEGIN
   FROM public.resolve_speaker_contact(v_label, p_project_id);
 END;
 $$;
-
 GRANT EXECUTE ON FUNCTION public.resolve_speaker_contact_v2(TEXT, UUID, TEXT) TO service_role;
 REVOKE EXECUTE ON FUNCTION public.resolve_speaker_contact_v2(TEXT, UUID, TEXT) FROM anon, authenticated;
-
 COMMENT ON FUNCTION public.resolve_speaker_contact_v2 IS
   'Resolve speaker_label → contact_id. v2 adds call-aware resolution for Deepgram diarization SPEAKER_N labels '
   'using calls_raw (direction/phones/names) + transcripts_comparison.words (earliest speaker).';
-
 -- ----------------------------------------------------------------------------
 -- 3) Update journal_claims trigger to use v2 (call-aware)
 -- ----------------------------------------------------------------------------
@@ -271,14 +265,12 @@ BEGIN
   RETURN NEW;
 END;
 $$;
-
 -- Recreate trigger (idempotent)
 DROP TRIGGER IF EXISTS trg_resolve_journal_claim_speakers ON public.journal_claims;
 CREATE TRIGGER trg_resolve_journal_claim_speakers
   BEFORE INSERT OR UPDATE ON public.journal_claims
   FOR EACH ROW
   EXECUTE FUNCTION public.resolve_journal_claim_speakers();
-
 COMMENT ON FUNCTION public.resolve_journal_claim_speakers IS
   'Auto-resolves speaker_label and reported_by_label to contact_ids on journal_claims insert/update. '
-  'v2: uses resolve_speaker_contact_v2 (call-aware Deepgram diarization handling).';;
+  'v2: uses resolve_speaker_contact_v2 (call-aware Deepgram diarization handling).';

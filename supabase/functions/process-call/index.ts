@@ -1,10 +1,18 @@
 /**
- * process-call Edge Function v4.3.9
+ * process-call Edge Function v4.3.12
  * Full v3.6 pipeline in Supabase - Ported from v4.0.22 context_assembly
  *
- * @version 4.3.8
- * @date 2026-02-15
+ * @version 4.3.12
+ * @date 2026-02-27
  * @port context_assembly v4.0.22 - 6-source ranking, word boundaries, speaker stripping
+ *
+ * v4.3.12 CHANGES (transcript rescue):
+ * - Add payload_text as transcript fallback in m1() normalization.
+ *   Rescues plain-text transcripts from zapier-call-ingest parse fallback path.
+ *
+ * v4.3.11 CHANGES (shadow parity fix):
+ * - Implement zapier-shadow events write to public.beside_thread_events and beside_threads
+ *   to support Beside parity metrics.
  *
  * PR-12 HARDENING:
  * - JWT + edge-secret gate
@@ -17,6 +25,12 @@
  *
  * v4.3.2 CHANGES (lineage persistence):
  * - Persist zapier_zap_id and zapier_run_id from _zapier_ingest_meta into calls_raw.
+ *
+ * v4.3.10 CHANGES (misattribution guards):
+ * - Adds OWNER_PHONES guard: suppresses otherPartyPhone when it matches shared inbox line.
+ * - Adds ADMIN_NAMES guard: suppresses contact_name when it matches known admin fallback
+ *   and otherPartyPhone is null (Beside API bug defense-in-depth).
+ * - Mirrors sms-beside-batch-ingest v1.1.0 guard pattern for calls pipeline.
  *
  * v4.3.9 CHANGES (chain-detect rewire + bounded retry):
  * - Adds non-blocking process-call -> chain-detect invocation path.
@@ -68,7 +82,7 @@ import { fireAndForget } from "../_shared/lineage.ts";
 import { normalizePhoneForLookup } from "./phone_lookup.ts";
 import { resolveCallPartyPhones } from "./phone_direction.ts";
 
-const PROCESS_CALL_VERSION = "v4.3.9"; // adds bounded timeout + retry for segment-call and chain-detect chaining
+const PROCESS_CALL_VERSION = "v4.3.12"; // adds payload_text transcript fallback + misattribution guards
 const GATE = { PASS: "PASS", SKIP: "SKIP", NEEDS_REVIEW: "NEEDS_REVIEW" };
 const ID_PATTERN = /^cll_[a-zA-Z0-9_]+$/;
 const SEGMENT_CALL_TIMEOUT_MS = Number(Deno.env.get("PROCESS_CALL_SEGMENT_TIMEOUT_MS") || "6000");
@@ -113,6 +127,15 @@ const ADMIN_USER_IDS: string[] = [
   // Add Supabase auth.users.id values here
   // Example: "a1b2c3d4-e5f6-7890-abcd-ef1234567890"
 ];
+
+// ============================================================
+// MISATTRIBUTION GUARDS (mirrors sms-beside-batch-ingest v1.1.0)
+// Beside API bug: ~2.6% of inbound messages return inbox admin name
+// ("Chad Barlow") with empty phone. These guards prevent false
+// attribution on calls the same way the SMS pipeline does.
+// ============================================================
+const OWNER_PHONES = new Set(["+17066889158"]); // Beside shared inbox line
+const ADMIN_NAMES = new Set(["chad barlow"]); // Beside inbox admin fallback names
 
 // ============================================================
 // V3 PORTED UTILITIES (from context_assembly v4.0.22)
@@ -240,6 +263,7 @@ function m1(raw: any) {
   const rawEvent = signal.raw_event && typeof signal.raw_event === "object" ? signal.raw_event : {};
   if (a.transcript_text && !a.transcript) a.transcript = a.transcript_text;
   if (signal.transcript && !a.transcript) a.transcript = signal.transcript;
+  if (a.payload_text && !a.transcript) a.transcript = a.payload_text;
   if (!a.interaction_id && a.call_id) a.interaction_id = a.call_id;
   if (!a.interaction_id && signal.interaction_id) {
     a.interaction_id = signal.interaction_id;
@@ -551,6 +575,15 @@ Deno.serve(async (req: Request) => {
     const n = normalizedPreview;
     const partyPhones = resolveCallPartyPhones(n);
     const persistedDirection = partyPhones.direction === "unknown" ? n.direction || null : partyPhones.direction;
+
+    // Guard: Suppress otherPartyPhone if it matches a known owner/shared line
+    if (partyPhones.otherPartyPhone && OWNER_PHONES.has(partyPhones.otherPartyPhone)) {
+      warnings.push(
+        `misattribution_guard_owner_phone: otherPartyPhone=${partyPhones.otherPartyPhone} is a shared line; suppressing`,
+      );
+      partyPhones.otherPartyPhone = null;
+    }
+
     const lookupPhone = normalizePhoneForLookup(partyPhones.otherPartyPhone);
     if (partyPhones.direction === "unknown") {
       warnings.push("data_quality_missing_direction");
@@ -571,6 +604,15 @@ Deno.serve(async (req: Request) => {
         contact_name = data[0].contact_name;
         sources_used.push("lookup_contact_by_phone");
       }
+    }
+
+    // Guard: Suppress contact_name if it matches a known admin name with no phone
+    if (contact_name && !partyPhones.otherPartyPhone && ADMIN_NAMES.has(contact_name.toLowerCase())) {
+      warnings.push(
+        `misattribution_guard_admin_name: contact_name="${contact_name}" is a known admin fallback with no phone; suppressing`,
+      );
+      contact_name = null;
+      contact_id = null;
     }
 
     // ========================================
@@ -1116,6 +1158,51 @@ Deno.serve(async (req: Request) => {
       }
 
       // ========================================
+      // SHADOW WRITE — Beside Parity Metrics
+      // ========================================
+      if (provenance_source === "zapier") {
+        try {
+          const bodyHash = await computeBodyHash(n.transcript);
+          const capturedAt = new Date().toISOString();
+          const threadId = partyPhones.otherPartyPhone
+            ? `beside_sms_${partyPhones.otherPartyPhone}`
+            : `beside_sms_nomatch_${iid}`;
+
+          // 1. Ensure thread exists (UPSERT into beside_threads)
+          await db.from("beside_threads").upsert({
+            beside_room_id: threadId,
+            source: "zapier",
+            contact_phone_e164: partyPhones.otherPartyPhone,
+            updated_at_utc: n.event_at_utc,
+            captured_at_utc: capturedAt,
+            payload_json: { notes: "Auto-created via zapier call shadow ingest" },
+          }, { onConflict: "beside_room_id" });
+
+          // 2. Insert event (UPSERT into beside_thread_events)
+          await db.from("beside_thread_events").upsert({
+            beside_event_id: `zapier_${iid}`,
+            beside_room_id: threadId,
+            beside_event_type: "call",
+            occurred_at_utc: n.event_at_utc,
+            direction: persistedDirection,
+            text: n.transcript,
+            contact_phone_e164: partyPhones.otherPartyPhone,
+            camber_interaction_id: iid,
+            zapier_event_id: iid,
+            source: "zapier",
+            captured_at_utc: capturedAt,
+            record_hash: bodyHash,
+            payload_json: raw,
+          }, { onConflict: "beside_event_id" });
+        } catch (shadowError: any) {
+          warnings.push(`shadow_write_failed: ${shadowError.message}`);
+          console.warn(
+            `[process-call] Shadow write failed for interaction_id=${iid}: ${shadowError.message}`,
+          );
+        }
+      }
+
+      // ========================================
       // v4.3.x: NON-BLOCKING DOWNSTREAM CHAINS
       // 1) segment-call: full attribution pipeline
       //    segment-call -> segment-llm -> context-assembly -> ai-router -> span_attributions
@@ -1308,3 +1395,23 @@ Deno.serve(async (req: Request) => {
     );
   }
 });
+
+/**
+ * Compute sha256 hex hash of normalized text for parity comparison.
+ * Mirrors SQL normalization in v_beside_direct_read_parity_72h:
+ *   lower(regexp_replace(regexp_replace(trim(text), '\\s+', ' ', 'g'), '[^[:alnum:][:space:]]+', '', 'g'))
+ */
+async function computeBodyHash(text: string | null): Promise<string> {
+  if (!text) return "";
+  const normalized = text
+    .trim()
+    .replace(/\s+/g, " ")
+    .replace(/[^a-zA-Z0-9\s]/g, "")
+    .toLowerCase();
+
+  const msgUint8 = new TextEncoder().encode(normalized);
+  const hashBuffer = await crypto.subtle.digest("SHA-256", msgUint8);
+  const hashArray = Array.from(new Uint8Array(hashBuffer));
+  const hashHex = hashArray.map((b) => b.toString(16).padStart(2, "0")).join("");
+  return hashHex;
+}

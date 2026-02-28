@@ -1,5 +1,5 @@
 /**
- * context-assembly Edge Function v2.1.1
+ * context-assembly Edge Function v2.2.0
  * Assembles LLM-ready context_package from span_id (SPAN-FIRST)
  *
  * @version 2.1.1
@@ -15,6 +15,13 @@
  * - Fixes Permar-class bug where high-affinity projects with weak transcript evidence
  *   outranked low-affinity projects with strong evidence (e.g., source_strength +1.22)
  * - Sort order: assigned > weak_only > alias_matches > source_strength > affinity > geo
+ *
+ * v2.2.0 Changes (Client Override Gate):
+ * - NEW: Queries project_clients table as a candidate source in SOURCE 1
+ * - NEW: Client override gate mirrors homeowner override — if a unique client-linked
+ *   project exists, force it (unless homeowner override already applied).
+ * - Same contradictory-anchor escape hatch as homeowner override.
+ * - Emits meta.client_override* fields for downstream traceability.
  *
  * v2.1.1 Changes (P0 Homeowner Override Gate):
  * - If a unique homeowner project link exists in project_contacts, deterministically
@@ -91,7 +98,7 @@ import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
 import { computeClaimCrossref } from "./claim_crossref.ts";
 import { findHomeownerOverrideConflict, isHomeownerRoleLabel } from "./homeowner_override.ts";
 
-const ASSEMBLY_VERSION = "v2.1.1"; // v2.1.1: P0 homeowner override + contradiction escape hatch
+const ASSEMBLY_VERSION = "v2.2.0"; // v2.2.0: client override gate + project_clients source
 const SELECTION_RULES_VERSION = "v1.0.0";
 const MAX_CANDIDATES = 8;
 const MAX_CANDIDATES_FLOATER = 12; // Expanded for internal floater contacts
@@ -525,6 +532,11 @@ interface ContextPackage {
     homeowner_override_conflict_project_id: string | null;
     homeowner_override_conflict_term: string | null;
     homeowner_override_skipped_reason: string | null;
+    client_override: boolean;
+    client_override_project_id: string | null;
+    client_override_conflict_project_id: string | null;
+    client_override_conflict_term: string | null;
+    client_override_skipped_reason: string | null;
   };
   span: {
     start_ms: number | null;
@@ -1502,6 +1514,11 @@ Deno.serve(async (req: Request) => {
     let homeownerOverrideConflictProjectId: string | null = null;
     let homeownerOverrideConflictTerm: string | null = null;
     let homeownerOverrideSkippedReason: string | null = null;
+    let clientOverrideProjectId: string | null = null;
+    let clientOverrideApplied = false;
+    let clientOverrideConflictProjectId: string | null = null;
+    let clientOverrideConflictTerm: string | null = null;
+    let clientOverrideSkippedReason: string | null = null;
 
     // ========================================
     // 7-SOURCE CANDIDATE COLLECTION
@@ -1652,6 +1669,51 @@ Deno.serve(async (req: Request) => {
             homeownerOverrideSkippedReason = "homeowner_contact_multi_project";
             warnings.push("homeowner_override_contact_multi_project");
           }
+        }
+      }
+    }
+
+    // CLIENT OVERRIDE: Query project_clients table for this contact
+    if (contact_id) {
+      const { data: clientRows } = await db
+        .from("project_clients")
+        .select("project_id, client_role")
+        .eq("contact_id", contact_id);
+
+      if (clientRows?.length) {
+        const clientProjectIds = new Set<string>();
+        for (const r of clientRows as Array<Record<string, unknown>>) {
+          const projectId = typeof r.project_id === "string" ? r.project_id : null;
+          if (projectId) {
+            clientProjectIds.add(projectId);
+            // Also add as a candidate source if not already present
+            addCandidate(
+              projectId,
+              "project_clients",
+              0,
+              undefined,
+              undefined,
+              SOURCE_SCORE_PROJECT_CONTACT,
+            );
+            const cur = candidatesById.get(projectId);
+            if (cur) cur.assigned = true;
+          }
+        }
+
+        if (clientProjectIds.size === 1) {
+          // Don't override if homeowner already set (homeowner takes precedence)
+          if (!homeownerOverrideProjectId) {
+            clientOverrideProjectId = Array.from(clientProjectIds)[0];
+          } else {
+            clientOverrideSkippedReason = "homeowner_override_active";
+          }
+        } else if (clientProjectIds.size > 1) {
+          clientOverrideSkippedReason = "client_link_not_unique";
+          warnings.push("client_override_not_unique");
+        }
+
+        if (!sources_used.includes("project_clients")) {
+          sources_used.push("project_clients");
         }
       }
     }
@@ -2742,6 +2804,61 @@ Deno.serve(async (req: Request) => {
     }
 
     // ========================================
+    // CLIENT OVERRIDE GATE (deterministic)
+    // - If project_clients produced a unique client-linked project, force it.
+    // - Same escape hatch as homeowner: skip when transcript has explicit
+    //   contradictory project anchors for a different project.
+    // - Skipped if homeowner override already applied.
+    // ========================================
+    if (clientOverrideProjectId && !homeownerOverrideApplied) {
+      const clientCandidate = candidatesById.get(clientOverrideProjectId);
+      if (!clientCandidate) {
+        clientOverrideSkippedReason = clientOverrideSkippedReason ||
+          "client_candidate_missing";
+        warnings.push("client_override_candidate_missing");
+      } else {
+        const contradiction = findHomeownerOverrideConflict(
+          clientOverrideProjectId,
+          Array.from(candidatesById.entries()).map(([project_id, meta]) => ({
+            project_id,
+            alias_matches: meta.alias_matches,
+          })),
+        );
+
+        if (contradiction) {
+          clientOverrideConflictProjectId = contradiction.project_id;
+          clientOverrideConflictTerm = contradiction.term;
+          clientOverrideSkippedReason = "explicit_contradictory_anchor";
+          warnings.push(
+            `client_override_skipped_conflict:${contradiction.project_id}`,
+          );
+        } else {
+          const removedIds = Array.from(candidatesById.keys()).filter(
+            (pid) => pid !== clientOverrideProjectId,
+          );
+          for (const pid of removedIds) {
+            candidatesById.delete(pid);
+          }
+          addCandidate(
+            clientOverrideProjectId,
+            "client_override",
+            0,
+            undefined,
+            undefined,
+            SOURCE_SCORE_HOMEOWNER_OVERRIDE,
+          );
+          const forced = candidatesById.get(clientOverrideProjectId);
+          if (forced) forced.assigned = true;
+          clientOverrideApplied = true;
+          sources_used.push("client_override");
+          if (removedIds.length > 0) {
+            warnings.push(`client_override_forced:${removedIds.length}`);
+          }
+        }
+      }
+    }
+
+    // ========================================
     // ENRICH CANDIDATES WITH PROJECT DETAILS
     // ========================================
     const candidateIds = Array.from(candidatesById.keys());
@@ -3229,6 +3346,11 @@ Deno.serve(async (req: Request) => {
         homeowner_override_conflict_project_id: homeownerOverrideConflictProjectId,
         homeowner_override_conflict_term: homeownerOverrideConflictTerm,
         homeowner_override_skipped_reason: homeownerOverrideSkippedReason,
+        client_override: clientOverrideApplied,
+        client_override_project_id: clientOverrideProjectId,
+        client_override_conflict_project_id: clientOverrideConflictProjectId,
+        client_override_conflict_term: clientOverrideConflictTerm,
+        client_override_skipped_reason: clientOverrideSkippedReason,
       },
       span: {
         start_ms,
