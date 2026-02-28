@@ -10,6 +10,7 @@ import "jsr:@supabase/functions-js/edge-runtime.d.ts";
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
 import { authErrorResponse, requireEdgeSecret } from "../_shared/auth.ts";
 import { parseLlmJson } from "../_shared/llm_json.ts";
+import { getModelConfigCached } from "../_shared/model_config.ts";
 
 const FUNCTION_SLUG = "audit-attribution-reviewer";
 const FUNCTION_VERSION = "v0.1.2";
@@ -21,6 +22,7 @@ const FALLBACK_MODEL_ID = Deno.env.get("AUDIT_ATTRIBUTION_REVIEWER_MODEL_FALLBAC
   Deno.env.get("AUDIT_ATTRIBUTION_MODEL_FALLBACK") || SAFE_FALLBACK_MODEL_ID;
 const PROMPT_VERSION = Deno.env.get("AUDIT_ATTRIBUTION_REVIEWER_PROMPT_VERSION") || "prod_attrib_audit_reviewer_v0";
 const MAX_TOKENS = Number(Deno.env.get("AUDIT_ATTRIBUTION_REVIEWER_MAX_TOKENS") || "1400");
+const DEFAULT_TEMPERATURE = 0;
 const LLM_TIMEOUT_MS = Number(Deno.env.get("AUDIT_ATTRIBUTION_REVIEWER_TIMEOUT_MS") || "18000");
 
 const ALLOWED_SOURCES = [
@@ -506,6 +508,10 @@ Deno.serve(async (req: Request) => {
       headers: JSON_HEADERS,
     });
   }
+  const db = createClient(
+    Deno.env.get("SUPABASE_URL") || "",
+    Deno.env.get("SUPABASE_SERVICE_ROLE_KEY") || "",
+  );
 
   const deterministicTags: string[] = [];
   const deterministicMissing: string[] = [];
@@ -567,7 +573,31 @@ Deno.serve(async (req: Request) => {
   }
 
   const requestedOverride = asString(body.reviewer_model);
-  const effectiveRequestedModel = requestedOverride || REQUESTED_MODEL_ID;
+  let effectiveRequestedModel = requestedOverride || REQUESTED_MODEL_ID;
+  let effectiveFallbackModel = FALLBACK_MODEL_ID;
+  let runtimeMaxTokens = MAX_TOKENS;
+  let runtimeTemperature = DEFAULT_TEMPERATURE;
+  let modelConfigSource: "pipeline_model_config" | "default" = "default";
+
+  try {
+    const modelConfig = await getModelConfigCached(db, {
+      functionName: "audit-attribution-reviewer",
+      modelId: effectiveRequestedModel,
+      maxTokens: MAX_TOKENS,
+      temperature: DEFAULT_TEMPERATURE,
+      fallbackModelId: FALLBACK_MODEL_ID,
+    });
+    if (!requestedOverride) {
+      effectiveRequestedModel = modelConfig.modelId;
+    }
+    effectiveFallbackModel = modelConfig.fallbackModelId || effectiveFallbackModel;
+    runtimeMaxTokens = modelConfig.maxTokens;
+    runtimeTemperature = modelConfig.temperature;
+    modelConfigSource = modelConfig.source;
+  } catch (error: unknown) {
+    const message = error instanceof Error ? error.message : String(error || "unknown");
+    console.warn(`[audit-attribution-reviewer] model config fallback: ${message}`);
+  }
 
   const openaiKey = Deno.env.get("OPENAI_API_KEY") || "";
   let output: ReviewerOutput;
@@ -585,8 +615,8 @@ Deno.serve(async (req: Request) => {
         },
         body: JSON.stringify({
           model: modelId,
-          max_tokens: MAX_TOKENS,
-          temperature: 0,
+          max_tokens: runtimeMaxTokens,
+          temperature: runtimeTemperature,
           messages: [
             { role: "system", content: SYSTEM_PROMPT },
             { role: "user", content: buildUserPrompt(packet) },
@@ -605,7 +635,7 @@ Deno.serve(async (req: Request) => {
       ]);
     };
 
-    const candidateModels = listCandidateModels(effectiveRequestedModel, FALLBACK_MODEL_ID);
+    const candidateModels = listCandidateModels(effectiveRequestedModel, effectiveFallbackModel);
     let llmResp: unknown = null;
     let lastModelError: unknown = null;
     for (let i = 0; i < candidateModels.length; i++) {
@@ -719,10 +749,6 @@ Deno.serve(async (req: Request) => {
 
   // RUNTIME LINEAGE EVIDENCE (fire-and-forget)
   try {
-    const db = createClient(
-      Deno.env.get("SUPABASE_URL") || "",
-      Deno.env.get("SUPABASE_SERVICE_ROLE_KEY") || "",
-    );
     const lineageEdges: { from: string; to: string; type: string }[] = [
       { from: "edge:audit-attribution-reviewer", to: "edge:audit-attribution", type: "called_by" },
     ];
@@ -742,6 +768,7 @@ Deno.serve(async (req: Request) => {
       function_slug: FUNCTION_SLUG,
       version: FUNCTION_VERSION,
       model_id: usedModelId,
+      model_source: modelConfigSource,
       reviewer_model_override: requestedOverride || null,
       prompt_version: PROMPT_VERSION,
       source: auth.source || null,

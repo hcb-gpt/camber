@@ -13,10 +13,12 @@ import "jsr:@supabase/functions-js/edge-runtime.d.ts";
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
 import { authErrorResponse, requireEdgeSecret } from "../_shared/auth.ts";
 import { parseLlmJson } from "../_shared/llm_json.ts";
+import { getModelConfigCached } from "../_shared/model_config.ts";
 
 const FUNCTION_VERSION = "v0.1.0";
-const MODEL_ID = "gpt-4o";
-const MAX_TOKENS = 1024;
+const DEFAULT_MODEL_ID = Deno.env.get("DECISION_AUDITOR_MODEL") || "gpt-4o";
+const DEFAULT_MAX_TOKENS = 1024;
+const DEFAULT_TEMPERATURE = 0;
 
 // Budget caps
 const MAX_TOOL_CALLS = 4;
@@ -232,6 +234,12 @@ Deno.serve(async (req: Request) => {
     Deno.env.get("SUPABASE_URL")!,
     Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!,
   );
+  const modelConfig = await getModelConfigCached(db, {
+    functionName: "decision-auditor",
+    modelId: DEFAULT_MODEL_ID,
+    maxTokens: DEFAULT_MAX_TOKENS,
+    temperature: DEFAULT_TEMPERATURE,
+  });
 
   const openaiKey = Deno.env.get("OPENAI_API_KEY");
   if (!openaiKey) {
@@ -299,8 +307,9 @@ Deno.serve(async (req: Request) => {
         "Authorization": `Bearer ${openaiKey}`,
       },
       body: JSON.stringify({
-        model: MODEL_ID,
-        max_tokens: MAX_TOKENS,
+        model: modelConfig.modelId,
+        max_tokens: modelConfig.maxTokens,
+        temperature: modelConfig.temperature,
         messages: [
           { role: "system", content: AUDITOR_SYSTEM_PROMPT },
           { role: "user", content: userPrompt },
@@ -327,7 +336,7 @@ Deno.serve(async (req: Request) => {
     const auditReport: AuditReport = {
       span_id,
       auditor_version: FUNCTION_VERSION,
-      auditor_model: MODEL_ID,
+      auditor_model: modelConfig.modelId,
       verdict,
       reason_code: parsed.reason_code || undefined,
       reason_detail: (parsed.reason_detail || "").slice(0, 200) || undefined,

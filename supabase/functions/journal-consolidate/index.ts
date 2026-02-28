@@ -15,11 +15,13 @@
  */
 import "jsr:@supabase/functions-js/edge-runtime.d.ts";
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
+import { getModelConfigCached } from "../_shared/model_config.ts";
 
 const FUNCTION_VERSION = "v1.0.3";
 const PROMPT_VERSION = "journal-consolidate-v1";
 const MAX_TOKENS = 4096;
 const DEFAULT_MODEL = "gpt-4o";
+const DEFAULT_TEMPERATURE = 0;
 const DEFAULT_TIMEOUT_MS = 60000;
 const MAX_CLAIMS_PER_BATCH = 20;
 const MAX_EXISTING_CLAIMS_CONTEXT = 100;
@@ -200,6 +202,13 @@ Deno.serve(async (req: Request) => {
   let run_id = "";
 
   try {
+    const modelConfig = await getModelConfigCached(db, {
+      functionName: "journal-consolidate",
+      modelId: model,
+      maxTokens: MAX_TOKENS,
+      temperature: DEFAULT_TEMPERATURE,
+    });
+
     let newClaims: any[] = [];
     let project_id: string | null = body.project_id || null;
 
@@ -270,7 +279,8 @@ Deno.serve(async (req: Request) => {
         project_id,
         status: "running",
         config: {
-          model,
+          model: modelConfig.modelId,
+          model_source: modelConfig.source,
           prompt_version: PROMPT_VERSION,
           function_version: FUNCTION_VERSION,
           mode: "consolidate",
@@ -306,9 +316,9 @@ If there are no existing claims, mark everything as "new" with confidence 1.0.`;
           "Authorization": `Bearer ${openaiKey}`,
         },
         body: JSON.stringify({
-          model,
-          max_tokens: MAX_TOKENS,
-          temperature: 0,
+          model: modelConfig.modelId,
+          max_tokens: modelConfig.maxTokens,
+          temperature: modelConfig.temperature,
           messages: [
             { role: "system", content: SYSTEM_PROMPT },
             { role: "user", content: userPrompt },
@@ -499,7 +509,8 @@ If there are no existing claims, mark everything as "new" with confidence 1.0.`;
         cross_project_signals: result.cross_project_signals.length,
         promotion_result: dry_run ? null : promotion_result,
         raw_judgments: dry_run ? result.judgments : undefined,
-        model,
+        model: modelConfig.modelId,
+        model_source: modelConfig.source,
         tokens_used,
         inference_ms,
         dry_run,

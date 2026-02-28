@@ -12,11 +12,13 @@
  */
 import "jsr:@supabase/functions-js/edge-runtime.d.ts";
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
+import { getModelConfigCached } from "../_shared/model_config.ts";
 
 const GENERATE_SUMMARY_VERSION = "v1.0.2";
 const PROMPT_VERSION = "generate-summary-v1";
-const MODEL_ID = Deno.env.get("GENERATE_SUMMARY_MODEL") || "gpt-4o-mini";
-const MAX_TOKENS = 1400;
+const DEFAULT_MODEL_ID = Deno.env.get("GENERATE_SUMMARY_MODEL") || "gpt-4o-mini";
+const DEFAULT_MAX_TOKENS = 1400;
+const DEFAULT_TEMPERATURE = 0;
 const MAX_TRANSCRIPT_CHARS = 12000;
 const MAX_SPAN_CHARS = 700;
 const MAX_PROMPT_SPANS = 20;
@@ -340,7 +342,10 @@ const SYSTEM_PROMPT = `You are a call summarization assistant for a construction
   `- span_index_hint (integer if clear, else null)\n` +
   `Do not invent facts that are absent from transcript evidence.`;
 
-async function callLlm(userPrompt: string): Promise<
+async function callLlm(
+  userPrompt: string,
+  modelConfig: { modelId: string; maxTokens: number; temperature: number },
+): Promise<
   { output: ModelOutput; tokensUsed: number; parseMode: "strict_json" | "fallback_summary"; parseError: string | null }
 > {
   const openaiKey = Deno.env.get("OPENAI_API_KEY");
@@ -355,9 +360,9 @@ async function callLlm(userPrompt: string): Promise<
       "Authorization": `Bearer ${openaiKey}`,
     },
     body: JSON.stringify({
-      model: MODEL_ID,
-      max_tokens: MAX_TOKENS,
-      temperature: 0,
+      model: modelConfig.modelId,
+      max_tokens: modelConfig.maxTokens,
+      temperature: modelConfig.temperature,
       messages: [
         { role: "system", content: SYSTEM_PROMPT },
         { role: "user", content: userPrompt },
@@ -446,6 +451,12 @@ Deno.serve(async (req: Request) => {
     Deno.env.get("SUPABASE_URL")!,
     Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!,
   );
+  let modelConfig: { modelId: string; maxTokens: number; temperature: number; source: "pipeline_model_config" | "default" } = {
+    modelId: DEFAULT_MODEL_ID,
+    maxTokens: DEFAULT_MAX_TOKENS,
+    temperature: DEFAULT_TEMPERATURE,
+    source: "default",
+  };
 
   let auditId: number | null = null;
   try {
@@ -469,6 +480,13 @@ Deno.serve(async (req: Request) => {
   }
 
   try {
+    modelConfig = await getModelConfigCached(db, {
+      functionName: "generate-summary",
+      modelId: DEFAULT_MODEL_ID,
+      maxTokens: DEFAULT_MAX_TOKENS,
+      temperature: DEFAULT_TEMPERATURE,
+    });
+
     const { data: interaction, error: interactionErr } = await db
       .from("interactions")
       .select(
@@ -581,13 +599,14 @@ Deno.serve(async (req: Request) => {
       attributionsBySpan,
     });
 
-    const { output, tokensUsed, parseMode, parseError } = await callLlm(prompt);
+    const { output, tokensUsed, parseMode, parseError } = await callLlm(prompt, modelConfig);
     if (parseMode === "fallback_summary") {
       await logDiagnostic("MODEL_PARSE_ERROR", {
         interaction_id: interactionId,
         parse_mode: parseMode,
         parse_error: parseError,
-        model_id: MODEL_ID,
+        model_id: modelConfig.modelId,
+        model_source: modelConfig.source,
         prompt_version: PROMPT_VERSION,
         summary_chars: output.human_summary.length,
       }, "warning");
@@ -638,7 +657,8 @@ Deno.serve(async (req: Request) => {
         ok: true,
         version: GENERATE_SUMMARY_VERSION,
         prompt_version: PROMPT_VERSION,
-        model_id: MODEL_ID,
+        model_id: modelConfig.modelId,
+        model_source: modelConfig.source,
         interaction_id: interactionId,
         dry_run: dryRun,
         summary_chars: output.human_summary.length,
@@ -652,7 +672,8 @@ Deno.serve(async (req: Request) => {
     await logDiagnostic("PIPELINE_ERROR", {
       interaction_id: interactionId,
       error: truncate(e?.message || "unknown_error", 600),
-      model_id: MODEL_ID,
+      model_id: modelConfig.modelId,
+      model_source: modelConfig.source,
       prompt_version: PROMPT_VERSION,
       ms: Date.now() - t0,
     });

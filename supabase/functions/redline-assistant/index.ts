@@ -1,7 +1,11 @@
 import "jsr:@supabase/functions-js/edge-runtime.d.ts";
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
+import { getModelConfigCached } from "../_shared/model_config.ts";
 
 const _FUNCTION_VERSION = "redline-assistant_v0.2.0";
+const DEFAULT_MODEL_ID = Deno.env.get("REDLINE_ASSISTANT_MODEL") || "gpt-4o";
+const DEFAULT_MAX_TOKENS = Number(Deno.env.get("REDLINE_ASSISTANT_MAX_TOKENS") || "1400");
+const DEFAULT_TEMPERATURE = Number(Deno.env.get("REDLINE_ASSISTANT_TEMPERATURE") || "0.2");
 
 function corsHeaders(): Record<string, string> {
   return {
@@ -22,7 +26,7 @@ Deno.serve(async (req) => {
     const openaiKey = Deno.env.get("OPENAI_API_KEY")!;
     const db = createClient(supabaseUrl, supabaseKey);
 
-    const { message, contact_id, project_id, model = "gpt-4o" } = await req.json();
+    const { message, contact_id, project_id, model: requestedModel } = await req.json();
 
     if (!message) {
       return new Response(JSON.stringify({ error: "message_required" }), {
@@ -104,6 +108,16 @@ Deno.serve(async (req) => {
 
     await Promise.all(promises);
 
+    const modelConfig = await getModelConfigCached(db, {
+      functionName: "redline-assistant",
+      modelId: DEFAULT_MODEL_ID,
+      maxTokens: DEFAULT_MAX_TOKENS,
+      temperature: DEFAULT_TEMPERATURE,
+    });
+    const runtimeModelId = typeof requestedModel === "string" && requestedModel.trim().length > 0
+      ? requestedModel.trim()
+      : modelConfig.modelId;
+
     // 2. Build Prompt
     const systemPrompt =
       `You are the HCB Redline Assistant. You help Chad (CTO) and Zack (GC) understand what's going on in their construction projects.
@@ -119,7 +133,9 @@ ${JSON.stringify(context, null, 2)}
 
     // 3. Call OpenAI (Streaming)
     const openaiBody = {
-      model: model,
+      model: runtimeModelId,
+      max_tokens: modelConfig.maxTokens,
+      temperature: modelConfig.temperature,
       messages: [
         { role: "system", content: systemPrompt },
         { role: "user", content: message },
