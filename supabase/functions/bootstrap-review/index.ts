@@ -499,7 +499,7 @@ async function handleDismiss(
     return json({ ok: false, error_code: "invalid_json" }, 400);
   }
 
-  const { review_queue_id, user_id, source } = body;
+  const { review_queue_id, user_id, source, reason, notes } = body;
 
   if (!review_queue_id || !isValidUUID(review_queue_id)) {
     return json({ ok: false, error_code: "missing_review_queue_id" }, 400);
@@ -508,6 +508,10 @@ async function handleDismiss(
   const writeSource = normalizeReviewQueueSource(source, "pipeline");
   await tagReviewQueueSource(db, review_queue_id, writeSource, "bootstrap-review:dismiss");
 
+  const trimmedReason = typeof reason === "string" ? reason.trim() : "";
+  const trimmedNotes = typeof notes === "string" ? notes.trim() : "";
+  const resolutionNotes = [trimmedReason, trimmedNotes].filter(Boolean).join(" | ") || null;
+
   const { error } = await db
     .from("review_queue")
     .update({
@@ -515,6 +519,7 @@ async function handleDismiss(
       resolved_at: new Date().toISOString(),
       resolved_by: user_id || "chad_bootstrap",
       resolution_action: "manual_reject",
+      resolution_notes: resolutionNotes,
     })
     .eq("id", review_queue_id)
     .eq("status", "pending");

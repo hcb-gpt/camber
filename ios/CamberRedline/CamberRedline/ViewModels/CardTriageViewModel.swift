@@ -87,7 +87,7 @@ final class CardTriageViewModel {
 
     // MARK: - Actions
 
-    func resolve(_ card: CardItem, to projectId: String) async {
+    func resolve(_ card: CardItem, to projectId: String, notes: String? = nil) async {
         guard let idx = queue.firstIndex(where: { $0.id == card.id }) else { return }
         queue.remove(at: idx)
         resolvedCount += 1
@@ -102,7 +102,7 @@ final class CardTriageViewModel {
         startUndoTimer()
 
         do {
-            _ = try await service.resolve(queueId: card.queueId, projectId: projectId)
+            _ = try await service.resolve(queueId: card.queueId, projectId: projectId, notes: notes)
         } catch {
             self.error = error.localizedDescription
             // Re-insert card on failure
@@ -124,7 +124,7 @@ final class CardTriageViewModel {
         }
     }
 
-    func dismiss(_ card: CardItem) async {
+    func dismiss(_ card: CardItem, reason: String? = nil, notes: String? = nil) async {
         guard let idx = queue.firstIndex(where: { $0.id == card.id }) else { return }
         queue.remove(at: idx)
         resolvedCount += 1
@@ -139,7 +139,7 @@ final class CardTriageViewModel {
         startUndoTimer()
 
         do {
-            try await service.dismiss(queueId: card.queueId)
+            try await service.dismiss(queueId: card.queueId, reason: reason, notes: notes)
         } catch {
             self.error = error.localizedDescription
             queue.insert(
@@ -162,6 +162,10 @@ final class CardTriageViewModel {
         if queue.count < 5 {
             await prefetchMore()
         }
+    }
+
+    func dismissUndecided(_ card: CardItem, notes: String? = nil) async {
+        await dismiss(card, reason: "undecided", notes: notes)
     }
 
     func undo() async {

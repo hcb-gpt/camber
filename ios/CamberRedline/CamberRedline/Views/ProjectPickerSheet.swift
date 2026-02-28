@@ -7,6 +7,7 @@ struct ProjectPickerSheet: View {
     let projects: [ReviewProject]
     let onSelect: (String) -> Void
     let onDismissItem: () -> Void
+    var showsDismissAction: Bool = true
 
     @State private var searchText = ""
 
@@ -41,12 +42,14 @@ struct ProjectPickerSheet: View {
                     Text("Pick a project")
                 }
 
-                Section {
-                    Button(role: .destructive) {
-                        dismiss()
-                        onDismissItem()
-                    } label: {
-                        Label("Dismiss this item", systemImage: "xmark.circle")
+                if showsDismissAction {
+                    Section {
+                        Button(role: .destructive) {
+                            dismiss()
+                            onDismissItem()
+                        } label: {
+                            Label("Dismiss this item", systemImage: "xmark.circle")
+                        }
                     }
                 }
             }
