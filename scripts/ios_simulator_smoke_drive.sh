@@ -1,7 +1,16 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+# Some environments expose CoreSimulator reliably only from zsh.
+# Re-exec once so this script stays runnable from `./script.sh`.
+if [[ -n "${BASH_VERSION:-}" ]] \
+  && [[ "${CAMBER_SMOKE_FORCE_BASH:-0}" != "1" ]] \
+  && command -v zsh >/dev/null 2>&1; then
+  exec zsh "$0" "$@"
+fi
+
+SCRIPT_PATH="${BASH_SOURCE:-$0}"
+ROOT_DIR="$(cd "$(dirname "${SCRIPT_PATH}")/.." && pwd)"
 IOS_DIR="${ROOT_DIR}/ios/CamberRedline"
 BUNDLE_ID="com.heartwoodcustombuilders.CamberRedline"
 STAMP="$(date -u +%Y%m%dT%H%M%SZ)"
@@ -14,22 +23,38 @@ mkdir -p "${SCREEN_DIR}"
 # Use a local HOME only for simctl commands.
 SIMCTL_HOME="${ROOT_DIR}/.simctl-home"
 mkdir -p "${SIMCTL_HOME}/Library/Logs/CoreSimulator"
+USE_SANDBOX_HOME=1
 
 simctl() {
-  HOME="${SIMCTL_HOME}" xcrun simctl "$@"
+  if [[ "${USE_SANDBOX_HOME}" == "1" ]]; then
+    HOME="${SIMCTL_HOME}" xcrun simctl "$@"
+    return
+  fi
+  xcrun simctl "$@"
 }
 
 wait_for_simctl() {
-  local max_tries=8
+  local max_tries=20
   local try
+  open -a Simulator >/dev/null 2>&1 || true
   for try in $(seq 1 "${max_tries}"); do
     if simctl list devices >/dev/null 2>&1; then
+      return 0
+    fi
+    # False-negative guard: local HOME probe can fail even when default xcrun works.
+    if [[ "${USE_SANDBOX_HOME}" == "1" ]] && xcrun simctl list devices >/dev/null 2>&1; then
+      USE_SANDBOX_HOME=0
+      echo "[smoke] simctl fallback: using default HOME"
       return 0
     fi
     echo "[smoke] waiting for CoreSimulatorService (${try}/${max_tries})"
     open -a Simulator >/dev/null 2>&1 || true
     sleep 2
   done
+  # One final probe after startup loop to avoid near-threshold false negatives.
+  if simctl list devices >/dev/null 2>&1 || xcrun simctl list devices >/dev/null 2>&1; then
+    return 0
+  fi
   return 1
 }
 
