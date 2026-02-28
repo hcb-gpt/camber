@@ -315,14 +315,24 @@ struct AttributionTriageCardsView: View {
             try? await Task.sleep(for: .seconds(1))
         }
 
-        let steps = min(4, viewModel.queue.count)
+        let steps = min(6, viewModel.queue.count)
         for index in 0..<steps {
             guard let card = viewModel.queue.first else { break }
 
-            if index.isMultiple(of: 2), let projectId = card.projectId {
-                TriageSmokeAutomation.logger.log("SMOKE_EVENT TRIAGE_RESOLVE queue=\(card.queueId, privacy: .public) project=\(projectId, privacy: .public)")
-                await viewModel.resolve(card, to: projectId)
-            } else {
+            switch index % 4 {
+            case 0 where card.projectId != nil:
+                TriageSmokeAutomation.logger.log("SMOKE_EVENT TRIAGE_RESOLVE queue=\(card.queueId, privacy: .public) project=\(card.projectId!, privacy: .public)")
+                await viewModel.resolve(card, to: card.projectId!)
+            case 1:
+                TriageSmokeAutomation.logger.log("SMOKE_EVENT TRIAGE_DISMISS queue=\(card.queueId, privacy: .public)")
+                await viewModel.dismiss(card)
+            case 2:
+                TriageSmokeAutomation.logger.log("SMOKE_EVENT TRIAGE_UNDECIDED queue=\(card.queueId, privacy: .public)")
+                await viewModel.dismissUndecided(card)
+            case 3:
+                TriageSmokeAutomation.logger.log("SMOKE_EVENT TRIAGE_COMMENT queue=\(card.queueId, privacy: .public)")
+                await viewModel.resolve(card, to: card.projectId ?? "", notes: "smoke-comment")
+            default:
                 TriageSmokeAutomation.logger.log("SMOKE_EVENT TRIAGE_DISMISS queue=\(card.queueId, privacy: .public)")
                 await viewModel.dismiss(card)
             }
@@ -445,6 +455,20 @@ private struct SwipeableTriageCard: View {
                 swipeLabel("YES", icon: "checkmark", color: .yesGreen)
                     .padding(16)
                     .opacity(min(1, Double(offset.width - 40) / 60))
+            }
+        }
+        .overlay(alignment: .top) {
+            if offset.height < -40 {
+                swipeLabel("UNDECIDED", icon: "arrow.up", color: .undoAmber)
+                    .padding(.top, 16)
+                    .opacity(min(1, Double(-offset.height - 40) / 60))
+            }
+        }
+        .overlay(alignment: .bottom) {
+            if offset.height > 40 {
+                swipeLabel("COMMENT", icon: "text.bubble", color: .commentBlue)
+                    .padding(.bottom, 16)
+                    .opacity(min(1, Double(offset.height - 40) / 60))
             }
         }
         .offset(x: offset.width, y: offset.height)
