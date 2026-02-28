@@ -186,6 +186,7 @@ async function fetchGroundedContext(
   db: SupabaseClient,
 ): Promise<{
   payload: Record<string, unknown> | null;
+  source: "rpc" | "projects_fallback";
   error: string | null;
 }> {
   try {
@@ -199,19 +200,60 @@ async function fetchGroundedContext(
 
     if (error) {
       console.warn(
-        `[redline-assistant] assistant_context_v1 RPC failed: ${error.message}`,
+        `[redline-assistant] assistant_context_v1 RPC failed: ${error.message}. Falling back to projects table.`,
       );
-      return { payload: null, error: error.message };
+      return await fetchProjectsFallback(db, error.message);
     }
 
     return {
       payload: data as Record<string, unknown>,
+      source: "rpc",
       error: null,
     };
   } catch (err: unknown) {
     const msg = err instanceof Error ? err.message : "rpc_unknown_error";
-    console.warn(`[redline-assistant] assistant_context_v1 RPC exception: ${msg}`);
-    return { payload: null, error: msg };
+    console.warn(`[redline-assistant] assistant_context_v1 RPC exception: ${msg}. Falling back to projects table.`);
+    return await fetchProjectsFallback(db, msg);
+  }
+}
+
+async function fetchProjectsFallback(
+  db: SupabaseClient,
+  rpcError: string,
+): Promise<{
+  payload: Record<string, unknown> | null;
+  source: "projects_fallback";
+  error: string | null;
+}> {
+  try {
+    const { data: projectRows, error } = await db
+      .from("projects")
+      .select("id, name, status")
+      .order("updated_at", { ascending: false, nullsFirst: false })
+      .limit(100);
+
+    if (error || !Array.isArray(projectRows)) {
+      return { payload: null, source: "projects_fallback", error: `rpc: ${rpcError}; fallback: ${error?.message ?? "no_data"}` };
+    }
+
+    return {
+      payload: {
+        packet_version: "projects_fallback_v1",
+        generated_at_utc: new Date().toISOString(),
+        projects_roster: projectRows.map((r: Record<string, unknown>) => ({
+          id: r.id,
+          name: r.name ?? "Unknown Project",
+          status: r.status ?? null,
+        })),
+        project_recent_highlights: [],
+        contact_project_candidates: [],
+      },
+      source: "projects_fallback",
+      error: `rpc_unavailable: ${rpcError}`,
+    };
+  } catch (fallbackErr: unknown) {
+    const msg = fallbackErr instanceof Error ? fallbackErr.message : "fallback_error";
+    return { payload: null, source: "projects_fallback", error: `rpc: ${rpcError}; fallback: ${msg}` };
   }
 }
 
@@ -376,7 +418,7 @@ Deno.serve(async (req: Request): Promise<Response> => {
       contract_version: CONTRACT_VERSION,
       packet_version: toStringOrNull(groundedPayload?.packet_version) ?? CONTRACT_VERSION,
       generated_at_utc: groundedPayload?.generated_at_utc ?? null,
-      grounded_source: groundedResult.error ? "fallback" : "assistant_context_v1_rpc",
+      grounded_source: groundedResult.source === "rpc" ? "assistant_context_v1_rpc" : "projects_fallback",
       grounded_error: groundedResult.error,
       message_scope: {
         contact_id: contactId,
