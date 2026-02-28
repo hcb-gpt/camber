@@ -1,7 +1,52 @@
 import "jsr:@supabase/functions-js/edge-runtime.d.ts";
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
 
-const FUNCTION_VERSION = "assistant-context_v1.1.0";
+const FUNCTION_VERSION = "assistant-context_v1.2.0";
+const METRIC_CONTRACT_VERSION = "assistant_context_metric_contract_v3";
+
+const TOP_PROJECT_METRIC_FIELDS = [
+  "interactions_7d",
+  "active_journal_claims_total",
+  "active_journal_claims_7d",
+  "open_loops_total",
+  "open_loops_7d",
+  "pending_reviews_span_total",
+  "pending_reviews_queue_total",
+  "pending_reviews_queue_7d",
+];
+
+const TOP_PROJECT_REMOVED_ALIASES = [
+  "active_journal_claims",
+  "open_loops",
+  "pending_reviews",
+];
+
+const PROJECT_FEED_SELECT_COLUMNS = [
+  "project_id",
+  "project_name",
+  "phase",
+  "interactions_7d",
+  "active_journal_claims_total",
+  "active_journal_claims_7d",
+  "open_loops_total",
+  "open_loops_7d",
+  "pending_reviews_span_total",
+  "pending_reviews_queue_total",
+  "pending_reviews_queue_7d",
+  "striking_signal_count",
+  "risk_flag",
+];
+
+const PROJECT_CONTEXT_SELECT_COLUMNS = [
+  ...PROJECT_FEED_SELECT_COLUMNS,
+  "project_status",
+  "client_name",
+  "total_interactions",
+  "last_interaction_at",
+  "promoted_claims",
+  "last_promoted_at",
+  "last_striking_at",
+];
 
 function corsHeaders(): Record<string, string> {
   return {
@@ -11,10 +56,14 @@ function corsHeaders(): Record<string, string> {
   };
 }
 
-function json(data: unknown, status = 200): Response {
+function json(data: unknown, status = 200, requestId?: string): Response {
   return new Response(JSON.stringify(data), {
     status,
-    headers: { "Content-Type": "application/json", ...corsHeaders() },
+    headers: {
+      "Content-Type": "application/json",
+      ...(requestId ? { "x-request-id": requestId } : {}),
+      ...corsHeaders(),
+    },
   });
 }
 
@@ -23,12 +72,52 @@ function asNumber(value: unknown): number {
   return Number.isFinite(num) ? num : 0;
 }
 
+function asNullableString(value: unknown): string | null {
+  return typeof value === "string" ? value : null;
+}
+
+function normalizeProjectFeedRow(
+  row: Record<string, unknown>,
+): Record<string, unknown> {
+  return {
+    project_id: asNullableString(row.project_id),
+    project_name: asNullableString(row.project_name),
+    phase: asNullableString(row.phase),
+    interactions_7d: asNumber(row.interactions_7d),
+    active_journal_claims_total: asNumber(row.active_journal_claims_total),
+    active_journal_claims_7d: asNumber(row.active_journal_claims_7d),
+    open_loops_total: asNumber(row.open_loops_total),
+    open_loops_7d: asNumber(row.open_loops_7d),
+    pending_reviews_span_total: asNumber(row.pending_reviews_span_total),
+    pending_reviews_queue_total: asNumber(row.pending_reviews_queue_total),
+    pending_reviews_queue_7d: asNumber(row.pending_reviews_queue_7d),
+    striking_signal_count: asNumber(row.striking_signal_count),
+    risk_flag: asNullableString(row.risk_flag),
+  };
+}
+
+function normalizeProjectContextRow(
+  row: Record<string, unknown>,
+): Record<string, unknown> {
+  return {
+    ...normalizeProjectFeedRow(row),
+    project_status: asNullableString(row.project_status),
+    client_name: asNullableString(row.client_name),
+    total_interactions: asNumber(row.total_interactions),
+    last_interaction_at: asNullableString(row.last_interaction_at),
+    promoted_claims: asNumber(row.promoted_claims),
+    last_promoted_at: asNullableString(row.last_promoted_at),
+    last_striking_at: asNullableString(row.last_striking_at),
+  };
+}
+
 Deno.serve(async (req: Request): Promise<Response> => {
   if (req.method === "OPTIONS") {
     return new Response(null, { status: 204, headers: corsHeaders() });
   }
+  const requestId = req.headers.get("x-request-id") ?? crypto.randomUUID();
   if (req.method !== "GET") {
-    return json({ ok: false, error: "Method not allowed" }, 405);
+    return json({ ok: false, error: "Method not allowed", request_id: requestId }, 405, requestId);
   }
 
   const t0 = Date.now();
@@ -53,23 +142,7 @@ Deno.serve(async (req: Request): Promise<Response> => {
     // 2. Top active projects (by 7-day interactions)
     const { data: projectFeedRaw } = await sb
       .from("v_project_feed")
-      .select(
-        [
-          "project_id",
-          "project_name",
-          "phase",
-          "interactions_7d",
-          "active_journal_claims_total",
-          "active_journal_claims_7d",
-          "open_loops_total",
-          "open_loops_7d",
-          "pending_reviews_span_total",
-          "pending_reviews_queue_total",
-          "pending_reviews_queue_7d",
-          "striking_signal_count",
-          "risk_flag",
-        ].join(", "),
-      )
+      .select(PROJECT_FEED_SELECT_COLUMNS.join(", "))
       .order("interactions_7d", { ascending: false })
       .limit(limit);
 
@@ -113,7 +186,7 @@ Deno.serve(async (req: Request): Promise<Response> => {
     if (projectId) {
       const { data: proj } = await sb
         .from("v_project_feed")
-        .select("*")
+        .select(PROJECT_CONTEXT_SELECT_COLUMNS.join(", "))
         .eq("project_id", projectId)
         .maybeSingle();
 
@@ -133,7 +206,7 @@ Deno.serve(async (req: Request): Promise<Response> => {
         .maybeSingle();
 
       projectContext = {
-        project: proj,
+        project: proj ? normalizeProjectContextRow(proj as unknown as Record<string, unknown>) : null,
         recent_timeline: timeline ?? [],
         intelligence: intel,
       };
@@ -143,27 +216,25 @@ Deno.serve(async (req: Request): Promise<Response> => {
       ? (projectFeedRaw as unknown as Array<Record<string, unknown>>)
       : [];
 
-    const projectFeed = projectFeedRows.map((row) => ({
-      ...row,
-      // Backward-compatible display aliases now explicitly 7d-windowed.
-      active_journal_claims: asNumber(row.active_journal_claims_7d),
-      open_loops: asNumber(row.open_loops_7d),
-      pending_reviews: asNumber(row.pending_reviews_queue_7d),
-    }));
+    const projectFeed = projectFeedRows.map((row) => normalizeProjectFeedRow(row));
 
     const packet = {
       ok: true,
+      request_id: requestId,
       generated_at: new Date().toISOString(),
       function_version: FUNCTION_VERSION,
+      contract_version: METRIC_CONTRACT_VERSION,
       metric_contract: {
-        version: "assistant_context_metric_contract_v2",
+        version: METRIC_CONTRACT_VERSION,
         top_projects: {
-          calls: "interactions_7d",
-          claims_display: "active_journal_claims_7d",
-          loops_display: "open_loops_7d",
-          reviews_display: "pending_reviews_queue_7d",
-          reviews_span_total: "pending_reviews_span_total",
-          reviews_queue_total: "pending_reviews_queue_total",
+          explicit_metric_fields: TOP_PROJECT_METRIC_FIELDS,
+          preferred_display_fields_7d: [
+            "interactions_7d",
+            "active_journal_claims_7d",
+            "open_loops_7d",
+            "pending_reviews_queue_7d",
+          ],
+          removed_ambiguous_aliases: TOP_PROJECT_REMOVED_ALIASES,
         },
       },
       pipeline_health: pipelineHealth ?? [],
@@ -179,12 +250,19 @@ Deno.serve(async (req: Request): Promise<Response> => {
       ms: Date.now() - t0,
     };
 
-    return json(packet);
+    return json(packet, 200, requestId);
   } catch (err: unknown) {
     const msg = err instanceof Error ? err.message : String(err);
     return json(
-      { ok: false, error: msg, function_version: FUNCTION_VERSION },
+      {
+        ok: false,
+        error: msg,
+        request_id: requestId,
+        function_version: FUNCTION_VERSION,
+        contract_version: METRIC_CONTRACT_VERSION,
+      },
       500,
+      requestId,
     );
   }
 });
