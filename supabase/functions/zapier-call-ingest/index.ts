@@ -1,5 +1,5 @@
 /**
- * zapier-call-ingest Edge Function v1.4.1
+ * zapier-call-ingest Edge Function v1.7.0
  *
  * Auth model (consolidated):
  * - Canonical: X-Edge-Secret === EDGE_SHARED_SECRET
@@ -7,15 +7,23 @@
  *
  * Forward: Calls process-call internally using SUPABASE_SERVICE_ROLE_KEY + X-Edge-Secret.
  *
- * @version 1.4.0
- * @date 2026-02-14
+ * v1.7.0: Recovered BESIDE_RAW_PASSTHROUGH from lost v1.6.0 deploy (Charter §10).
+ * Beside-format payloads (fromPhoneNumber/toPhoneNumber/noteUrl) are normalized
+ * and inserted directly into calls_raw with capture_source='beside_zapier'.
+ *
+ * @version 1.7.0
+ * @date 2026-02-28
  */
 import "jsr:@supabase/functions-js/edge-runtime.d.ts";
 import { createClient } from "jsr:@supabase/supabase-js@2";
 
-const VERSION = "v1.4.1";
+const VERSION = "v1.7.0";
 
-async function logDiagnostic(message: string, metadata: Record<string, any>) {
+async function logDiagnostic(
+  message: string,
+  metadata: Record<string, any>,
+  level: "error" | "info" = "error",
+) {
   try {
     const supabaseUrl = Deno.env.get("SUPABASE_URL")!;
     const serviceRoleKey = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!;
@@ -23,13 +31,49 @@ async function logDiagnostic(message: string, metadata: Record<string, any>) {
     await sb.from("diagnostic_logs").insert({
       function_name: "zapier-call-ingest",
       function_version: VERSION,
-      log_level: "error",
+      log_level: level,
       message,
       metadata,
     });
   } catch (e) {
     console.error("Failed to write diagnostic log:", e);
   }
+}
+
+/** Detect Beside-format call payloads by presence of Beside-specific fields. */
+function isBesidePayload(p: any): boolean {
+  return !!(p && (p.fromPhoneNumber || p.toPhoneNumber || p.noteUrl));
+}
+
+/** Normalize a Beside-format payload into a calls_raw insert row. */
+function besideToCallsRaw(p: any, zapierMeta: any): Record<string, any> {
+  const interactionId = p.id || p.interaction_id || `beside_${Date.now()}`;
+  const direction = String(p.direction || "").toLowerCase().includes("outbound") ? "outbound" : "inbound";
+  const isOutbound = direction === "outbound";
+
+  return {
+    interaction_id: interactionId,
+    channel: "call",
+    direction,
+    other_party_name: isOutbound ? (p.toName || null) : (p.fromName || null),
+    other_party_phone: isOutbound ? (p.toPhoneNumber || null) : (p.fromPhoneNumber || null),
+    owner_name: isOutbound ? (p.fromName || null) : (p.toName || null),
+    owner_phone: isOutbound ? (p.fromPhoneNumber || null) : (p.toPhoneNumber || null),
+    event_at_utc: p.createdAt || p.finishedAt || new Date().toISOString(),
+    summary: p.summary || p.title || null,
+    transcript: p.transcript || null,
+    recording_url: p.recordingUrl || null,
+    beside_note_url: p.noteUrl || null,
+    raw_snapshot_json: p,
+    capture_source: "beside_zapier",
+    pipeline_version: VERSION,
+    is_shadow: false,
+    ingested_at_utc: new Date().toISOString(),
+    received_at_utc: new Date().toISOString(),
+    zap_id: zapierMeta.zap_id,
+    zapier_run_id: zapierMeta.run_id,
+    zapier_zap_id: zapierMeta.zap_id,
+  };
 }
 
 Deno.serve(async (req: Request) => {
@@ -139,6 +183,52 @@ Deno.serve(async (req: Request) => {
     idempotency_key: req.headers.get("Idempotency-Key") || null,
   };
   payload._zapier_ingest_meta = zapierMeta;
+
+  // ---- BESIDE_RAW_PASSTHROUGH: detect Beside-format and insert directly ----
+  if (isBesidePayload(payload)) {
+    const supabaseUrl = Deno.env.get("SUPABASE_URL")!;
+    const serviceRoleKey = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!;
+    const sb = createClient(supabaseUrl, serviceRoleKey);
+
+    const row = besideToCallsRaw(payload, zapierMeta);
+    const { error: insertErr } = await sb.from("calls_raw").upsert(row, {
+      onConflict: "interaction_id",
+      ignoreDuplicates: true,
+    });
+
+    const fieldsReceived = Object.keys(payload).filter((k) => payload[k] != null && k !== "_zapier_ingest_meta");
+    await logDiagnostic("BESIDE_RAW_PASSTHROUGH", {
+      interaction_id: row.interaction_id,
+      fields_received: fieldsReceived,
+      insert_ok: !insertErr,
+      insert_error: insertErr?.message || null,
+    }, "info");
+
+    if (insertErr) {
+      return new Response(
+        JSON.stringify({
+          ok: false,
+          error: "beside_passthrough_insert_failed",
+          detail: insertErr.message,
+          version: VERSION,
+          ms: Date.now() - t0,
+        }),
+        { status: 500, headers: { "Content-Type": "application/json" } },
+      );
+    }
+
+    return new Response(
+      JSON.stringify({
+        ok: true,
+        path: "beside_raw_passthrough",
+        interaction_id: row.interaction_id,
+        capture_source: "beside_zapier",
+        version: VERSION,
+        ms: Date.now() - t0,
+      }),
+      { status: 200, headers: { "Content-Type": "application/json" } },
+    );
+  }
 
   // ---- Forward to process-call ----
   const supabaseUrl = Deno.env.get("SUPABASE_URL")!;
