@@ -33,13 +33,13 @@ final class AssistantViewModel: ObservableObject {
         let assistantIndex = messages.count - 1
 
         do {
-            let stream = try await BootstrapService.shared.streamAssistantChat(
+            let session = try await BootstrapService.shared.streamAssistantChat(
                 message: input,
                 contactId: contactId,
                 projectId: projectId
             )
 
-            for try await chunk in stream {
+            for try await chunk in session.stream {
                 messages[assistantIndex].content += chunk
             }
         } catch {
