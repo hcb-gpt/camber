@@ -234,7 +234,7 @@ struct AttributionTriageCardsView: View {
             return
         }
 
-        let steps = min(3, viewModel.queue.count)
+        let steps = min(5, viewModel.queue.count)
         for index in 0..<steps {
             guard let card = viewModel.queue.first else { break }
 
