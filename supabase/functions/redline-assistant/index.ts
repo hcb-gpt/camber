@@ -1,7 +1,7 @@
 import "jsr:@supabase/functions-js/edge-runtime.d.ts";
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
 
-const FUNCTION_VERSION = "redline-assistant_v0.2.0";
+const _FUNCTION_VERSION = "redline-assistant_v0.2.0";
 
 function corsHeaders(): Record<string, string> {
   return {
