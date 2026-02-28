@@ -102,6 +102,49 @@ async function batchIn<T>(
   return { data: merged, error: null };
 }
 
+async function fetchReviewQueueMetaByIds(
+  reviewQueueIds: string[],
+): Promise<Map<string, { module: string | null; reason_codes: string[] | null; reasons: string[] | null }>> {
+  const out = new Map<string, { module: string | null; reason_codes: string[] | null; reasons: string[] | null }>();
+  const uniqueIds = [...new Set(reviewQueueIds.filter((id) => id.length > 0))];
+  if (uniqueIds.length === 0) return out;
+
+  const supabaseUrl = Deno.env.get("SUPABASE_URL") || "";
+  const serviceRoleKey = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY") || "";
+  if (!supabaseUrl || !serviceRoleKey) return out;
+
+  const chunkSize = 100;
+  for (let start = 0; start < uniqueIds.length; start += chunkSize) {
+    const chunk = uniqueIds.slice(start, start + chunkSize);
+    const inClause = `(${chunk.join(",")})`;
+    const endpoint = `${supabaseUrl}/rest/v1/review_queue?select=id,module,reason_codes,reasons&id=in.${encodeURIComponent(inClause)}`;
+    const resp = await fetch(endpoint, {
+      method: "GET",
+      headers: {
+        "apikey": serviceRoleKey,
+        "Authorization": `Bearer ${serviceRoleKey}`,
+        "Accept": "application/json",
+      },
+    });
+    if (!resp.ok) continue;
+    const rows = await resp.json();
+    if (!Array.isArray(rows)) continue;
+    for (const row of rows) {
+      const id = String(row?.id || "");
+      if (!id) continue;
+      const reasonCodes = Array.isArray(row?.reason_codes) ? row.reason_codes.filter(Boolean) : null;
+      const reasons = Array.isArray(row?.reasons) ? row.reasons.filter(Boolean) : null;
+      out.set(id, {
+        module: String(row?.module || "").trim() || null,
+        reason_codes: reasonCodes && reasonCodes.length > 0 ? reasonCodes : null,
+        reasons: reasons && reasons.length > 0 ? reasons : null,
+      });
+    }
+  }
+
+  return out;
+}
+
 // deduplicate spans by transcript content (>80% overlap = dupe)
 function overlapRatio(a: string, b: string): number {
   if (!a || !b) return 0;
@@ -744,7 +787,7 @@ async function handleTriageQueue(db: any, url: URL, t0: number): Promise<Respons
       Promise.all([
         db
           .from("review_queue")
-          .select("id, span_id, interaction_id, created_at")
+          .select("id, span_id, interaction_id, created_at, module, reason_codes, reasons")
           .eq("status", "pending")
           .order("created_at", { ascending: true, nullsFirst: false })
           .limit(limit),
@@ -870,6 +913,9 @@ async function handleTriageQueue(db: any, url: URL, t0: number): Promise<Respons
   const projectNameById = new Map(
     (projectRows || []).map((row: any) => [String(row?.id || ""), String(row?.name || "")]),
   );
+  const reviewQueueMetaById = await fetchReviewQueueMetaByIds(
+    queueRows.map((row: any) => String(row?.id || "")).filter(Boolean),
+  );
 
   const items = queueRows.map((row: any) => {
     const spanId = String(row?.span_id || "");
@@ -881,12 +927,24 @@ async function handleTriageQueue(db: any, url: URL, t0: number): Promise<Respons
     const confidence = Number(attr?.confidence);
     const transcriptSnippet = String(span?.transcript_segment || "").trim();
 
+    const meta = reviewQueueMetaById.get(String(row?.id || ""));
+    const reasonCodes = Array.isArray(row?.reason_codes) && row.reason_codes.length > 0
+      ? row.reason_codes.filter(Boolean)
+      : (meta?.reason_codes || []);
+    const reasons = Array.isArray(row?.reasons) && row.reasons.length > 0
+      ? row.reasons.filter(Boolean)
+      : (meta?.reasons || []);
+    const moduleName = String(row?.module || "").trim() || meta?.module || null;
+    const firstReason = String(reasonCodes[0] || reasons[0] || "").trim();
+
     return {
       review_queue_id: row.id,
       span_id: spanId || null,
       interaction_id: interactionId || null,
-      reason: null,
-      module: null,
+      reason: firstReason || null,
+      reason_codes: reasonCodes.length > 0 ? reasonCodes : null,
+      reasons: reasons.length > 0 ? reasons : null,
+      module: moduleName,
       created_at: row?.created_at || null,
       contact_id: interaction?.contact_id || null,
       contact_name: interaction?.contact_name || "Unknown contact",
