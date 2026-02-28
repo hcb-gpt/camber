@@ -514,7 +514,7 @@ async function handleDismiss(
       status: "dismissed",
       resolved_at: new Date().toISOString(),
       resolved_by: user_id || "chad_bootstrap",
-      resolution_action: "dismissed",
+      resolution_action: "manual_reject",
     })
     .eq("id", review_queue_id)
     .eq("status", "pending");
