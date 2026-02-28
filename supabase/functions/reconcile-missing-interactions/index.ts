@@ -1,7 +1,7 @@
 import "jsr:@supabase/functions-js/edge-runtime.d.ts";
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
 
-const FUNCTION_VERSION = "reconcile-missing-interactions_v1.0.0";
+const FUNCTION_VERSION = "reconcile-missing-interactions_v1.1.0";
 const CONTRACT_VERSION = "reconcile-missing-interactions_contract_v1";
 
 function corsHeaders(): Record<string, string> {
@@ -38,6 +38,12 @@ function clampLimit(value: unknown): number {
 }
 
 type ReconcileResult = {
+  scanned_count: number;
+  inserted_count: number;
+  inserted_interaction_ids: string[];
+};
+
+type SeedCallsRawResult = {
   scanned_count: number;
   inserted_count: number;
   inserted_interaction_ids: string[];
@@ -154,6 +160,17 @@ Deno.serve(async (req: Request): Promise<Response> => {
     }, requestId, 200);
   }
 
+  const { data: seedData, error: seedError } = await db.rpc("seed_calls_raw_from_beside_calls_24h", {
+    p_limit: limit,
+    p_hours: 24,
+  });
+
+  const seedResult: SeedCallsRawResult | null = seedError
+    ? null
+    : (Array.isArray(seedData)
+      ? (seedData[0] as SeedCallsRawResult | null)
+      : (seedData as SeedCallsRawResult | null));
+
   const { data, error } = await db.rpc("reconcile_calls_raw_to_interactions", {
     p_limit: limit,
   });
@@ -175,6 +192,10 @@ Deno.serve(async (req: Request): Promise<Response> => {
     ok: true,
     dry_run: false,
     requested_limit: limit,
+    seed_scanned_count: seedResult?.scanned_count ?? 0,
+    seed_inserted_count: seedResult?.inserted_count ?? 0,
+    seed_inserted_interaction_ids: seedResult?.inserted_interaction_ids ?? [],
+    seed_error: seedError?.message ?? null,
     scanned_count: result?.scanned_count ?? 0,
     inserted_count: result?.inserted_count ?? 0,
     inserted_interaction_ids: result?.inserted_interaction_ids ?? [],
