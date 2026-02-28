@@ -9,10 +9,25 @@ struct ContactListView: View {
     @State private var showResetConfirmation = false
 
     private var filteredContacts: [Contact] {
-        let trimmed = searchText.trimmingCharacters(in: .whitespaces)
+        let trimmed = searchText.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmed.isEmpty else { return contactListViewModel.contacts }
-        return contactListViewModel.contacts.filter {
-            $0.name.localizedCaseInsensitiveContains(trimmed)
+
+        let queryDigits = trimmed.filter(\.isNumber)
+
+        return contactListViewModel.contacts.filter { contact in
+            if contact.name.localizedCaseInsensitiveContains(trimmed) {
+                return true
+            }
+
+            guard !queryDigits.isEmpty else { return false }
+
+            let phoneDigits = (contact.phone ?? "").filter(\.isNumber)
+            if !phoneDigits.isEmpty, phoneDigits.contains(queryDigits) {
+                return true
+            }
+
+            let keyDigits = contact.contactKey.filter(\.isNumber)
+            return !keyDigits.isEmpty && keyDigits.contains(queryDigits)
         }
     }
 

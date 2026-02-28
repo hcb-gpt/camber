@@ -1,12 +1,13 @@
 import "jsr:@supabase/functions-js/edge-runtime.d.ts";
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
 
-const FUNCTION_VERSION = "redline-thread_v3.2.1";
+const FUNCTION_VERSION = "redline-thread_v3.3.0";
 /**
  * v3.2.1 - Fix typo interactionClaims -> _interactionClaims
  * v3.1.2 - iOS Contract Fix (P0 Unbrick)
  * - Map DB 'id' to 'span_id' and 'claim_id' for iOS compatibility
  * - Closes visibility gap for beside_threads
+ * v3.3.0 - Contacts payload: add last_interaction_id instrumentation + keep beside_thread rows
  */
 const OWNER_SMS_USER_IDS = ["+17066889158", "usr_4PCSTDQ8N161KAC4GG7AF9CR94"];
 const OUTBOUND_INFERENCE_WINDOW_MS = 30 * 60 * 1000;
@@ -598,7 +599,7 @@ async function handleContacts(db: any, url: URL, t0: number): Promise<Response> 
   }
 
   const selectColumns =
-    "contact_id, contact_name, contact_phone, call_count, sms_count, claim_count, ungraded_count, last_activity, last_snippet, last_direction, last_interaction_type";
+    "contact_id, contact_name, contact_phone, call_count, sms_count, claim_count, ungraded_count, last_activity, last_snippet, last_direction, last_interaction_type, source";
 
   const contactsSource = "redline_contacts_unified_matview";
   const { data, error } = await timeDb("db_contacts", () =>
@@ -626,6 +627,8 @@ async function handleContacts(db: any, url: URL, t0: number): Promise<Response> 
       last_summary: deriveContactLastSummary(row) || "",
       last_direction: row.last_direction || "",
       last_interaction_type: row.last_interaction_type || "",
+      last_interaction_id: "",
+      source: String(row.source || "").trim() || "contacts",
     }));
 
   // Filter ghost rows: contact exists but has zero activity (no calls, no SMS, no last_activity)
@@ -634,8 +637,53 @@ async function handleContacts(db: any, url: URL, t0: number): Promise<Response> 
     (row.last_activity != null && row.last_activity !== "")
   );
 
+  // Instrumentation: attach `last_interaction_id` from SSOT (redline_thread) so operators can
+  // correlate list previews to the exact latest thread event.
+  const phones = [...new Set(liveRows.map((row: any) => String(row.phone || "").trim()).filter((p: string) => p))];
+  const latestByPhone = new Map<string, any>();
+  if (phones.length > 0) {
+    const { data: latestRows, error: latestErr } = await timeDb(
+      "db_latest_thread_event",
+      () => db.rpc("redline_latest_thread_event_by_phone_v1", { phone_list: phones }),
+    );
+    if (latestErr) {
+      console.warn(`[contacts] latest thread event RPC failed: ${latestErr.message}`);
+    } else if (Array.isArray(latestRows)) {
+      for (const row of latestRows) {
+        const phone = String(row?.contact_phone || "").trim();
+        if (!phone) continue;
+        latestByPhone.set(phone, row);
+      }
+    }
+  }
+
+  const liveRowsWithIds = liveRows.map((row: any) => {
+    const phone = String(row.phone || "").trim();
+    const latest = phone ? latestByPhone.get(phone) : null;
+    const lastInteractionId = latest?.interaction_id != null ? String(latest.interaction_id) : "";
+
+    const latestEventAt = latest?.event_at_utc != null ? String(latest.event_at_utc) : "";
+    const latestDirection = latest?.direction != null ? String(latest.direction) : "";
+    const latestTypeRaw = latest?.interaction_type != null ? String(latest.interaction_type) : "";
+    const latestType = latestTypeRaw === "sms_thread" ? "sms" : latestTypeRaw;
+
+    const latestSummaryRaw = latest?.summary != null ? String(latest.summary).trim() : "";
+    const latestSummary = latestSummaryRaw.length > 0 ? latestSummaryRaw.slice(0, 80) : "";
+    return {
+      ...row,
+      last_interaction_id: lastInteractionId,
+      last_activity: latestEventAt || row.last_activity,
+      last_summary: latestSummary || row.last_summary,
+      last_direction: latestDirection || row.last_direction,
+      last_interaction_type: latestType || row.last_interaction_type,
+    };
+  });
+
   // Validate contact_ids still exist in the contacts table (matview can lag deletes)
-  const candidateIds = liveRows.map((r: any) => r.contact_id).filter(Boolean);
+  const candidateIds = liveRowsWithIds
+    .filter((r: any) => String(r.source || "") === "contacts")
+    .map((r: any) => r.contact_id)
+    .filter(Boolean);
   let validIdSet: Set<string> | null = null;
   if (candidateIds.length > 0) {
     const { data: validRows, error: validErr } = await db
@@ -649,8 +697,8 @@ async function handleContacts(db: any, url: URL, t0: number): Promise<Response> 
     }
   }
 
-  const contacts = liveRows
-    .filter((row: any) => validIdSet === null || validIdSet.has(row.contact_id))
+  const contacts = liveRowsWithIds
+    .filter((row: any) => String(row.source || "") !== "contacts" || validIdSet === null || validIdSet.has(row.contact_id))
     .sort((a: any, b: any) => {
       const aTime = Date.parse(a.last_activity || "") || 0;
       const bTime = Date.parse(b.last_activity || "") || 0;
@@ -659,7 +707,7 @@ async function handleContacts(db: any, url: URL, t0: number): Promise<Response> 
     });
 
   const filteredEmpty = mapped.length - liveRows.length;
-  const filteredOrphan = validIdSet ? liveRows.length - contacts.length : 0;
+  const filteredOrphan = validIdSet ? liveRowsWithIds.length - contacts.length : 0;
   const filteredCount = filteredEmpty + filteredOrphan;
   if (filteredEmpty > 0 || filteredOrphan > 0) {
     console.log(
