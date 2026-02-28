@@ -1,7 +1,7 @@
 import "jsr:@supabase/functions-js/edge-runtime.d.ts";
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
 
-const FUNCTION_VERSION = "redline-thread_v2.8.0";
+const FUNCTION_VERSION = "redline-thread_v3.1.0";
 const OWNER_SMS_USER_IDS = ["+17066889158", "usr_4PCSTDQ8N161KAC4GG7AF9CR94"];
 const OUTBOUND_INFERENCE_WINDOW_MS = 30 * 60 * 1000;
 const OUTBOUND_INFERENCE_MAX_GAP_MS = 60 * 1000;
@@ -560,7 +560,7 @@ async function handleContacts(db: any, url: URL, t0: number): Promise<Response> 
       last_direction: row.last_direction || null,
       last_interaction_type: row.last_interaction_type || null,
     }))
-    .filter((row: any) => row.call_count > 0 || row.sms_count > 0)
+    .filter((row: any) => !!row.contact_id && (row.call_count > 0 || row.sms_count > 0))
     .sort((a: any, b: any) => {
       const aTime = Date.parse(a.last_activity || "") || 0;
       const bTime = Date.parse(b.last_activity || "") || 0;
