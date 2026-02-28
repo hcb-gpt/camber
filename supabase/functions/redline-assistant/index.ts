@@ -5,17 +5,32 @@ import {
 } from "https://esm.sh/@supabase/supabase-js@2";
 import { getModelConfigCached } from "../_shared/model_config.ts";
 
-const FUNCTION_VERSION = "redline-assistant_v0.3.0";
+const FUNCTION_VERSION = "redline-assistant_v0.4.0";
+const CONTRACT_VERSION = "assistant_context_v1";
 const DEFAULT_MODEL_ID = "gpt-4o";
 const DEFAULT_MAX_TOKENS = 2048;
 const DEFAULT_TEMPERATURE = 0.7;
 
-type ContactProjectCandidate = {
-  project_id: string;
-  project_name: string | null;
-  project_status: string | null;
-  last_interaction_at: string | null;
+// ---------------------------------------------------------------------------
+// Types
+// ---------------------------------------------------------------------------
+
+type RosterProject = {
+  id: string;
+  name: string;
+  status: string | null;
 };
+
+type ResolutionOutcome = {
+  mode: "single" | "ambiguous" | "none" | "no_signal";
+  token: string | null;
+  matches: RosterProject[];
+  resolvedProjectId: string | null;
+};
+
+// ---------------------------------------------------------------------------
+// Helpers
+// ---------------------------------------------------------------------------
 
 function corsHeaders(): Record<string, string> {
   return {
@@ -24,7 +39,7 @@ function corsHeaders(): Record<string, string> {
       "authorization, x-client-info, apikey, content-type, x-edge-secret, x-request-id",
     "Access-Control-Allow-Methods": "POST, OPTIONS",
     "Access-Control-Expose-Headers":
-      "x-request-id,x-assistant-context-request-id,x-assistant-context-contract-version,x-model-id,x-model-config-source",
+      "x-request-id,x-contract-version,x-function-version,x-model-id,x-model-config-source",
   };
 }
 
@@ -40,6 +55,8 @@ function json(
       ...corsHeaders(),
       "Content-Type": "application/json",
       ...(requestId ? { "x-request-id": requestId } : {}),
+      "x-function-version": FUNCTION_VERSION,
+      "x-contract-version": CONTRACT_VERSION,
       ...(extraHeaders ?? {}),
     },
   });
@@ -49,152 +66,158 @@ function toStringOrNull(value: unknown): string | null {
   return typeof value === "string" && value.trim().length > 0 ? value : null;
 }
 
-async function resolveContactProjectCandidates(
-  db: SupabaseClient,
-  contactId: string | null,
-): Promise<
-  { candidates: ContactProjectCandidate[]; autoProjectId: string | null }
-> {
-  if (!contactId) {
-    return { candidates: [], autoProjectId: null };
-  }
+// ---------------------------------------------------------------------------
+// Project resolution (token-based matching against roster)
+// ---------------------------------------------------------------------------
 
-  const { data: interactionRows } = await db
-    .from("interactions")
-    .select("project_id, event_at_utc")
-    .eq("contact_id", contactId)
-    .not("project_id", "is", null)
-    .order("event_at_utc", { ascending: false })
-    .limit(50);
-
-  const rows = Array.isArray(interactionRows)
-    ? (interactionRows as Array<Record<string, unknown>>)
-    : [];
-  const latestByProject = new Map<string, string | null>();
-
-  for (const row of rows) {
-    const projectId = toStringOrNull(row.project_id);
-    if (!projectId || latestByProject.has(projectId)) {
-      continue;
-    }
-    latestByProject.set(projectId, toStringOrNull(row.event_at_utc));
-  }
-
-  const projectIds = Array.from(latestByProject.keys());
-  if (projectIds.length === 0) {
-    return { candidates: [], autoProjectId: null };
-  }
-
-  const { data: projectRows } = await db
-    .from("projects")
-    .select("id, name, status")
-    .in("id", projectIds);
-
-  const projectMap = new Map<string, Record<string, unknown>>();
-  for (
-    const row of Array.isArray(projectRows)
-      ? (projectRows as Array<Record<string, unknown>>)
-      : []
-  ) {
-    const id = toStringOrNull(row.id);
-    if (id) {
-      projectMap.set(id, row);
-    }
-  }
-
-  const candidates: ContactProjectCandidate[] = projectIds.map((projectId) => {
-    const projectRow = projectMap.get(projectId);
-    return {
-      project_id: projectId,
-      project_name: toStringOrNull(projectRow?.name ?? null),
-      project_status: toStringOrNull(projectRow?.status ?? null),
-      last_interaction_at: latestByProject.get(projectId) ?? null,
-    };
-  });
-
-  candidates.sort((left, right) =>
-    (right.last_interaction_at ?? "").localeCompare(
-      left.last_interaction_at ?? "",
-    )
-  );
-
-  return {
-    candidates,
-    autoProjectId: candidates.length === 1 ? candidates[0].project_id : null,
-  };
+function normalizeText(value: string): string {
+  return value.toLowerCase().replace(/[^a-z0-9\s]/g, " ").replace(/\s+/g, " ")
+    .trim();
 }
 
-async function fetchAssistantContext(
-  supabaseUrl: string,
-  serviceRoleKey: string,
-  requestId: string,
-  projectId: string | null,
-): Promise<{
-  packet: Record<string, unknown> | null;
-  headerRequestId: string | null;
-  contractVersion: string | null;
-  error: string | null;
-  status: number | null;
-}> {
-  const url = new URL(`${supabaseUrl}/functions/v1/assistant-context`);
-  url.searchParams.set("limit", "10");
-  if (projectId) {
-    url.searchParams.set("project_id", projectId);
+function tokenizeProjectQuery(value: string): string[] {
+  const stopwords = new Set([
+    "what", "where", "when", "which", "this", "that", "with", "from", "about",
+    "have", "recent", "recently", "going", "today", "update", "status",
+    "projects", "project", "for", "the", "and", "you",
+  ]);
+  return normalizeText(value)
+    .split(" ")
+    .map((t) => t.trim())
+    .filter((t) => t.length >= 3 && !stopwords.has(t));
+}
+
+function stripProjectSuffix(name: string): string {
+  return normalizeText(name)
+    .replace(/\b(residence|project|home|job|phase)\b/g, "")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
+function resolveProjectFromMessage(
+  message: string,
+  roster: RosterProject[],
+): ResolutionOutcome {
+  if (!message || roster.length === 0) {
+    return { mode: "no_signal", token: null, matches: [], resolvedProjectId: null };
+  }
+  const tokens = tokenizeProjectQuery(message);
+  if (tokens.length === 0) {
+    return { mode: "no_signal", token: null, matches: [], resolvedProjectId: null };
   }
 
+  const scored = roster
+    .map((project) => {
+      const fullName = normalizeText(project.name);
+      const stemName = stripProjectSuffix(project.name);
+      let score = 0;
+      for (const token of tokens) {
+        if (fullName.includes(token)) score += 20;
+        if (stemName && stemName.includes(token)) score += 20;
+        if (token === stemName || token === fullName) score += 30;
+      }
+      if (tokens.length > 0) {
+        const joined = tokens.join(" ");
+        if (fullName.includes(joined) || (stemName && stemName.includes(joined))) {
+          score += 50;
+        }
+      }
+      return { project, score };
+    })
+    .filter((r) => r.score > 0)
+    .sort((a, b) => b.score - a.score);
+
+  if (scored.length === 0) {
+    return { mode: "none", token: tokens[0], matches: [], resolvedProjectId: null };
+  }
+  const matches = scored.map((r) => r.project);
+  if (matches.length === 1) {
+    return { mode: "single", token: tokens[0], matches, resolvedProjectId: matches[0].id };
+  }
+  return { mode: "ambiguous", token: tokens[0], matches, resolvedProjectId: null };
+}
+
+function isProjectsRosterQuery(message: string): boolean {
+  return /what\s+projects|which\s+projects|projects\s+do\s+you\s+have|list\s+projects/i
+    .test(message);
+}
+
+// ---------------------------------------------------------------------------
+// SSE helpers
+// ---------------------------------------------------------------------------
+
+function buildSSEChunk(content: string): Uint8Array {
+  const payload = JSON.stringify({ choices: [{ delta: { content } }] });
+  return new TextEncoder().encode(`data: ${payload}\n\n`);
+}
+
+function textSseResponse(
+  content: string,
+  requestId: string,
+  extraHeaders: Record<string, string> = {},
+): Response {
+  const encoder = new TextEncoder();
+  const stream = new ReadableStream({
+    start(controller) {
+      controller.enqueue(buildSSEChunk(content));
+      controller.enqueue(encoder.encode("data: [DONE]\n\n"));
+      controller.close();
+    },
+  });
+  return new Response(stream, {
+    status: 200,
+    headers: {
+      ...corsHeaders(),
+      "Content-Type": "text/event-stream",
+      "Cache-Control": "no-cache",
+      "x-request-id": requestId,
+      "x-function-version": FUNCTION_VERSION,
+      "x-contract-version": CONTRACT_VERSION,
+      ...extraHeaders,
+    },
+  });
+}
+
+// ---------------------------------------------------------------------------
+// Data-grounded context fetch via assistant_context_v1() RPC
+// ---------------------------------------------------------------------------
+
+async function fetchGroundedContext(
+  db: SupabaseClient,
+): Promise<{
+  payload: Record<string, unknown> | null;
+  error: string | null;
+}> {
   try {
-    const response = await fetch(url.toString(), {
-      method: "GET",
-      headers: {
-        "Authorization": `Bearer ${serviceRoleKey}`,
-        "apikey": serviceRoleKey,
-        "x-request-id": requestId,
-      },
+    const { data, error } = await db.rpc("assistant_context_v1", {
+      p_window_hours: 48,
+      p_projects_limit: 100,
+      p_highlights_per_project: 5,
+      p_contacts_limit: 50,
+      p_candidates_per_contact: 3,
     });
 
-    const headerRequestId = response.headers.get("x-request-id");
-    const contractVersionHeader = response.headers.get(
-      "x-assistant-context-contract-version",
-    );
-    const rawBody = await response.text();
-
-    let parsedBody: Record<string, unknown> | null = null;
-    try {
-      parsedBody = JSON.parse(rawBody) as Record<string, unknown>;
-    } catch {
-      parsedBody = null;
-    }
-
-    if (!response.ok) {
-      return {
-        packet: parsedBody,
-        headerRequestId,
-        contractVersion: contractVersionHeader,
-        error: `assistant_context_http_${response.status}`,
-        status: response.status,
-      };
+    if (error) {
+      console.warn(
+        `[redline-assistant] assistant_context_v1 RPC failed: ${error.message}`,
+      );
+      return { payload: null, error: error.message };
     }
 
     return {
-      packet: parsedBody,
-      headerRequestId,
-      contractVersion: toStringOrNull(parsedBody?.contract_version) ??
-        contractVersionHeader,
+      payload: data as Record<string, unknown>,
       error: null,
-      status: response.status,
     };
-  } catch (error: unknown) {
-    return {
-      packet: null,
-      headerRequestId: null,
-      contractVersion: null,
-      error: error instanceof Error
-        ? error.message
-        : "assistant_context_fetch_failed",
-      status: null,
-    };
+  } catch (err: unknown) {
+    const msg = err instanceof Error ? err.message : "rpc_unknown_error";
+    console.warn(`[redline-assistant] assistant_context_v1 RPC exception: ${msg}`);
+    return { payload: null, error: msg };
   }
 }
+
+// ---------------------------------------------------------------------------
+// OpenAI streaming
+// ---------------------------------------------------------------------------
 
 async function openAiChatCompletionsStream(
   openAiKey: string,
@@ -223,6 +246,10 @@ async function openAiChatCompletionsStream(
   });
 }
 
+// ---------------------------------------------------------------------------
+// Main handler
+// ---------------------------------------------------------------------------
+
 Deno.serve(async (req: Request): Promise<Response> => {
   if (req.method === "OPTIONS") {
     return new Response(null, { headers: corsHeaders() });
@@ -231,12 +258,7 @@ Deno.serve(async (req: Request): Promise<Response> => {
   const requestId = req.headers.get("x-request-id") ?? crypto.randomUUID();
   if (req.method !== "POST") {
     return json(
-      {
-        ok: false,
-        error: "method_not_allowed",
-        request_id: requestId,
-        function_version: FUNCTION_VERSION,
-      },
+      { ok: false, error: "method_not_allowed", request_id: requestId, function_version: FUNCTION_VERSION },
       405,
       requestId,
     );
@@ -249,26 +271,14 @@ Deno.serve(async (req: Request): Promise<Response> => {
 
     if (!supabaseUrl || !supabaseKey) {
       return json(
-        {
-          ok: false,
-          error: "missing_supabase_config",
-          request_id: requestId,
-          function_version: FUNCTION_VERSION,
-        },
-        500,
-        requestId,
+        { ok: false, error: "missing_supabase_config", request_id: requestId, function_version: FUNCTION_VERSION },
+        500, requestId,
       );
     }
     if (!openAiKey) {
       return json(
-        {
-          ok: false,
-          error: "missing_openai_key",
-          request_id: requestId,
-          function_version: FUNCTION_VERSION,
-        },
-        500,
-        requestId,
+        { ok: false, error: "missing_openai_key", request_id: requestId, function_version: FUNCTION_VERSION },
+        500, requestId,
       );
     }
 
@@ -277,28 +287,16 @@ Deno.serve(async (req: Request): Promise<Response> => {
       body = await req.json();
     } catch {
       return json(
-        {
-          ok: false,
-          error: "invalid_json",
-          request_id: requestId,
-          function_version: FUNCTION_VERSION,
-        },
-        400,
-        requestId,
+        { ok: false, error: "invalid_json", request_id: requestId, function_version: FUNCTION_VERSION },
+        400, requestId,
       );
     }
 
     const userMessage = toStringOrNull(body.message);
     if (!userMessage) {
       return json(
-        {
-          ok: false,
-          error: "message_required",
-          request_id: requestId,
-          function_version: FUNCTION_VERSION,
-        },
-        400,
-        requestId,
+        { ok: false, error: "message_required", request_id: requestId, function_version: FUNCTION_VERSION },
+        400, requestId,
       );
     }
 
@@ -307,89 +305,119 @@ Deno.serve(async (req: Request): Promise<Response> => {
     const contactId = toStringOrNull(body.contact_id);
 
     const db = createClient(supabaseUrl, supabaseKey);
-    const modelConfig = await getModelConfigCached(db, {
-      functionName: "redline-assistant",
-      modelId: DEFAULT_MODEL_ID,
-      maxTokens: DEFAULT_MAX_TOKENS,
-      temperature: DEFAULT_TEMPERATURE,
-    });
 
-    const { candidates, autoProjectId } = await resolveContactProjectCandidates(
-      db,
-      contactId,
-    );
-    const effectiveProjectId = inputProjectId ?? autoProjectId;
+    // Parallel: model config + grounded context RPC
+    const [modelConfig, groundedResult] = await Promise.all([
+      getModelConfigCached(db, {
+        functionName: "redline-assistant",
+        modelId: DEFAULT_MODEL_ID,
+        maxTokens: DEFAULT_MAX_TOKENS,
+        temperature: DEFAULT_TEMPERATURE,
+      }),
+      fetchGroundedContext(db),
+    ]);
 
-    const assistantContext = await fetchAssistantContext(
-      supabaseUrl,
-      supabaseKey,
-      requestId,
-      effectiveProjectId,
-    );
+    const groundedPayload = groundedResult.payload;
 
-    const assistantContextPacket = assistantContext.packet;
-    const assistantContextRequestId =
-      toStringOrNull(assistantContextPacket?.request_id) ??
-        assistantContext.headerRequestId;
-    const assistantContextContractVersion =
-      toStringOrNull(assistantContextPacket?.contract_version) ??
-        assistantContext.contractVersion;
+    // Extract projects roster from grounded context
+    const projectsRoster: RosterProject[] = Array.isArray(groundedPayload?.projects_roster)
+      ? (groundedPayload!.projects_roster as Array<Record<string, unknown>>).map((r) => ({
+          id: String(r.id ?? ""),
+          name: String(r.name ?? "Unknown Project"),
+          status: toStringOrNull(r.status),
+        })).filter((r) => r.id.length > 0)
+      : [];
 
-    const assistantContextV1 = {
-      request_id: assistantContextRequestId,
-      function_version: toStringOrNull(
-        assistantContextPacket?.function_version,
-      ),
-      contract_version: assistantContextContractVersion,
-      metric_contract: assistantContextPacket?.metric_contract ?? null,
-      top_projects: Array.isArray(assistantContextPacket?.top_projects)
-        ? assistantContextPacket?.top_projects
-        : [],
-      who_needs_you: Array.isArray(assistantContextPacket?.who_needs_you)
-        ? assistantContextPacket?.who_needs_you
-        : [],
-      review_pressure: assistantContextPacket?.review_pressure ?? null,
-      review_pressure_by_project:
-        Array.isArray(assistantContextPacket?.review_pressure_by_project)
-          ? assistantContextPacket?.review_pressure_by_project
-          : [],
-      recent_activity: assistantContextPacket?.recent_activity ?? null,
-      project_context: assistantContextPacket?.project_context ?? null,
-      fetch_status: assistantContext.error ? "error" : "ok",
-      fetch_error: assistantContext.error,
-      fetch_http_status: assistantContext.status,
-    };
+    // Project resolution: explicit > message-inferred > contact-based
+    const resolution = resolveProjectFromMessage(userMessage, projectsRoster);
+    let effectiveProjectId = inputProjectId ?? resolution.resolvedProjectId;
 
-    const context = {
+    // If still no project, try contact-based resolution
+    let contactCandidates: Array<Record<string, unknown>> = [];
+    if (!effectiveProjectId && contactId && Array.isArray(groundedPayload?.contact_project_candidates)) {
+      const contactEntry = (groundedPayload!.contact_project_candidates as Array<Record<string, unknown>>)
+        .find((c) => String(c.contact_id) === contactId);
+      if (contactEntry) {
+        contactCandidates = Array.isArray(contactEntry.project_candidates)
+          ? contactEntry.project_candidates as Array<Record<string, unknown>>
+          : [];
+        if (contactEntry.is_single_project_contact === true && contactCandidates.length >= 1) {
+          effectiveProjectId = String(contactCandidates[0].project_id ?? "");
+        }
+      }
+    }
+
+    // Handle roster-listing queries directly (no LLM needed)
+    if (isProjectsRosterQuery(userMessage)) {
+      const lines = projectsRoster.slice(0, 15).map((p, i) => {
+        const status = p.status ? ` (${p.status})` : "";
+        return `${i + 1}. ${p.name}${status}`;
+      });
+      const answer = projectsRoster.length > 0
+        ? `Active project roster (${lines.length} shown):\n${lines.join("\n")}`
+        : "No projects found in the current context.";
+      return textSseResponse(answer, requestId);
+    }
+
+    // Extract highlights for the effective project (if any)
+    let projectHighlights: unknown[] = [];
+    if (effectiveProjectId && Array.isArray(groundedPayload?.project_recent_highlights)) {
+      const entry = (groundedPayload!.project_recent_highlights as Array<Record<string, unknown>>)
+        .find((ph) => String(ph.project_id) === effectiveProjectId);
+      if (entry && Array.isArray(entry.highlights)) {
+        projectHighlights = entry.highlights as unknown[];
+      }
+    }
+
+    // Build the grounded context packet for the LLM
+    const contextPacket = {
       request_id: requestId,
       function_version: FUNCTION_VERSION,
+      contract_version: CONTRACT_VERSION,
+      packet_version: toStringOrNull(groundedPayload?.packet_version) ?? CONTRACT_VERSION,
+      generated_at_utc: groundedPayload?.generated_at_utc ?? null,
+      grounded_source: groundedResult.error ? "fallback" : "assistant_context_v1_rpc",
+      grounded_error: groundedResult.error,
       message_scope: {
         contact_id: contactId,
         explicit_project_id: inputProjectId,
         effective_project_id: effectiveProjectId,
       },
-      contact_project_candidates: candidates,
-      single_project_auto: {
-        applied: !inputProjectId && !!autoProjectId,
-        project_id: autoProjectId,
+      resolution: {
+        mode: resolution.mode,
+        token: resolution.token,
+        matches: resolution.matches.slice(0, 5).map((m) => ({
+          project_id: m.id,
+          project_name: m.name,
+        })),
+        resolved_project_id: effectiveProjectId,
       },
-      assistant_context_v1: assistantContextV1,
+      projects_roster: projectsRoster,
+      project_recent_highlights: Array.isArray(groundedPayload?.project_recent_highlights)
+        ? groundedPayload!.project_recent_highlights
+        : [],
+      focused_project_highlights: projectHighlights,
+      contact_project_candidates: contactCandidates,
     };
 
     const systemPrompt =
       `You are the HCB Redline Assistant for Heartwood Custom Builders.
 You answer project questions for operators with concise, factual guidance.
 
-Hard response rules:
-1) Use ONLY facts present in assistant_context_v1 and contact candidate context.
-2) If asked about project roster, return project names from assistant_context_v1.top_projects.
-3) If "Winship Residence" is present in top_projects and user asks about Winship or projects, explicitly mention "Winship Residence".
-4) For status-style questions, include at least one concrete recent fact (metric or timeline item) tied to a project name.
-5) If context is missing, say exactly what is missing.
-6) Cite project names and interaction IDs when available.
+DATA GROUNDING RULES (strict):
+1) Use ONLY facts present in the CONTEXT_PACKET below. Never hallucinate projects or data.
+2) The projects_roster is the canonical list of all known projects. If a project name is in the roster, it exists.
+3) project_recent_highlights contains recent interaction events per project from the last 48 hours, each with interaction_id pointers back to the source.
+4) focused_project_highlights contains highlights specifically for the resolved project (if any).
+5) If asked about project roster or "what projects", list project names from projects_roster.
+6) For status-style questions, cite at least one concrete highlight (event_at_utc, interaction_type, highlight_text) tied to a project name.
+7) If resolution.mode is "ambiguous", present the matches and ask the user to pick.
+8) If resolution.mode is "none", say no match found and suggest closest roster names.
+9) If context data is missing or grounded_error is set, say exactly what is unavailable.
+10) Cite project names and interaction IDs when available.
 
-CONTEXT_PACKET_ASSISTANT_CONTEXT_V1:
-${JSON.stringify(context, null, 2)}
+CONTEXT_PACKET:
+${JSON.stringify(contextPacket, null, 2)}
 `;
 
     const provider = requestedModel ? "openai" : modelConfig.provider;
@@ -403,26 +431,15 @@ ${JSON.stringify(context, null, 2)}
 
     if (provider !== "openai") {
       return json(
-        {
-          ok: false,
-          error: "unsupported_model_provider",
-          provider,
-          request_id: requestId,
-          function_version: FUNCTION_VERSION,
-        },
-        500,
-        requestId,
+        { ok: false, error: "unsupported_model_provider", provider, request_id: requestId, function_version: FUNCTION_VERSION },
+        500, requestId,
       );
     }
 
     let activeModel = primaryModel;
     let openAiResponse = await openAiChatCompletionsStream(
-      openAiKey,
-      primaryModel,
-      modelConfig.maxTokens,
-      modelConfig.temperature,
-      systemPrompt,
-      userMessage,
+      openAiKey, primaryModel, modelConfig.maxTokens, modelConfig.temperature,
+      systemPrompt, userMessage,
     );
 
     if (!openAiResponse.ok && fallbackModel && fallbackModel !== primaryModel) {
@@ -432,12 +449,8 @@ ${JSON.stringify(context, null, 2)}
       );
       activeModel = fallbackModel;
       openAiResponse = await openAiChatCompletionsStream(
-        openAiKey,
-        fallbackModel,
-        modelConfig.maxTokens,
-        modelConfig.temperature,
-        systemPrompt,
-        userMessage,
+        openAiKey, fallbackModel, modelConfig.maxTokens, modelConfig.temperature,
+        systemPrompt, userMessage,
       );
     }
 
@@ -445,17 +458,13 @@ ${JSON.stringify(context, null, 2)}
       const errorText = await openAiResponse.text();
       return json(
         {
-          ok: false,
-          error: "llm_error",
-          details: errorText,
+          ok: false, error: "llm_error", details: errorText,
           status: openAiResponse.status,
           request_id: requestId,
-          assistant_context_request_id: assistantContextRequestId,
-          assistant_context_contract_version: assistantContextContractVersion,
           function_version: FUNCTION_VERSION,
+          contract_version: CONTRACT_VERSION,
         },
-        500,
-        requestId,
+        500, requestId,
       );
     }
 
@@ -466,17 +475,10 @@ ${JSON.stringify(context, null, 2)}
         "Content-Type": "text/event-stream",
         "Cache-Control": "no-cache",
         "x-request-id": requestId,
+        "x-function-version": FUNCTION_VERSION,
+        "x-contract-version": CONTRACT_VERSION,
         "x-model-id": activeModel,
         "x-model-config-source": modelConfig.source,
-        ...(assistantContextRequestId
-          ? { "x-assistant-context-request-id": assistantContextRequestId }
-          : {}),
-        ...(assistantContextContractVersion
-          ? {
-            "x-assistant-context-contract-version":
-              assistantContextContractVersion,
-          }
-          : {}),
       },
     });
   } catch (error: unknown) {
@@ -484,14 +486,12 @@ ${JSON.stringify(context, null, 2)}
     console.error("[redline-assistant] Error:", message);
     return json(
       {
-        ok: false,
-        error: "internal_error",
-        details: message,
+        ok: false, error: "internal_error", details: message,
         request_id: requestId,
         function_version: FUNCTION_VERSION,
+        contract_version: CONTRACT_VERSION,
       },
-      500,
-      requestId,
+      500, requestId,
     );
   }
 });
