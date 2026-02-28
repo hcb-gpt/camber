@@ -48,6 +48,25 @@ Interpretation: uncovered lane is closed; remaining breach is queue-aged pending
 3. Extraction freshness signal: add `missing_extractable_spans_24h` to redline monitor payload.
 
 ## Remaining work for epic completion
-- Reduce queue-aged `sla_breach_count` (currently `242`) via requeue/worker throughput.
+- Reduce queue-aged `sla_breach_count` (currently `220`) via requeue/worker throughput.
 - Confirm root causes for oldest interaction clusters (top IDs in root-cause proof query).
 - Validate alert noise reduction after tuning is implemented.
+
+## Update (2026-02-28T05:10Z): alert-noise fixes applied
+- Migration applied: `supabase/migrations/20260228071000_fix_redline_stale_anchor_and_disable_legacy_hard_drop_monitor.sql`
+- New proof query: `scripts/sql/pipeline_health_monitor_noise_fix_proof_20260228.sql`
+
+### Changes shipped
+1. `run_redline_refresh_monitor` now anchors journal freshness to successful `journal_runs` activity (fallback includes claim timestamp), not just `journal_claims.created_at`.
+2. Disabled legacy cron job `hard_drop_sla_monitor_hourly` that generated high-noise alerts.
+3. Kept tuned monitor cron `hard_drop_sla_monitor_tuned_hourly` and fixed tuned oldest-age calculation to use true max pending age across queue.
+
+### Verification snapshots
+- Redline monitor manual run (no TRAM emit): `is_alert=false`, `journal_stale=false`.
+- Hard-drop tuned monitor manual run: `is_alert=false`, `pending_total=344`, `pending_growth=0`, `oldest_age_hours=247.965`.
+- Cron state: only `hard_drop_sla_monitor_tuned_hourly` remains active for hard-drop monitoring.
+
+### Interpretation
+- Redline stale alert false positives were caused by stale claim timestamps despite fresh successful journal runs.
+- Hard-drop alert noise now routes through tuned monitor only; legacy unconditional breach paging is disabled.
+- Remaining hard-drop work is queue-age debt reduction, not monitor contract instability.
