@@ -1401,7 +1401,7 @@ async function handleThread(
           confidence: attr?.confidence,
         };
       }),
-      claims: _interactionClaims,
+      claims: interactionClaims,
     };
   });
 
