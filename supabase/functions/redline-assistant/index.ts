@@ -380,7 +380,13 @@ async function fetchDirectHighlights(
     }
   } catch (err: unknown) {
     console.warn(
-      `[redline-assistant] direct highlights query failed: ${err instanceof Error ? err.message : "unknown"}`,
+      "[redline-assistant] fetchDirectHighlights failed",
+      {
+        fn: "fetchDirectHighlights",
+        projectId,
+        error: err instanceof Error ? err.message : "unknown",
+        stack: err instanceof Error ? err.stack : undefined,
+      },
     );
   }
 
