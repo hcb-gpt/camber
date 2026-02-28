@@ -1076,14 +1076,14 @@ async function handleThread(
   };
   const computeStart = performance.now();
 
-  const { data: contact, error: contactErr } = await timeDb("db_contact", () =>
+  const { data: contactRow, error: contactErr } = await timeDb("db_contact", () =>
     db
       .from("redline_contacts_unified_matview")
       .select("contact_id, contact_name, contact_phone")
       .eq("contact_id", contactId)
       .single());
 
-  let resolvedContact = contact;
+  let resolvedContact = contactRow;
   const smsOnlyDigits = parseSmsOnlyContactDigits(contactId);
 
   // SMS-only contact fallback: look up name/phone from sms_messages
@@ -1121,13 +1121,11 @@ async function handleThread(
     );
   }
   // Re-bind contact to the resolved value; ensure phone is never null (iOS non-optional)
-  const contact2 = {
+  const contact = {
     ...resolvedContact,
     contact_phone: resolvedContact.contact_phone || "",
   };
-  const contactPhoneVariants = buildPhoneVariants(contact2.contact_phone);
-  // deno-lint-ignore no-shadow-restricted-names
-  const contact = contact2;
+  const contactPhoneVariants = buildPhoneVariants(contact.contact_phone);
 
   const scanWindow = Math.min(Math.max(offset + limit + 20, 40), 120);
   const queryPageSize = 40;
