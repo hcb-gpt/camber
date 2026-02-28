@@ -10,8 +10,8 @@ DERIVED_DIR="${OUT_DIR}/DerivedData"
 SCREEN_DIR="${OUT_DIR}/screens"
 mkdir -p "${SCREEN_DIR}"
 
-# In sandboxed sessions, simctl cannot always write under ~/Library.
-# Use a local HOME only for simctl commands.
+# In sandboxed sessions, toolchains cannot always write under ~/Library.
+# Use a local HOME for simctl + xcodebuild.
 SIMCTL_HOME="${ROOT_DIR}/.simctl-home"
 mkdir -p "${SIMCTL_HOME}/Library/Logs/CoreSimulator"
 
@@ -56,7 +56,7 @@ simctl bootstatus "${DEVICE_UDID}" -b
 echo "[smoke] building for simulator ${DEVICE_UDID}"
 (
   cd "${IOS_DIR}"
-  xcodebuild \
+  HOME="${SIMCTL_HOME}" xcodebuild \
     -project CamberRedline.xcodeproj \
     -scheme CamberRedline \
     -destination "id=${DEVICE_UDID}" \

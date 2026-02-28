@@ -1,4 +1,14 @@
 import Foundation
+import os
+
+private enum BootstrapSmokeAutomation {
+    static let launchFlag = "--smoke-drive"
+    static let logger = Logger(subsystem: "CamberRedline", category: "smoke")
+
+    static var isEnabled: Bool {
+        ProcessInfo.processInfo.arguments.contains(launchFlag)
+    }
+}
 
 // MARK: - BootstrapService
 
@@ -143,7 +153,18 @@ final class BootstrapService {
         let (data, response) = try await session.data(from: url)
         try validateHTTPResponse(response)
         do {
-            return try decoder.decode(AssistantContextPacket.self, from: data)
+            let decoded = try decoder.decode(AssistantContextPacket.self, from: data)
+            if BootstrapSmokeAutomation.isEnabled,
+               let http = response as? HTTPURLResponse {
+                let requestId =
+                    http.value(forHTTPHeaderField: "x-request-id") ??
+                    http.value(forHTTPHeaderField: "sb-request-id")
+
+                BootstrapSmokeAutomation.logger.log(
+                    "SMOKE_EVENT ASSISTANT_CONTEXT request_id=\(requestId ?? "missing", privacy: .public) version=\(decoded.functionVersion ?? "", privacy: .public)"
+                )
+            }
+            return decoded
         } catch let error as DecodingError {
             let path: String = switch error {
             case .typeMismatch(_, let context),
@@ -197,6 +218,7 @@ final class BootstrapService {
         }
 
         let requestId = http.value(forHTTPHeaderField: "x-request-id")
+            ?? http.value(forHTTPHeaderField: "sb-request-id")
         let provider = http.value(forHTTPHeaderField: "x-assistant-provider")
         let model = http.value(forHTTPHeaderField: "x-assistant-model")
         let providerWarning = http.value(forHTTPHeaderField: "x-assistant-provider-warning")

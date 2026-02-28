@@ -27,6 +27,23 @@ if [[ -n "${SUPABASE_ANON_KEY:-}" ]]; then
   CURL_HEADERS+=(-H "Authorization: Bearer ${SUPABASE_ANON_KEY}")
 fi
 
+header_value() {
+  local header_file="$1"
+  local header_name="$2"
+  awk -v target="$(tr '[:upper:]' '[:lower:]' <<<"${header_name}")" '
+    {
+      line = $0
+      gsub(/\r/, "", line)
+      lower = tolower(line)
+      if (index(lower, target ":") == 1) {
+        sub(/^[^:]*:[[:space:]]*/, "", line)
+        print line
+        exit
+      }
+    }
+  ' "${header_file}"
+}
+
 run_prompt() {
   local prompt="$1"
   local slug="$2"
@@ -34,10 +51,13 @@ run_prompt() {
   payload="$(jq -n --arg message "${prompt}" '{message: $message}')"
 
   local raw_file="${OUT_DIR}/${slug}.sse"
+  local header_file="${OUT_DIR}/${slug}.headers"
   curl -sS -N -X POST "${FUNCTION_URL}" \
     "${CURL_HEADERS[@]}" \
     -d "${payload}" \
-    --max-time 120 > "${raw_file}"
+    --max-time 120 \
+    -D "${header_file}" \
+    > "${raw_file}"
 
   local text_file="${OUT_DIR}/${slug}.txt"
   awk '/^data: /{sub(/^data: /,""); print}' "${raw_file}" \
@@ -68,14 +88,53 @@ echo
 
 PASS_A=0
 PASS_B=0
+PASS_A_FACT=0
 
 if grep -qi "winship residence" <<<"${ANSWER_A}"; then PASS_A=1; fi
 if grep -qi "winship residence" <<<"${ANSWER_B}"; then PASS_B=1; fi
 
+if grep -Eiq 'cll_[A-Za-z0-9]+' <<<"${ANSWER_A}" || grep -Eiq '[0-9]+[^[:alpha:]]*(calls|claims|loops|reviews|interactions|pending)' <<<"${ANSWER_A}"; then
+  PASS_A_FACT=1
+fi
+
+REQ_A="$(header_value "${OUT_DIR}/q1_winship_hardscape.headers" "x-request-id")"
+REQ_B="$(header_value "${OUT_DIR}/q2_projects_roster.headers" "x-request-id")"
+CTX_REQ_A="$(header_value "${OUT_DIR}/q1_winship_hardscape.headers" "x-assistant-context-request-id")"
+CTX_REQ_B="$(header_value "${OUT_DIR}/q2_projects_roster.headers" "x-assistant-context-request-id")"
+CONTRACT_A="$(header_value "${OUT_DIR}/q1_winship_hardscape.headers" "x-assistant-context-contract-version")"
+CONTRACT_B="$(header_value "${OUT_DIR}/q2_projects_roster.headers" "x-assistant-context-contract-version")"
+MODEL_A="$(header_value "${OUT_DIR}/q1_winship_hardscape.headers" "x-model-id")"
+MODEL_B="$(header_value "${OUT_DIR}/q2_projects_roster.headers" "x-model-id")"
+
 echo "CHECK_WINSHIP_Q1=${PASS_A}"
 echo "CHECK_WINSHIP_Q2=${PASS_B}"
+echo "CHECK_RECENT_FACT_Q1=${PASS_A_FACT}"
+echo "REQUEST_ID_Q1=${REQ_A:-NONE}"
+echo "REQUEST_ID_Q2=${REQ_B:-NONE}"
+echo "ASSISTANT_CONTEXT_REQUEST_ID_Q1=${CTX_REQ_A:-NONE}"
+echo "ASSISTANT_CONTEXT_REQUEST_ID_Q2=${CTX_REQ_B:-NONE}"
+echo "CONTRACT_VERSION_Q1=${CONTRACT_A:-NONE}"
+echo "CONTRACT_VERSION_Q2=${CONTRACT_B:-NONE}"
+echo "MODEL_Q1=${MODEL_A:-NONE}"
+echo "MODEL_Q2=${MODEL_B:-NONE}"
 
-if [[ "${PASS_A}" -eq 1 && "${PASS_B}" -eq 1 ]]; then
+SUMMARY_FILE="${OUT_DIR}/summary.txt"
+cat > "${SUMMARY_FILE}" <<EOF
+CHECK_WINSHIP_Q1=${PASS_A}
+CHECK_WINSHIP_Q2=${PASS_B}
+CHECK_RECENT_FACT_Q1=${PASS_A_FACT}
+REQUEST_ID_Q1=${REQ_A:-NONE}
+REQUEST_ID_Q2=${REQ_B:-NONE}
+ASSISTANT_CONTEXT_REQUEST_ID_Q1=${CTX_REQ_A:-NONE}
+ASSISTANT_CONTEXT_REQUEST_ID_Q2=${CTX_REQ_B:-NONE}
+CONTRACT_VERSION_Q1=${CONTRACT_A:-NONE}
+CONTRACT_VERSION_Q2=${CONTRACT_B:-NONE}
+MODEL_Q1=${MODEL_A:-NONE}
+MODEL_Q2=${MODEL_B:-NONE}
+EOF
+echo "SUMMARY_FILE=${SUMMARY_FILE}"
+
+if [[ "${PASS_A}" -eq 1 && "${PASS_B}" -eq 1 && "${PASS_A_FACT}" -eq 1 ]]; then
   echo "HARNESS_STATUS=PASS"
 else
   echo "HARNESS_STATUS=FAIL"

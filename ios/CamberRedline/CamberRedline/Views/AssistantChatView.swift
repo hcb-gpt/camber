@@ -14,6 +14,7 @@ private enum AssistantSmokeAutomation {
 struct AssistantChatView: View {
     @StateObject private var viewModel = AssistantViewModel()
     @State private var didRunSmokeAssistant = false
+    @State private var showSmokeContextPacket = false
     var contactId: String? = nil
     var projectId: String? = nil
     var initialMessage: String? = nil
@@ -66,6 +67,9 @@ struct AssistantChatView: View {
                         .foregroundStyle(.secondary)
                 }
             }
+        }
+        .navigationDestination(isPresented: $showSmokeContextPacket) {
+            AssistantContextDebugView()
         }
         .task {
             if let initial = initialMessage, viewModel.messages.isEmpty {
@@ -169,10 +173,20 @@ struct AssistantChatView: View {
         }
     }
 
+    @MainActor
     private func runSmokePrompts() async {
+        AssistantSmokeAutomation.logger.log("SMOKE_EVENT ASSISTANT_OPEN_CONTEXT_PACKET")
+        showSmokeContextPacket = true
+        AssistantSmokeAutomation.logger.log("SMOKE_EVENT ASSISTANT_CONTEXT_FETCH")
+        _ = try? await BootstrapService.shared.fetchAssistantContext()
+        try? await Task.sleep(for: .seconds(4))
+        showSmokeContextPacket = false
+        try? await Task.sleep(for: .milliseconds(800))
+
         let prompts = [
-            "What is going on recently?",
-            "What are the top urgent contacts right now?"
+            "Winship hardscape",
+            "What projects do you have",
+            "What is going on recently?"
         ]
 
         for prompt in prompts {

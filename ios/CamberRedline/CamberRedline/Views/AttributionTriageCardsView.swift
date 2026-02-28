@@ -297,7 +297,25 @@ struct AttributionTriageCardsView: View {
             return
         }
 
-        let steps = min(5, viewModel.queue.count)
+        // P0 validation: ensure BizDev / No Project action exists and is wired.
+        // Show the project picker sheet long enough for the simulator smoke harness
+        // to capture screenshot/video evidence.
+        if let card = viewModel.queue.first {
+            pickerMode = .project
+            pickerCard = card
+            showProjectPicker = true
+            TriageSmokeAutomation.logger.log("SMOKE_EVENT TRIAGE_OPEN_PICKER queue=\(card.queueId, privacy: .public)")
+            try? await Task.sleep(for: .seconds(5))
+
+            TriageSmokeAutomation.logger.log("SMOKE_EVENT TRIAGE_BIZDEV queue=\(card.queueId, privacy: .public)")
+            await viewModel.dismiss(card, reason: "bizdev_no_project", notes: "no_project_selected")
+
+            showProjectPicker = false
+            pickerCard = nil
+            try? await Task.sleep(for: .seconds(1))
+        }
+
+        let steps = min(4, viewModel.queue.count)
         for index in 0..<steps {
             guard let card = viewModel.queue.first else { break }
 

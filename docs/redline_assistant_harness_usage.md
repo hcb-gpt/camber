@@ -10,6 +10,8 @@ Purpose:
   1. `Winship hardscape`
   2. `What projects do you have`
 - Verifies both responses contain `Winship Residence`.
+- Verifies Q1 includes a concrete recent fact (interaction id `cll_*` or numeric calls/claims/loops/reviews fact).
+- Captures request IDs + assistant-context contract metadata from response headers.
 - Stores raw SSE + parsed text artifacts in `artifacts/redline_assistant_harness/<timestamp>/`.
 
 Usage:

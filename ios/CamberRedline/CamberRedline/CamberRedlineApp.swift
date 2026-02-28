@@ -126,7 +126,11 @@ struct CamberRedlineApp: App {
         try? await Task.sleep(for: .milliseconds(1200))
         NotificationCenter.default.post(name: AppSmokeAutomation.assistantNotification, object: nil)
 
-        try? await Task.sleep(for: .seconds(10))
+        // Keep the assistant tab visible long enough for:
+        // - assistant-context fetch
+        // - 3 smoke prompts
+        // - screenshots from the simulator harness
+        try? await Task.sleep(for: .seconds(18))
         selectedTab = 0
         AppSmokeAutomation.logger.log("SMOKE_EVENT END")
     }
