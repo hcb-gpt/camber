@@ -5,9 +5,34 @@ set -euo pipefail
 #
 # Usage:
 #   scripts/check_migration_version_collisions.sh
+#   scripts/check_migration_version_collisions.sh --help
 # Exit codes:
 #   0 = no collisions
 #   1 = collisions found
+#   2 = invalid arguments
+
+print_help() {
+  cat <<'EOF'
+Usage: scripts/check_migration_version_collisions.sh [--help|-h]
+
+Detect duplicate migration version prefixes in supabase/migrations.
+Exit codes:
+  0 = no collisions
+  1 = collisions found
+  2 = invalid arguments
+EOF
+}
+
+if [[ "${1:-}" == "--help" || "${1:-}" == "-h" ]]; then
+  print_help
+  exit 0
+fi
+
+if [[ $# -gt 0 ]]; then
+  echo "ERROR: unknown argument: $1" >&2
+  print_help >&2
+  exit 2
+fi
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 MIG_DIR="${ROOT_DIR}/supabase/migrations"
