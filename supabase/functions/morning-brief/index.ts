@@ -460,7 +460,12 @@ function buildPage(
     return r.json();
   }
   async function loadFeedback(token){
-    try{var r=await fetch(VALIDATION_URL+"?filter=all&limit=500",{headers:{"Authorization":"Bearer "+token}});if(!r.ok)return{};var d=await r.json();return d.feedback_map||{};}catch(e){return{};}
+    var r;
+    try{r=await fetch(VALIDATION_URL+"?filter=all&limit=500",{headers:{"Authorization":"Bearer "+token}});}catch(e){throw new Error("feedback_fetch_network_error: "+(e instanceof Error?e.message:"unknown"));}
+    if(!r.ok)throw new Error("feedback_fetch_failed: HTTP "+r.status);
+    var d;
+    try{d=await r.json();}catch(e){throw new Error("feedback_parse_error: invalid JSON from validation endpoint");}
+    return d.feedback_map||{};
   }
 
   function processData(data){
