@@ -1,8 +1,9 @@
 import "jsr:@supabase/functions-js/edge-runtime.d.ts";
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
 
-const FUNCTION_VERSION = "redline-thread_v3.2.0";
+const FUNCTION_VERSION = "redline-thread_v3.2.1";
 /**
+ * v3.2.1 - Fix typo interactionClaims -> _interactionClaims
  * v3.1.2 - iOS Contract Fix (P0 Unbrick)
  * - Map DB 'id' to 'span_id' and 'claim_id' for iOS compatibility
  * - Closes visibility gap for beside_threads
@@ -1400,7 +1401,7 @@ async function handleThread(
           confidence: attr?.confidence,
         };
       }),
-      claims: interactionClaims,
+      claims: _interactionClaims,
     };
   });
 
