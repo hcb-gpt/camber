@@ -1374,7 +1374,7 @@ async function handleThread(
   const projectNameById = new Map((projectNamesRes.data || []).map((p: any) => [p.id, p.name]));
 
   const callEntries = allInteractions.filter((i: any) => pagedCallIds.includes(i.interaction_id)).map((i: any) => {
-    const _interactionClaims = (claimsByCall.get(i.interaction_id) || []).map((c: any) => {
+    const interactionClaims = (claimsByCall.get(i.interaction_id) || []).map((c: any) => {
       const g = gradeByClaim.get(c.id);
       return {
         ...c,
