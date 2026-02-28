@@ -85,6 +85,15 @@ struct AttributionTriageCardsView: View {
                         onDismissItem: {
                             Task { await viewModel.dismiss(card) }
                         },
+                        onBizDevNoProject: {
+                            Task {
+                                await viewModel.dismiss(
+                                    card,
+                                    reason: "bizdev_no_project",
+                                    notes: "no_project_selected"
+                                )
+                            }
+                        },
                         showsDismissAction: pickerMode != .commentOnly
                     )
                 }
