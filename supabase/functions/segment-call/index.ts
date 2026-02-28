@@ -618,6 +618,11 @@ Deno.serve(async (req: Request) => {
     }
 
     if (!hasValidEdgeSecret && !hasValidJwt) {
+      console.error(
+        `[segment-call] AUTH_FAILED run_id=${run_id} edge_secret_present=${
+          Boolean(edgeSecretHeader)
+        } auth_header_present=${Boolean(authHeader)}`,
+      );
       await logDiagnostic("AUTH_FAILED", {
         reason: "edge_secret_or_allowed_jwt_required",
         edge_secret_present: Boolean(edgeSecretHeader),
