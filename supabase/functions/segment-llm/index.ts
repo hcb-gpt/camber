@@ -15,9 +15,14 @@
  * - Never drops transcript content
  */
 import "jsr:@supabase/functions-js/edge-runtime.d.ts";
+import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
 import { parseLlmJson } from "../_shared/llm_json.ts";
+import { getModelConfigCached } from "../_shared/model_config.ts";
 
-const SEGMENT_LLM_VERSION = "segment-llm_v1.5.0";
+const SEGMENT_LLM_VERSION = "segment-llm_v1.5.1";
+const DEFAULT_MODEL_ID = "gpt-4o-mini";
+const DEFAULT_MAX_TOKENS = 1024;
+const DEFAULT_TEMPERATURE = 0;
 
 // ============================================================
 // STRUCTURED LOGGING (per GPT-DEV-6 spec)
@@ -373,6 +378,29 @@ Deno.serve(async (req: Request) => {
     console.error("[segment-llm] OPENAI_API_KEY not configured");
     return fallbackResponse(transcriptLength, ["config_error_no_api_key"], t0);
   }
+  const supabaseUrl = Deno.env.get("SUPABASE_URL");
+  const serviceRoleKey = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY");
+  let runtimeModelId = DEFAULT_MODEL_ID;
+  let runtimeMaxTokens = DEFAULT_MAX_TOKENS;
+  let runtimeTemperature = DEFAULT_TEMPERATURE;
+  if (supabaseUrl && serviceRoleKey) {
+    try {
+      const db = createClient(supabaseUrl, serviceRoleKey);
+      const modelConfig = await getModelConfigCached(db, {
+        functionName: "segment-llm",
+        modelId: DEFAULT_MODEL_ID,
+        maxTokens: DEFAULT_MAX_TOKENS,
+        temperature: DEFAULT_TEMPERATURE,
+      });
+      runtimeModelId = modelConfig.modelId;
+      runtimeMaxTokens = modelConfig.maxTokens;
+      runtimeTemperature = modelConfig.temperature;
+    } catch (error: any) {
+      console.warn(
+        `[segment-llm] model config lookup failed, using defaults: ${error?.message || "unknown_error"}`,
+      );
+    }
+  }
 
   const promptTemplate = segmentationChannel === "sms_thread" ? SMS_SEGMENTATION_PROMPT : CALL_SEGMENTATION_PROMPT;
   const prompt = promptTemplate
@@ -389,8 +417,9 @@ Deno.serve(async (req: Request) => {
         "Authorization": `Bearer ${openaiKey}`,
       },
       body: JSON.stringify({
-        model: "gpt-4o-mini",
-        max_tokens: 1024,
+        model: runtimeModelId,
+        max_tokens: runtimeMaxTokens,
+        temperature: runtimeTemperature,
         messages: [
           {
             role: "user",
@@ -578,8 +607,9 @@ Deno.serve(async (req: Request) => {
           "Authorization": `Bearer ${openaiKey}`,
         },
         body: JSON.stringify({
-          model: "gpt-4o-mini",
-          max_tokens: 1024,
+          model: runtimeModelId,
+          max_tokens: runtimeMaxTokens,
+          temperature: runtimeTemperature,
           messages: [
             {
               role: "user",

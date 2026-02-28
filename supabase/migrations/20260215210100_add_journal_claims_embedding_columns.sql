@@ -7,7 +7,6 @@ ALTER TABLE public.journal_claims
   ADD COLUMN IF NOT EXISTS embedding extensions.vector(1536),
   ADD COLUMN IF NOT EXISTS embedding_model text,
   ADD COLUMN IF NOT EXISTS embedding_version text;
-
 COMMENT ON COLUMN public.journal_claims.search_text IS 'Concatenated searchable text derived from claim_text + context. Used as embedding input.';
 COMMENT ON COLUMN public.journal_claims.embedding IS 'Vector embedding of search_text. Dimension=1536 (text-embedding-3-small).';
 COMMENT ON COLUMN public.journal_claims.embedding_model IS 'Model used to generate embedding (e.g., text-embedding-3-small).';

@@ -1,5 +1,3 @@
--- Harden auto_assign_project: add SET search_path = public for security
--- Applied from browser session; synced to git for git-first compliance.
 
 CREATE OR REPLACE FUNCTION public.auto_assign_project(p_interaction_id text)
  RETURNS jsonb
@@ -37,7 +35,7 @@ BEGIN
     AND p.status IN ('active', 'warranty', 'estimating')
     AND p.project_kind = 'client';
 
-  -- RULE 1: Single-project contact -> auto-assign
+  -- RULE 1: Single-project contact → auto-assign
   IF v_project_count = 1 THEN
     SELECT p.id INTO v_top_project_id
     FROM project_contacts pc
@@ -65,7 +63,7 @@ BEGIN
   -- Now check candidates for remaining rules
   IF v_candidate_projects IS NULL OR jsonb_array_length(v_candidate_projects) = 0 THEN
     RETURN jsonb_build_object(
-      'assigned', false,
+      'assigned', false, 
       'reason', 'no_candidates',
       'contact_project_count', v_project_count
     );
@@ -73,7 +71,7 @@ BEGIN
 
   v_num_candidates := jsonb_array_length(v_candidate_projects);
 
-  -- RULE 1.5 (R2): Solo candidate + contact has <=3 active projects -> auto-assign
+  -- RULE 1.5 (R2): Solo candidate + contact has ≤3 active projects → auto-assign
   IF v_num_candidates = 1 AND v_project_count <= 3 THEN
     IF jsonb_typeof(v_candidate_projects->0) = 'string' THEN
       v_top_project_id := (v_candidate_projects->>0)::uuid;
@@ -82,8 +80,8 @@ BEGIN
     END IF;
 
     IF EXISTS (
-      SELECT 1 FROM projects p
-      WHERE p.id = v_top_project_id
+      SELECT 1 FROM projects p 
+      WHERE p.id = v_top_project_id 
         AND p.status IN ('active', 'warranty', 'estimating')
     ) THEN
       UPDATE interactions
@@ -103,9 +101,9 @@ BEGIN
   END IF;
 
   -- RULE 2: Score-based auto-assign (v3 format only)
-  IF jsonb_typeof(v_candidate_projects->0) = 'object'
+  IF jsonb_typeof(v_candidate_projects->0) = 'object' 
      AND v_candidate_projects->0 ? 'score' THEN
-
+    
     SELECT c INTO v_top_candidate
     FROM jsonb_array_elements(v_candidate_projects) c
     ORDER BY (c->>'score')::numeric DESC
@@ -114,9 +112,9 @@ BEGIN
     v_top_score := (v_top_candidate->>'score')::numeric;
     v_top_project_id := (v_top_candidate->>'id')::uuid;
     v_confidence := (
-      SELECT (c->>'confidence')::numeric
-      FROM jsonb_array_elements(v_candidate_projects) c
-      ORDER BY (c->>'score')::numeric DESC
+      SELECT (c->>'confidence')::numeric 
+      FROM jsonb_array_elements(v_candidate_projects) c 
+      ORDER BY (c->>'score')::numeric DESC 
       LIMIT 1
     );
 
@@ -129,10 +127,10 @@ BEGIN
       v_second_score := 0;
     END IF;
 
-    IF v_top_score >= 150
+    IF v_top_score >= 150 
        AND (v_second_score = 0 OR v_top_score >= v_second_score * 2)
        AND (v_confidence IS NULL OR v_confidence >= 0.55) THEN
-
+      
       UPDATE interactions
       SET project_id = v_top_project_id,
           needs_review = false,
@@ -167,3 +165,4 @@ BEGIN
   );
 END;
 $function$;
+;

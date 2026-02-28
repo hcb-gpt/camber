@@ -30,10 +30,14 @@
 import "jsr:@supabase/functions-js/edge-runtime.d.ts";
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
 
+const FUNCTION_VERSION = "review-resolve_v3.2.0";
+type ReviewQueueSource = "pipeline" | "redline";
+
 interface ResolveRequest {
   review_queue_id: string;
   chosen_project_id: string;
   notes?: string;
+  source?: string;
 }
 
 Deno.serve(async (req: Request) => {
@@ -53,7 +57,7 @@ Deno.serve(async (req: Request) => {
     return jsonResponse({ error: "Invalid JSON" }, 400);
   }
 
-  const { review_queue_id, chosen_project_id, notes } = body;
+  const { review_queue_id, chosen_project_id, notes, source } = body;
 
   if (!review_queue_id || !isValidUUID(review_queue_id)) {
     return jsonResponse({ error: "missing_or_invalid_review_queue_id" }, 400);
@@ -104,6 +108,9 @@ Deno.serve(async (req: Request) => {
     Deno.env.get("SUPABASE_URL")!,
     Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!,
   );
+  const writeSource = normalizeReviewQueueSource(source, "pipeline");
+
+  await tagReviewQueueSource(db, review_queue_id, writeSource, "review-resolve");
 
   // ========================================
   // 4. CALL RPC (single transaction)
@@ -193,9 +200,9 @@ Deno.serve(async (req: Request) => {
     const { error: lineageErr } = await db.from("evidence_events").upsert({
       source_type: "lineage",
       source_id: review_queue_id,
-      source_run_id: "review-resolve:v3.1.0",
+      source_run_id: `review-resolve:${FUNCTION_VERSION}`,
       transcript_variant: "baseline",
-      metadata: { edges: lineageEdges, pipeline_version: "v3.1.0" },
+      metadata: { edges: lineageEdges, pipeline_version: FUNCTION_VERSION, source: writeSource },
     }, { onConflict: "source_type,source_id,transcript_variant" });
     if (lineageErr) console.warn(`lineage_emit: ${lineageErr.message}`);
   } catch { /* lineage emission must never block the response */ }
@@ -219,4 +226,37 @@ function jsonResponse(data: Record<string, unknown>, status: number): Response {
 
 function isValidUUID(str: string): boolean {
   return /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(str);
+}
+
+function normalizeReviewQueueSource(
+  raw: unknown,
+  fallback: ReviewQueueSource = "pipeline",
+): ReviewQueueSource {
+  const normalized = String(raw || "").trim().toLowerCase();
+  if (normalized === "redline") return "redline";
+  if (normalized === "pipeline") return "pipeline";
+  return fallback;
+}
+
+async function tagReviewQueueSource(
+  db: any,
+  reviewQueueId: string,
+  source: ReviewQueueSource,
+  ctx: string,
+): Promise<void> {
+  const { error } = await db
+    .from("review_queue")
+    .update({ source })
+    .eq("id", reviewQueueId);
+
+  if (!error) return;
+  if (isMissingReviewQueueSourceColumnError(error.message)) {
+    console.warn(`[${ctx}] review_queue.source column missing; skipped source tag (${source})`);
+    return;
+  }
+  console.warn(`[${ctx}] review_queue source tag warning: ${error.message}`);
+}
+
+function isMissingReviewQueueSourceColumnError(message: string): boolean {
+  return /column .*source.* does not exist/i.test(message);
 }

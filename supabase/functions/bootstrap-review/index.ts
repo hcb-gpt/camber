@@ -1,7 +1,7 @@
 import "jsr:@supabase/functions-js/edge-runtime.d.ts";
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
 
-const FUNCTION_VERSION = "bootstrap-review_v1.1.4";
+const FUNCTION_VERSION = "bootstrap-review_v1.1.5";
 type ReviewQueueSource = "pipeline" | "redline";
 
 // ─── Helpers ─────────────────────────────────────────────────────────
@@ -50,6 +50,61 @@ function isMissingReviewQueueSourceColumnError(message: string): boolean {
   return /column .*source.* does not exist/i.test(message);
 }
 
+function isMissingColumnError(message: string, column: string): boolean {
+  const escapedColumn = column.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  return new RegExp(`column .*${escapedColumn}.* does not exist`, "i").test(
+    message,
+  );
+}
+
+function isAllowedQueueModule(raw: unknown): boolean {
+  const module = String(raw || "").trim().toLowerCase();
+  return module === "" || module === "attribution";
+}
+
+function normalizeQueueItemForIOS(item: any): any | null {
+  const spanId = String(item?.span_id || "").trim();
+  if (!isValidUUID(spanId)) return null;
+  if (!isAllowedQueueModule(item?.module)) return null;
+
+  const transcriptSegment = typeof item?.transcript_segment === "string"
+    ? item.transcript_segment
+    : typeof item?.context_payload?.transcript_snippet === "string"
+    ? item.context_payload.transcript_snippet
+    : "";
+
+  return {
+    ...item,
+    span_id: spanId,
+    transcript_segment: transcriptSegment,
+  };
+}
+
+async function countPendingQueueItemsForIOS(db: any): Promise<number> {
+  const base = db
+    .from("review_queue")
+    .select("id", { count: "exact", head: true })
+    .eq("status", "pending")
+    .not("span_id", "is", null);
+
+  const { count, error } = await base.or("module.eq.attribution,module.is.null");
+  if (!error) return count || 0;
+
+  if (isMissingColumnError(error.message || "", "module")) {
+    const { count: fallbackCount, error: fallbackErr } = await db
+      .from("review_queue")
+      .select("id", { count: "exact", head: true })
+      .eq("status", "pending")
+      .not("span_id", "is", null);
+    if (!fallbackErr) return fallbackCount || 0;
+    console.warn(`[bootstrap-review:queue] pending count fallback failed: ${fallbackErr.message}`);
+    return 0;
+  }
+
+  console.warn(`[bootstrap-review:queue] pending count failed: ${error.message}`);
+  return 0;
+}
+
 async function tagReviewQueueSource(
   db: any,
   reviewQueueId: string,
@@ -69,21 +124,64 @@ async function tagReviewQueueSource(
 }
 
 async function fetchReviewProjects(db: any): Promise<any[]> {
-  const { data, error } = await db
+  const inactiveStatuses = new Set([
+    "archived",
+    "closed",
+    "completed",
+    "done",
+    "inactive",
+    "on_hold",
+    "on hold",
+    "paused",
+    "prospect",
+    "pipeline",
+    "cancelled",
+    "canceled",
+  ]);
+
+  const excludedProjectNames = new Set([
+    "Business Development & Networking",
+    "Overhead / Internal Operations",
+  ]);
+
+  const pickerLabelBySourceName = new Map<string, string>([
+    ["Hurley Residence", "Hurley Residence"],
+    ["Moss Residence", "Moss Residence"],
+    ["Permar Residence", "Permar Home"],
+    ["Permar Home", "Permar Home"],
+    ["Skelton Residence", "Skelton Residence"],
+    ["Winship Residence", "Winship Residence"],
+    ["Woodbery Residence", "Woodbery Residence"],
+    ["Young Residence", "Young Residence"],
+  ]);
+
+  const { data: withStatus, error: withStatusErr } = await db
     .from("projects")
-    .select("id, name")
-    .eq("status", "active")
+    .select("id, name, status")
     .order("name");
 
-  if (error) {
-    console.warn(`[bootstrap-review] fetchReviewProjects failed: ${error.message}`);
-    return [];
+  if (!withStatusErr && withStatus) {
+    return withStatus
+      .filter((project: any) => {
+        const name = String(project?.name || "").trim();
+        if (excludedProjectNames.has(name)) return false;
+        const status = String(project?.status || "").trim().toLowerCase();
+        if (status && inactiveStatuses.has(status)) return false;
+        return pickerLabelBySourceName.has(name);
+      })
+      .map((project: any) => ({
+        id: project.id,
+        name: pickerLabelBySourceName.get(String(project?.name || "").trim()) || project.name,
+      }));
   }
 
-  return (data || []).map((project: any) => ({
-    id: project.id,
-    name: project.name,
-  }));
+  const { data: fallback, error: fallbackErr } = await db
+    .from("projects")
+    .select("id, name")
+    .order("name");
+
+  if (fallbackErr) return [];
+  return fallback || [];
 }
 
 async function handleProjects(db: any, t0: number): Promise<Response> {
@@ -104,119 +202,133 @@ async function handleQueue(
   limit: number,
   t0: number,
 ): Promise<Response> {
-  // Fetch pending review items with all context
-  const { data: queueItems, error: queueErr } = await db
-    .rpc("bootstrap_review_queue", { p_limit: limit })
-    .select("*");
+  // Fetch pending span-based review rows directly so filtering happens
+  // before LIMIT (avoids empty pages with nonzero pending totals).
+  const queueSelect = "id, span_id, interaction_id, context_payload, reasons, reason_codes, module, status, created_at";
 
-  // If RPC doesn't exist, fall back to raw query via .from()
-  let items: any[] = [];
-  if (queueErr) {
-    // Fallback: manual join via multiple queries
-    const { data: rqData, error: rqErr } = await db
+  let rqData: any[] | null = null;
+  let rqErr: any = null;
+  {
+    const primary = await db
       .from("review_queue")
-      .select(
-        "id, span_id, interaction_id, context_payload, reasons, reason_codes, module, status, created_at",
-      )
+      .select(queueSelect)
       .eq("status", "pending")
+      .not("span_id", "is", null)
+      .or("module.eq.attribution,module.is.null")
       .order("created_at", { ascending: false })
       .limit(limit);
+    rqData = primary.data;
+    rqErr = primary.error;
 
-    if (rqErr) {
-      return json({
-        ok: false,
-        error_code: "queue_query_failed",
-        error: rqErr.message,
-      }, 500);
+    if (rqErr && isMissingColumnError(rqErr.message || "", "module")) {
+      const fallback = await db
+        .from("review_queue")
+        .select(queueSelect)
+        .eq("status", "pending")
+        .not("span_id", "is", null)
+        .order("created_at", { ascending: false })
+        .limit(limit);
+      rqData = fallback.data;
+      rqErr = fallback.error;
     }
-
-    if (!rqData || rqData.length === 0) {
-      const projects = await fetchReviewProjects(db);
-      return json({
-        ok: true,
-        items: [],
-        projects,
-        total_pending: 0,
-        function_version: FUNCTION_VERSION,
-        ms: Date.now() - t0,
-      });
-    }
-
-    // Batch fetch related data
-    const spanIds = rqData
-      .map((r: any) => r.span_id)
-      .filter((id: string) => id);
-    const interactionIds = [
-      ...new Set(rqData.map((r: any) => r.interaction_id).filter(Boolean)),
-    ];
-
-    // Parallel fetches
-    const [spansRes, attrsRes, interactionsRes, callsRes] = await Promise.all([
-      spanIds.length > 0
-        ? db
-          .from("conversation_spans")
-          .select("id, transcript_segment, interaction_id")
-          .in("id", spanIds)
-        : Promise.resolve({ data: [], error: null }),
-      spanIds.length > 0
-        ? db
-          .from("span_attributions")
-          .select("span_id, confidence, project_id, decision")
-          .in("span_id", spanIds)
-        : Promise.resolve({ data: [], error: null }),
-      interactionIds.length > 0
-        ? db
-          .from("interactions")
-          .select("interaction_id, contact_name, human_summary, event_at_utc")
-          .in("interaction_id", interactionIds)
-        : Promise.resolve({ data: [], error: null }),
-      interactionIds.length > 0
-        ? db
-          .from("calls_raw")
-          .select("interaction_id, transcript")
-          .in("interaction_id", interactionIds)
-        : Promise.resolve({ data: [], error: null }),
-    ]);
-
-    const spanMap = new Map(
-      (spansRes.data || []).map((s: any) => [s.id, s]),
-    );
-    const attrMap = new Map(
-      (attrsRes.data || []).map((a: any) => [a.span_id, a]),
-    );
-    const interactionMap = new Map(
-      (interactionsRes.data || []).map((i: any) => [i.interaction_id, i]),
-    );
-    const callMap = new Map(
-      (callsRes.data || []).map((c: any) => [c.interaction_id, c]),
-    );
-
-    items = rqData.map((rq: any) => {
-      const span: any = spanMap.get(rq.span_id) || {};
-      const attr: any = attrMap.get(rq.span_id) || {};
-      const interaction: any = interactionMap.get(rq.interaction_id) || {};
-      const call: any = callMap.get(rq.interaction_id) || {};
-      return {
-        id: rq.id,
-        span_id: rq.span_id,
-        interaction_id: rq.interaction_id,
-        created_at: rq.created_at || null,
-        event_at: interaction.event_at_utc || null,
-        context_payload: rq.context_payload,
-        reasons: rq.reasons,
-        reason_codes: rq.reason_codes,
-        transcript_segment: span.transcript_segment || null,
-        confidence: attr.confidence || null,
-        ai_guess_project_id: attr.project_id || null,
-        decision: attr.decision || null,
-        full_transcript: call.transcript || null,
-        contact_name: interaction.contact_name || null,
-        human_summary: interaction.human_summary || null,
-      };
-    });
-  } else {
-    items = queueItems || [];
   }
+
+  if (rqErr) {
+    return json({
+      ok: false,
+      error_code: "queue_query_failed",
+      error: rqErr.message,
+    }, 500);
+  }
+
+  if (!rqData || rqData.length === 0) {
+    const projects = await fetchReviewProjects(db);
+    return json({
+      ok: true,
+      items: [],
+      projects,
+      total_pending: 0,
+      function_version: FUNCTION_VERSION,
+      ms: Date.now() - t0,
+    });
+  }
+
+  // Batch fetch related data
+  const spanIds = rqData
+    .map((r: any) => r.span_id)
+    .filter((id: string) => id);
+  const interactionIds = [
+    ...new Set(rqData.map((r: any) => r.interaction_id).filter(Boolean)),
+  ];
+
+  // Parallel fetches
+  const [spansRes, attrsRes, interactionsRes, callsRes] = await Promise.all([
+    spanIds.length > 0
+      ? db
+        .from("conversation_spans")
+        .select("id, transcript_segment, interaction_id")
+        .in("id", spanIds)
+      : Promise.resolve({ data: [], error: null }),
+    spanIds.length > 0
+      ? db
+        .from("span_attributions")
+        .select("span_id, confidence, project_id, decision")
+        .in("span_id", spanIds)
+      : Promise.resolve({ data: [], error: null }),
+    interactionIds.length > 0
+      ? db
+        .from("interactions")
+        .select("interaction_id, contact_name, human_summary, event_at_utc")
+        .in("interaction_id", interactionIds)
+      : Promise.resolve({ data: [], error: null }),
+    interactionIds.length > 0
+      ? db
+        .from("calls_raw")
+        .select("interaction_id, transcript")
+        .in("interaction_id", interactionIds)
+      : Promise.resolve({ data: [], error: null }),
+  ]);
+
+  const spanMap = new Map(
+    (spansRes.data || []).map((s: any) => [s.id, s]),
+  );
+  const attrMap = new Map(
+    (attrsRes.data || []).map((a: any) => [a.span_id, a]),
+  );
+  const interactionMap = new Map(
+    (interactionsRes.data || []).map((i: any) => [i.interaction_id, i]),
+  );
+  const callMap = new Map(
+    (callsRes.data || []).map((c: any) => [c.interaction_id, c]),
+  );
+
+  let items: any[] = rqData.map((rq: any) => {
+    const span: any = spanMap.get(rq.span_id) || {};
+    const attr: any = attrMap.get(rq.span_id) || {};
+    const interaction: any = interactionMap.get(rq.interaction_id) || {};
+    const call: any = callMap.get(rq.interaction_id) || {};
+    return {
+      id: rq.id,
+      span_id: rq.span_id,
+      interaction_id: rq.interaction_id,
+      created_at: rq.created_at || null,
+      event_at: interaction.event_at_utc || null,
+      context_payload: rq.context_payload,
+      reasons: rq.reasons,
+      reason_codes: rq.reason_codes,
+      transcript_segment: span.transcript_segment || null,
+      confidence: attr.confidence || null,
+      ai_guess_project_id: attr.project_id || null,
+      decision: attr.decision || null,
+      full_transcript: call.transcript || null,
+      contact_name: interaction.contact_name || null,
+      human_summary: interaction.human_summary || null,
+    };
+  });
+
+  items = items
+    .map(normalizeQueueItemForIOS)
+    .filter((item: any): item is any => item !== null);
 
   // Sort by most recent first for feed-style triage.
   items.sort((a: any, b: any) => {
@@ -227,10 +339,7 @@ async function handleQueue(
   });
 
   // Get total pending count
-  const { count: totalPending } = await db
-    .from("review_queue")
-    .select("id", { count: "exact", head: true })
-    .eq("status", "pending");
+  const totalPending = await countPendingQueueItemsForIOS(db);
 
   // Fetch active projects for attribution picker.
   const projects = await fetchReviewProjects(db);
