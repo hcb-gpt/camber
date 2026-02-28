@@ -28,7 +28,7 @@ final class AssistantViewModel: ObservableObject {
         currentInput = ""
         isLoading = true
 
-        var assistantMsg = AssistantMessage(role: .assistant, content: "")
+        let assistantMsg = AssistantMessage(role: .assistant, content: "")
         messages.append(assistantMsg)
         let assistantIndex = messages.count - 1
 
@@ -43,9 +43,7 @@ final class AssistantViewModel: ObservableObject {
                 messages[assistantIndex].content += chunk
             }
         } catch {
-            messages[assistantIndex].content += "
-
-Error: \(error.localizedDescription)"
+            messages[assistantIndex].content += "\n\nError: \(error.localizedDescription)"
         }
 
         isLoading = false
