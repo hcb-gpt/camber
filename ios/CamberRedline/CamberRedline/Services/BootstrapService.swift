@@ -106,6 +106,82 @@ final class BootstrapService {
         try decodeOkResponse(data, action: "undo")
     }
 
+    // MARK: - Assistant Context
+
+    private let assistantContextURL = URL(
+        string: "https://rjhdwidddtfetbwqolof.supabase.co/functions/v1/assistant-context"
+    )!
+
+    func fetchAssistantContext(projectId: String? = nil) async throws -> AssistantContextPacket {
+        var components = URLComponents(url: assistantContextURL, resolvingAgainstBaseURL: false)!
+        var queryItems: [URLQueryItem] = []
+        if let projectId {
+            queryItems.append(URLQueryItem(name: "project_id", value: projectId))
+        }
+        components.queryItems = queryItems.isEmpty ? nil : queryItems
+
+        guard let url = components.url else {
+            throw BootstrapServiceError.invalidURL
+        }
+
+        let (data, response) = try await session.data(from: url)
+        try validateHTTPResponse(response)
+        return try decoder.decode(AssistantContextPacket.self, from: data)
+    }
+
+    // MARK: - Assistant Chat
+
+    private let assistantChatURL = URL(
+        string: "https://rjhdwidddtfetbwqolof.supabase.co/functions/v1/redline-assistant"
+    )!
+
+    func streamAssistantChat(
+        message: String,
+        contactId: String? = nil,
+        projectId: String? = nil
+    ) async throws -> AsyncThrowingStream<String, Error> {
+        var request = URLRequest(url: assistantChatURL)
+        request.httpMethod = "POST"
+        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+
+        let body: [String: Any] = [
+            "message": message,
+            "contact_id": contactId as Any,
+            "project_id": projectId as Any
+        ].compactMapValues { $0 }
+
+        request.httpBody = try JSONSerialization.data(withJSONObject: body)
+
+        let (bytes, response) = try await session.bytes(for: request)
+        try validateHTTPResponse(response)
+
+        return AsyncThrowingStream { continuation in
+            Task {
+                do {
+                    for try await line in bytes.lines {
+                        if line.hasPrefix("data: ") {
+                            let jsonStr = String(line.dropFirst(6))
+                            if jsonStr == "[DONE]" {
+                                continuation.finish()
+                                return
+                            }
+                            if let data = jsonStr.data(using: .utf8),
+                               let chunk = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+                               let choices = chunk["choices"] as? [[String: Any]],
+                               let delta = choices.first?["delta"] as? [String: Any],
+                               let content = delta["content"] as? String {
+                                continuation.yield(content)
+                            }
+                        }
+                    }
+                    continuation.finish()
+                } catch {
+                    continuation.finish(throwing: error)
+                }
+            }
+        }
+    }
+
     // MARK: - Helpers
 
     private func post<T: Encodable>(action: String, body: T) async throws -> Data {
