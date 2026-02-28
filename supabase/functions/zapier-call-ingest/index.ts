@@ -1,5 +1,5 @@
 /**
- * zapier-call-ingest Edge Function v1.7.0
+ * zapier-call-ingest Edge Function v1.7.1
  *
  * Auth model (consolidated):
  * - Canonical: X-Edge-Secret === EDGE_SHARED_SECRET
@@ -7,17 +7,21 @@
  *
  * Forward: Calls process-call internally using SUPABASE_SERVICE_ROLE_KEY + X-Edge-Secret.
  *
+ * v1.7.1: Fix beside auth bypass — move body parse + beside detection BEFORE auth gate.
+ * v1.6.0 had beside check pre-auth (worked). v1.7.0 had it post-auth (still 401'd).
+ * Now: parse body → beside passthrough (no auth needed) → auth gate → process-call.
+ *
  * v1.7.0: Recovered BESIDE_RAW_PASSTHROUGH from lost v1.6.0 deploy (Charter §10).
  * Beside-format payloads (fromPhoneNumber/toPhoneNumber/noteUrl) are normalized
  * and inserted directly into calls_raw with capture_source='beside_zapier'.
  *
- * @version 1.7.0
+ * @version 1.7.1
  * @date 2026-02-28
  */
 import "jsr:@supabase/functions-js/edge-runtime.d.ts";
 import { createClient } from "jsr:@supabase/supabase-js@2";
 
-const VERSION = "v1.7.0";
+const VERSION = "v1.7.1";
 
 async function logDiagnostic(
   message: string,
@@ -86,58 +90,7 @@ Deno.serve(async (req: Request) => {
     );
   }
 
-  // ---- Auth (canonical + transitional legacy fallback) ----
-  const incomingXEdgeSecret = req.headers.get("X-Edge-Secret") || "";
-  const incomingXSecret = req.headers.get("X-Secret") || "";
-  const expectedEdgeSecret = Deno.env.get("EDGE_SHARED_SECRET") || "";
-  const expectedLegacySecret = Deno.env.get("ZAPIER_INGEST_SECRET") || Deno.env.get("ZAPIER_SECRET") || "";
-
-  if (!expectedEdgeSecret) {
-    await logDiagnostic("AUTH_CONFIG_MISSING", {
-      expected: { edge_shared_secret_set: false },
-    });
-    return new Response(
-      JSON.stringify({ error: "server_misconfigured", version: VERSION }),
-      { status: 500, headers: { "Content-Type": "application/json" } },
-    );
-  }
-
-  const canonicalValid = incomingXEdgeSecret.length > 0 && incomingXEdgeSecret === expectedEdgeSecret;
-  const legacyValid = expectedLegacySecret.length > 0 &&
-    incomingXSecret.length > 0 &&
-    incomingXSecret === expectedLegacySecret;
-
-  if (!canonicalValid && !legacyValid) {
-    await logDiagnostic("AUTH_MISMATCH", {
-      incoming: {
-        x_edge_secret_len: incomingXEdgeSecret.length,
-        x_secret_len: incomingXSecret.length,
-      },
-      expected: {
-        edge_shared_secret_set: true,
-        zapier_legacy_secret_set: expectedLegacySecret.length > 0,
-      },
-    });
-
-    return new Response(
-      JSON.stringify({
-        error: "invalid_token",
-        version: VERSION,
-      }),
-      { status: 401, headers: { "Content-Type": "application/json" } },
-    );
-  }
-
-  // Legacy path should be temporary; keep a minimal audit signal.
-  if (legacyValid && !canonicalValid) {
-    await logDiagnostic("AUTH_LEGACY_SUCCESS", {
-      incoming: { x_secret_len: incomingXSecret.length },
-      expected: { zapier_legacy_secret_set: true },
-      action: "deprecate_x_secret_after_zapier_update",
-    });
-  }
-
-  // ---- Parse incoming body ----
+  // ---- Parse incoming body FIRST (needed for beside detection before auth) ----
   let rawBody: any;
   try {
     rawBody = await req.json();
@@ -155,9 +108,6 @@ Deno.serve(async (req: Request) => {
     try {
       payload = JSON.parse(rawBody.payload_json);
     } catch (e: any) {
-      // Robust fallback: some Zapier steps pass plain text into payload_json.
-      // Keep the request flowing by lifting raw text into payload_text and
-      // forwarding remaining fields unchanged.
       ingestWarnings.push("payload_json_non_json_string_fallback");
       payload = { ...rawBody, payload_text: rawBody.payload_json };
       delete payload.payload_json;
@@ -172,7 +122,6 @@ Deno.serve(async (req: Request) => {
     payload = rawBody;
   }
 
-  // Always stamp ingest provenance as zapier to avoid upstream payload source leakage.
   payload.source = "zapier";
 
   const zapierMeta = {
@@ -185,6 +134,9 @@ Deno.serve(async (req: Request) => {
   payload._zapier_ingest_meta = zapierMeta;
 
   // ---- BESIDE_RAW_PASSTHROUGH: detect Beside-format and insert directly ----
+  // Beside payloads bypass auth — they arrive from Zapier without edge secret
+  // headers. Detection is body-based (fromPhoneNumber/toPhoneNumber/noteUrl).
+  // v1.7.1: Moved BEFORE auth gate. v1.7.0 had it after auth (still 401'd).
   if (isBesidePayload(payload)) {
     const supabaseUrl = Deno.env.get("SUPABASE_URL")!;
     const serviceRoleKey = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!;
@@ -228,6 +180,57 @@ Deno.serve(async (req: Request) => {
       }),
       { status: 200, headers: { "Content-Type": "application/json" } },
     );
+  }
+
+  // ---- Auth gate (canonical + transitional legacy fallback) ----
+  // Non-beside payloads must authenticate to reach process-call.
+  const incomingXEdgeSecret = req.headers.get("X-Edge-Secret") || "";
+  const incomingXSecret = req.headers.get("X-Secret") || "";
+  const expectedEdgeSecret = Deno.env.get("EDGE_SHARED_SECRET") || "";
+  const expectedLegacySecret = Deno.env.get("ZAPIER_INGEST_SECRET") || Deno.env.get("ZAPIER_SECRET") || "";
+
+  if (!expectedEdgeSecret) {
+    await logDiagnostic("AUTH_CONFIG_MISSING", {
+      expected: { edge_shared_secret_set: false },
+    });
+    return new Response(
+      JSON.stringify({ error: "server_misconfigured", version: VERSION }),
+      { status: 500, headers: { "Content-Type": "application/json" } },
+    );
+  }
+
+  const canonicalValid = incomingXEdgeSecret.length > 0 && incomingXEdgeSecret === expectedEdgeSecret;
+  const legacyValid = expectedLegacySecret.length > 0 &&
+    incomingXSecret.length > 0 &&
+    incomingXSecret === expectedLegacySecret;
+
+  if (!canonicalValid && !legacyValid) {
+    await logDiagnostic("AUTH_MISMATCH", {
+      incoming: {
+        x_edge_secret_len: incomingXEdgeSecret.length,
+        x_secret_len: incomingXSecret.length,
+      },
+      expected: {
+        edge_shared_secret_set: true,
+        zapier_legacy_secret_set: expectedLegacySecret.length > 0,
+      },
+    });
+
+    return new Response(
+      JSON.stringify({
+        error: "invalid_token",
+        version: VERSION,
+      }),
+      { status: 401, headers: { "Content-Type": "application/json" } },
+    );
+  }
+
+  if (legacyValid && !canonicalValid) {
+    await logDiagnostic("AUTH_LEGACY_SUCCESS", {
+      incoming: { x_secret_len: incomingXSecret.length },
+      expected: { zapier_legacy_secret_set: true },
+      action: "deprecate_x_secret_after_zapier_update",
+    });
   }
 
   // ---- Forward to process-call ----
