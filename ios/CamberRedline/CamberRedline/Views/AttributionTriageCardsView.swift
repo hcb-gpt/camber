@@ -216,12 +216,12 @@ struct AttributionTriageCardsView: View {
                     .foregroundStyle(Color.yesGreen.opacity(0.7))
             }
             HStack(spacing: 0) {
-                Label("UNDECIDED", systemImage: "arrow.up")
+                Label("LATER", systemImage: "arrow.up")
                     .font(.caption2)
                     .fontWeight(.semibold)
                     .foregroundStyle(Color.undoAmber.opacity(0.8))
                 Spacer()
-                Label("COMMENT", systemImage: "arrow.down")
+                Label("NOTE", systemImage: "arrow.down")
                     .font(.caption2)
                     .fontWeight(.semibold)
                     .foregroundStyle(Color.commentBlue.opacity(0.8))
@@ -459,14 +459,14 @@ private struct SwipeableTriageCard: View {
         }
         .overlay(alignment: .top) {
             if offset.height < -40 {
-                swipeLabel("UNDECIDED", icon: "arrow.up", color: .undoAmber)
+                swipeLabel("LATER", icon: "arrow.up", color: .undoAmber)
                     .padding(.top, 16)
                     .opacity(min(1, Double(-offset.height - 40) / 60))
             }
         }
         .overlay(alignment: .bottom) {
             if offset.height > 40 {
-                swipeLabel("COMMENT", icon: "text.bubble", color: .commentBlue)
+                swipeLabel("NOTE", icon: "text.bubble", color: .commentBlue)
                     .padding(.bottom, 16)
                     .opacity(min(1, Double(offset.height - 40) / 60))
             }
