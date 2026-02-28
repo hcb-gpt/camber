@@ -9,7 +9,7 @@ Purpose:
 - Runs two acceptance checks against `redline-assistant`:
   1. `Winship hardscape`
   2. `What projects do you have`
-- Verifies both responses contain `Winship`.
+- Verifies both responses contain `Winship Residence`.
 - Stores raw SSE + parsed text artifacts in `artifacts/redline_assistant_harness/<timestamp>/`.
 
 Usage:
