@@ -558,6 +558,7 @@ async function handleContacts(db: any, url: URL, t0: number): Promise<Response> 
       last_direction: row.last_direction || "",
       last_interaction_type: row.last_interaction_type || "",
     }))
+
     .sort((a: any, b: any) => {
       const aTime = Date.parse(a.last_activity || "") || 0;
       const bTime = Date.parse(b.last_activity || "") || 0;
