@@ -547,8 +547,10 @@ async function handleContacts(db: any, url: URL, t0: number): Promise<Response> 
   }
 
   const contacts = (data || [])
+    .filter((row: any) => row.contact_id != null)
     .map((row: any) => ({
       contact_id: row.contact_id,
+      contact_key: row.contact_id ?? `sms:${(row.contact_phone || "").replace(/\D/g, "").slice(-10)}`,
       name: row.contact_name,
       phone: row.contact_phone,
       call_count: Number(row.call_count ?? 0),

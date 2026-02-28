@@ -61,9 +61,25 @@ final class SupabaseService {
         request.setValue("no-cache", forHTTPHeaderField: "Pragma")
 
         let (data, response) = try await URLSession.shared.data(for: request)
+        let httpStatus = (response as? HTTPURLResponse)?.statusCode ?? -1
         try validateHTTPResponse(response)
 
-        let decoded = try JSONDecoder().decode(ContactsResponse.self, from: data)
+        let decoded: ContactsResponse
+        do {
+            decoded = try JSONDecoder().decode(ContactsResponse.self, from: data)
+        } catch let decodingError as DecodingError {
+            let preview = String(data: data.prefix(300), encoding: .utf8) ?? "<binary>"
+            print("[ContactsDecode] DecodingError: \(decodingError)")
+            if case .typeMismatch(let type, let ctx) = decodingError {
+                print("[ContactsDecode] typeMismatch: expected \(type), codingPath: \(ctx.codingPath.map(\.stringValue))")
+            } else if case .keyNotFound(let key, let ctx) = decodingError {
+                print("[ContactsDecode] keyNotFound: \(key.stringValue), codingPath: \(ctx.codingPath.map(\.stringValue))")
+            } else if case .valueNotFound(let type, let ctx) = decodingError {
+                print("[ContactsDecode] valueNotFound: \(type), codingPath: \(ctx.codingPath.map(\.stringValue))")
+            }
+            print("[ContactsDecode] HTTP \(httpStatus), response preview: \(preview)")
+            throw decodingError
+        }
         guard decoded.ok else {
             throw ServiceError.apiError("Contacts endpoint returned ok=false")
         }
