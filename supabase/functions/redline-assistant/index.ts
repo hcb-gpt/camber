@@ -105,7 +105,8 @@ Deno.serve(async (req) => {
     await Promise.all(promises);
 
     // 2. Build Prompt
-    const systemPrompt = `You are the HCB Redline Assistant. You help Chad (CTO) and Zack (GC) understand what's going on in their construction projects.
+    const systemPrompt =
+      `You are the HCB Redline Assistant. You help Chad (CTO) and Zack (GC) understand what's going on in their construction projects.
 HCB = Heartwood Custom Builders. Zack is the lead GC.
 Use the provided context packet to answer the user's message. 
 Be concise, professional, and builder-focused.
