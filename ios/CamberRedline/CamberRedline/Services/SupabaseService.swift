@@ -124,11 +124,38 @@ final class SupabaseService {
         request.setValue("no-cache", forHTTPHeaderField: "Pragma")
 
         let (data, response) = try await URLSession.shared.data(for: request)
+        let httpStatus = (response as? HTTPURLResponse)?.statusCode ?? -1
         try validateHTTPResponse(response)
 
-        let decoded = try JSONDecoder().decode(ThreadResponse.self, from: data)
+        let decoded: ThreadResponse
+        do {
+            decoded = try JSONDecoder().decode(ThreadResponse.self, from: data)
+        } catch let decodingError as DecodingError {
+            let preview = String(data: data.prefix(300), encoding: .utf8) ?? "<binary>"
+            print("[ThreadDecode] DecodingError: \(decodingError)")
+            if case .typeMismatch(let type, let ctx) = decodingError {
+                print("[ThreadDecode] typeMismatch: expected \(type), codingPath: \(ctx.codingPath.map(\.stringValue))")
+            } else if case .keyNotFound(let key, let ctx) = decodingError {
+                print("[ThreadDecode] keyNotFound: \(key.stringValue), codingPath: \(ctx.codingPath.map(\.stringValue))")
+            } else if case .valueNotFound(let type, let ctx) = decodingError {
+                print("[ThreadDecode] valueNotFound: \(type), codingPath: \(ctx.codingPath.map(\.stringValue))")
+            }
+            print("[ThreadDecode] HTTP \(httpStatus), response preview: \(preview)")
+            throw decodingError
+        }
         guard decoded.ok else {
+            if let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any] {
+                let errorCode = json["error_code"] as? String
+                let errorMsg = json["error"] as? String
+                let detail = [errorCode, errorMsg].compactMap { $0 }.joined(separator: ": ")
+                if !detail.isEmpty {
+                    throw ServiceError.apiError("Thread endpoint: \(detail)")
+                }
+            }
             throw ServiceError.apiError("Thread endpoint returned ok=false")
+        }
+        if decoded.droppedCount > 0 {
+            print("[ThreadDecode] Lossy decode dropped \(decoded.droppedCount) malformed thread items")
         }
         threadCache[cacheKey] = ThreadCacheEntry(response: decoded, fetchedAt: Date())
         return decoded
@@ -381,7 +408,39 @@ struct ThreadResponse: Decodable {
     let contact: ThreadContactInfo
     let thread: [RawThreadItem]
     let pagination: ThreadPagination
+    let droppedCount: Int
+
+    private enum CodingKeys: String, CodingKey {
+        case ok, contact, thread, pagination
+    }
+
+    init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        ok = try container.decode(Bool.self, forKey: .ok)
+        contact = try container.decode(ThreadContactInfo.self, forKey: .contact)
+        pagination = try container.decode(ThreadPagination.self, forKey: .pagination)
+
+        // Lossy array decode: skip individual malformed thread items instead of
+        // failing the entire response.
+        var itemsContainer = try container.nestedUnkeyedContainer(forKey: .thread)
+        var items: [RawThreadItem] = []
+        var dropped = 0
+        while !itemsContainer.isAtEnd {
+            if let item = try? itemsContainer.decode(RawThreadItem.self) {
+                items.append(item)
+            } else {
+                // Skip the bad element by decoding as opaque JSON
+                _ = try? itemsContainer.decode(AnyCodableSkip.self)
+                dropped += 1
+            }
+        }
+        thread = items
+        droppedCount = dropped
+    }
 }
+
+/// Opaque Decodable that consumes one JSON value (used to skip malformed array elements).
+private struct AnyCodableSkip: Decodable {}
 
 struct ReviewResolveResponse: Decodable {
     let ok: Bool?
