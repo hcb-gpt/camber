@@ -1,8 +1,12 @@
 import "jsr:@supabase/functions-js/edge-runtime.d.ts";
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
 
-const FUNCTION_VERSION = "redline-thread_v3.2.2";
+const FUNCTION_VERSION = "redline-thread_v3.3.0";
 /**
+ * v3.3.0 - Contact identity & Dedup (P1 UX Fix)
+ * - Support phone10 deduplication via colliding_contact_ids
+ * - Include company, role, contact_type in contacts list
+ * - Stabilize 'Unknown' names using inferred labels from interactions
  * v3.2.2 - Batch contacts validation query (P0 Orphan Filter Fix)
  * v3.2.1 - Fix typo interactionClaims -> _interactionClaims
  * v3.1.2 - iOS Contract Fix (P0 Unbrick)
@@ -386,6 +390,13 @@ function deriveSmsInteractionKeys(row: any, fallbackPhone: string | null): strin
   return keys;
 }
 
+function isPhoneLike(s: string | null | undefined): boolean {
+  if (!s) return false;
+  const trimmed = s.trim();
+  // Match strings that are mostly digits and phone punctuation
+  return /^\+?[0-9\s\-\(\)\.]{7,}$/.test(trimmed) && trimmed.replace(/\D/g, "").length >= 7;
+}
+
 function deriveContactLastSummary(row: any): string | null {
   const snippet = String(row?.last_snippet || "").trim();
   if (snippet) return snippet;
@@ -556,7 +567,7 @@ async function handleContacts(db: any, url: URL, t0: number): Promise<Response> 
   }
 
   const selectColumns =
-    "contact_id, contact_name, contact_phone, call_count, sms_count, claim_count, ungraded_count, last_activity, last_snippet, last_direction, last_interaction_type";
+    "contact_id, contact_name, contact_phone, company, role, contact_type, is_ambiguous, call_count, sms_count, claim_count, ungraded_count, last_activity, last_snippet, last_direction, last_interaction_type";
 
   const contactsSource = "redline_contacts_unified_matview";
   const { data, error } = await timeDb("db_contacts", () =>
@@ -576,6 +587,10 @@ async function handleContacts(db: any, url: URL, t0: number): Promise<Response> 
       contact_key: row.contact_id ?? `sms:${(row.contact_phone || "").replace(/\D/g, "").slice(-10)}`,
       name: row.contact_name,
       phone: row.contact_phone,
+      company: row.company || null,
+      role: row.role || null,
+      contact_type: row.contact_type || "unknown",
+      is_ambiguous: !!row.is_ambiguous,
       call_count: Number(row.call_count ?? 0),
       sms_count: Number(row.sms_count ?? 0),
       claim_count: Number(row.claim_count ?? 0),
@@ -1134,11 +1149,12 @@ async function handleThread(
   const { data: contactRow, error: contactErr } = await timeDb("db_contact", () =>
     db
       .from("redline_contacts_unified_matview")
-      .select("contact_id, contact_name, contact_phone")
+      .select("contact_id, contact_name, contact_phone, company, role, contact_type, colliding_contact_ids, call_count, sms_count")
       .eq("contact_id", contactId)
       .single());
 
   let resolvedContact = contactRow;
+  let allContactIds = contactRow?.colliding_contact_ids || [contactId];
   const smsOnlyDigits = parseSmsOnlyContactDigits(contactId);
 
   // SMS-only contact fallback: look up name/phone from sms_messages
@@ -1165,7 +1181,9 @@ async function handleThread(
         contact_id: deterministicUUID("sms:" + smsOnlyDigits),
         contact_name: String(latest?.contact_name || "").trim() || smsOnlyDigits,
         contact_phone: String(latest?.contact_phone || "").trim() || smsOnlyDigits,
+        colliding_contact_ids: [deterministicUUID("sms:" + smsOnlyDigits)],
       };
+      allContactIds = resolvedContact.colliding_contact_ids;
     }
   }
 
@@ -1195,7 +1213,7 @@ async function handleThread(
         const { data, error } = await db
           .from("interactions")
           .select("id, interaction_id, event_at_utc, human_summary, contact_name, is_shadow")
-          .eq("contact_id", contactId)
+          .in("contact_id", allContactIds)
           .or("channel.eq.call,channel.eq.phone,channel.is.null")
           .or("is_shadow.is.false,is_shadow.is.null")
           .not("interaction_id", "like", "cll_SHADOW_%")
@@ -1443,6 +1461,19 @@ async function handleThread(
     new Date(a.event_at).getTime() - new Date(b.event_at).getTime()
   );
 
+  const interactionNames = allInteractions
+    .map((i: any) => i.contact_name)
+    .filter((n: string | null) => n && !n.toLowerCase().includes("unknown") && !isPhoneLike(n));
+  const bestInteractionName = interactionNames.length > 0 ? interactionNames[0] : null;
+
+  const displayName = (contact.contact_name && !contact.contact_name.toLowerCase().includes("unknown") && !isPhoneLike(contact.contact_name))
+    ? contact.contact_name
+    : (bestInteractionName || contact.contact_name);
+
+  const inferredLabel = contact.company
+    ? (contact.role ? `${contact.company} (${contact.role})` : contact.company)
+    : null;
+
   const totalMs = Date.now() - t0;
   const dbMs = Object.entries(stageMs).filter(([s]) => s.startsWith("db_")).reduce((sum, [, ms]) => sum + ms, 0);
   const computeMs = Math.max(0, performance.now() - computeStart - dbMs);
@@ -1451,8 +1482,21 @@ async function handleThread(
   return json(
     {
       ok: true,
-      contact: { id: contact.contact_id, name: contact.contact_name, phone: contact.contact_phone || "" },
+      contact: {
+        id: contact.contact_id,
+        name: displayName,
+        phone: contact.contact_phone || "",
+        inferred_label: inferredLabel,
+        company: contact.company || null,
+        role: contact.role || null,
+        is_ambiguous: !!contact.is_ambiguous,
+      },
       thread,
+      stats: {
+        call_count: Number(contact.call_count ?? 0),
+        sms_count: Number(contact.sms_count ?? 0),
+      },
+      thread_type: (Number(contact.sms_count ?? 0) === 0) ? "calls_only" : "full",
       pagination: { limit, offset, total: timeline.length },
       function_version: FUNCTION_VERSION,
       ms: totalMs,
