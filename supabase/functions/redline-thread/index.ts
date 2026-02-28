@@ -543,6 +543,7 @@ async function handleContacts(db: any, url: URL, t0: number): Promise<Response> 
     return json({
       ok: true,
       contacts: contactsCache.contacts,
+      filtered_count: 0,
       cached: true,
       source: "memory_cache",
       grading_cutoff: cutoff,
@@ -566,7 +567,7 @@ async function handleContacts(db: any, url: URL, t0: number): Promise<Response> 
     return json({ ok: false, error_code: "contacts_query_failed", error: error.message }, 500);
   }
 
-  const contacts = (data || [])
+  const mapped = (data || [])
     .filter((row: any) => row.contact_id != null)
     .map((row: any) => ({
       contact_id: row.contact_id,
@@ -581,13 +582,25 @@ async function handleContacts(db: any, url: URL, t0: number): Promise<Response> 
       last_summary: deriveContactLastSummary(row) || "",
       last_direction: row.last_direction || "",
       last_interaction_type: row.last_interaction_type || "",
-    }))
+    }));
+
+  // Filter ghost rows: contact exists but has zero activity (no calls, no SMS, no last_activity)
+  const contacts = mapped
+    .filter((row: any) =>
+      row.call_count + row.sms_count > 0 ||
+      (row.last_activity != null && row.last_activity !== "")
+    )
     .sort((a: any, b: any) => {
       const aTime = Date.parse(a.last_activity || "") || 0;
       const bTime = Date.parse(b.last_activity || "") || 0;
       if (aTime !== bTime) return bTime - aTime;
       return String(a.name || "").localeCompare(String(b.name || ""));
     });
+
+  const filteredCount = mapped.length - contacts.length;
+  if (filteredCount > 0) {
+    console.log(`[contacts] Filtered ${filteredCount} empty rows`);
+  }
 
   contactsCache = {
     expiresAt: Date.now() + CONTACTS_CACHE_TTL_MS,
@@ -605,6 +618,7 @@ async function handleContacts(db: any, url: URL, t0: number): Promise<Response> 
     {
       ok: true,
       contacts,
+      filtered_count: filteredCount,
       cached: false,
       source: contactsSource,
       grading_cutoff: cutoff,
