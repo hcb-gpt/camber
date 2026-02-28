@@ -126,7 +126,24 @@ final class BootstrapService {
 
         let (data, response) = try await session.data(from: url)
         try validateHTTPResponse(response)
-        return try decoder.decode(AssistantContextPacket.self, from: data)
+        let packet = try decoder.decode(AssistantContextPacket.self, from: data)
+        let transportRequestId = (response as? HTTPURLResponse)?
+            .value(forHTTPHeaderField: "x-request-id")
+        logAssistantContextSmoke(packet: packet, transportRequestId: transportRequestId)
+        return packet
+    }
+
+    private func logAssistantContextSmoke(
+        packet: AssistantContextPacket,
+        transportRequestId: String?
+    ) {
+        let bodyRequestId = packet.requestId ?? "none"
+        let responseRequestId = transportRequestId ?? "none"
+        let contractVersion = packet.contractVersion ?? packet.metricContract?.version ?? "none"
+        let functionVersion = packet.functionVersion ?? "none"
+        print(
+            "SMOKE assistant-context sb_request_id=\(responseRequestId) body_request_id=\(bodyRequestId) contract_version=\(contractVersion) function_version=\(functionVersion)"
+        )
     }
 
     // MARK: - Assistant Chat

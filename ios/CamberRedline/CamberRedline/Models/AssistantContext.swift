@@ -2,8 +2,11 @@ import Foundation
 
 struct AssistantContextPacket: Decodable {
     let ok: Bool
+    let requestId: String?
     let generatedAt: String?
     let functionVersion: String?
+    let contractVersion: String?
+    let metricContract: MetricContract?
     let pipelineHealth: [PipelineCapability]
     let topProjects: [ProjectSnapshot]
     let whoNeedsYou: [PeopleSignal]
@@ -13,14 +16,39 @@ struct AssistantContextPacket: Decodable {
 
     enum CodingKeys: String, CodingKey {
         case ok
+        case requestId = "request_id"
         case generatedAt = "generated_at"
         case functionVersion = "function_version"
+        case contractVersion = "contract_version"
+        case metricContract = "metric_contract"
         case pipelineHealth = "pipeline_health"
         case topProjects = "top_projects"
         case whoNeedsYou = "who_needs_you"
         case reviewPressure = "review_pressure"
         case recentActivity = "recent_activity"
         case ms
+    }
+}
+
+struct MetricContract: Decodable {
+    let version: String?
+    let topProjects: TopProjectsMetricContract?
+
+    enum CodingKeys: String, CodingKey {
+        case version
+        case topProjects = "top_projects"
+    }
+}
+
+struct TopProjectsMetricContract: Decodable {
+    let explicitMetricFields: [String]?
+    let preferredDisplayFields7d: [String]?
+    let removedAmbiguousAliases: [String]?
+
+    enum CodingKeys: String, CodingKey {
+        case explicitMetricFields = "explicit_metric_fields"
+        case preferredDisplayFields7d = "preferred_display_fields_7d"
+        case removedAmbiguousAliases = "removed_ambiguous_aliases"
     }
 }
 
@@ -44,9 +72,13 @@ struct ProjectSnapshot: Decodable, Identifiable {
     let projectName: String
     let phase: String?
     let interactions7d: Int?
-    let activeJournalClaims: Int?
-    let openLoops: Int?
-    let pendingReviews: Int?
+    let activeJournalClaimsTotal: Int?
+    let activeJournalClaims7d: Int?
+    let openLoopsTotal: Int?
+    let openLoops7d: Int?
+    let pendingReviewsSpanTotal: Int?
+    let pendingReviewsQueueTotal: Int?
+    let pendingReviewsQueue7d: Int?
     let strikingSignalCount: Int?
     let riskFlag: String?
 
@@ -55,9 +87,13 @@ struct ProjectSnapshot: Decodable, Identifiable {
         case projectName = "project_name"
         case phase
         case interactions7d = "interactions_7d"
-        case activeJournalClaims = "active_journal_claims"
-        case openLoops = "open_loops"
-        case pendingReviews = "pending_reviews"
+        case activeJournalClaimsTotal = "active_journal_claims_total"
+        case activeJournalClaims7d = "active_journal_claims_7d"
+        case openLoopsTotal = "open_loops_total"
+        case openLoops7d = "open_loops_7d"
+        case pendingReviewsSpanTotal = "pending_reviews_span_total"
+        case pendingReviewsQueueTotal = "pending_reviews_queue_total"
+        case pendingReviewsQueue7d = "pending_reviews_queue_7d"
         case strikingSignalCount = "striking_signal_count"
         case riskFlag = "risk_flag"
     }

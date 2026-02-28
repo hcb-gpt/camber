@@ -80,6 +80,10 @@ struct AssistantContextDebugView: View {
                 stat("Latency", "\(p.ms ?? 0)ms")
                 stat("Generated", timeAgo(p.generatedAt))
             }
+            HStack(spacing: 16) {
+                stat("Request ID", shortId(p.requestId))
+                stat("Contract", p.contractVersion ?? p.metricContract?.version ?? "unknown")
+            }
         }
         .padding(12)
         .background(Color.sectionBg, in: RoundedRectangle(cornerRadius: 12))
@@ -140,11 +144,11 @@ struct AssistantContextDebugView: View {
                             .fontWeight(.medium)
                             .foregroundStyle(.white)
                         HStack(spacing: 6) {
-                            miniStat("\(proj.interactions7d ?? 0) calls")
-                            miniStat("\(proj.activeJournalClaims ?? 0) claims")
-                            miniStat("\(proj.openLoops ?? 0) loops")
-                            if (proj.pendingReviews ?? 0) > 0 {
-                                miniStat("\(proj.pendingReviews!) reviews", tint: .accentAmber)
+                            miniStat("\(proj.interactions7d ?? 0) calls (7d)")
+                            miniStat("\(proj.activeJournalClaims7d ?? 0) claims (7d)")
+                            miniStat("\(proj.openLoops7d ?? 0) loops (7d)")
+                            if (proj.pendingReviewsQueue7d ?? 0) > 0 {
+                                miniStat("\(proj.pendingReviewsQueue7d!) reviews (7d)", tint: .accentAmber)
                             }
                         }
                     }
@@ -319,5 +323,10 @@ struct AssistantContextDebugView: View {
         let seconds = Int(-date.timeIntervalSinceNow)
         if seconds < 60 { return "\(seconds)s ago" }
         return "\(seconds / 60)m ago"
+    }
+
+    private func shortId(_ value: String?) -> String {
+        guard let value, !value.isEmpty else { return "none" }
+        return value.count > 12 ? "\(value.prefix(6))...\(value.suffix(6))" : value
     }
 }
