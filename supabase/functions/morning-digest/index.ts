@@ -272,18 +272,28 @@ Deno.serve(async (req: Request) => {
     // ── SECTION 4: Recent Claims (last 24h) ───────────────────────
     const twentyFourHoursAgo = new Date(Date.now() - 24 * 60 * 60 * 1000).toISOString();
 
-    const { count: recentClaimCount } = await db
+    const { count: recentClaimCount, error: claimCountErr } = await db
       .from("journal_claims")
       .select("claim_id", { count: "exact", head: true })
       .gte("created_at", twentyFourHoursAgo);
 
+    if (claimCountErr) {
+      console.error("[morning-digest] journal_claims count error:", claimCountErr.message);
+      sectionErrors.push({ section: "recent_claims", message: claimCountErr.message });
+    }
+
     // Get claim breakdown by type
-    const { data: recentClaimsRaw } = await db
+    const { data: recentClaimsRaw, error: claimsRawErr } = await db
       .from("journal_claims")
       .select("claim_type, project_id, claim_text, created_at")
       .gte("created_at", twentyFourHoursAgo)
       .order("created_at", { ascending: false })
       .limit(50);
+
+    if (claimsRawErr) {
+      console.error("[morning-digest] journal_claims detail error:", claimsRawErr.message);
+      sectionErrors.push({ section: "recent_claims_detail", message: claimsRawErr.message });
+    }
 
     // Group by claim_type
     const claimsByType: Record<string, number> = {};
@@ -318,35 +328,60 @@ Deno.serve(async (req: Request) => {
 
     // ── SECTION 5: Pipeline Health ────────────────────────────────
     // 5a: calls_raw ingested last 24h
-    const { count: callsRawCount } = await db
+    const { count: callsRawCount, error: callsRawErr } = await db
       .from("calls_raw")
       .select("id", { count: "exact", head: true })
       .gte("event_at_utc", twentyFourHoursAgo);
 
+    if (callsRawErr) {
+      console.error("[morning-digest] calls_raw count error:", callsRawErr.message);
+      sectionErrors.push({ section: "pipeline_health_calls", message: callsRawErr.message });
+    }
+
     // 5b: interactions last 24h
-    const { count: interactionsCount } = await db
+    const { count: interactionsCount, error: interactionsErr } = await db
       .from("interactions")
       .select("id", { count: "exact", head: true })
       .gte("ingested_at_utc", twentyFourHoursAgo);
 
+    if (interactionsErr) {
+      console.error("[morning-digest] interactions count error:", interactionsErr.message);
+      sectionErrors.push({ section: "pipeline_health_interactions", message: interactionsErr.message });
+    }
+
     // 5c: segment success rate — spans created last 24h
-    const { count: spansCreated } = await db
+    const { count: spansCreated, error: spansErr } = await db
       .from("conversation_spans")
       .select("id", { count: "exact", head: true })
       .gte("created_at", twentyFourHoursAgo);
 
+    if (spansErr) {
+      console.error("[morning-digest] conversation_spans count error:", spansErr.message);
+      sectionErrors.push({ section: "pipeline_health_spans", message: spansErr.message });
+    }
+
     // 5d: summary generation rate — interactions with human_summary in last 24h
-    const { count: summariesGenerated } = await db
+    const { count: summariesGenerated, error: summariesErr } = await db
       .from("interactions")
       .select("id", { count: "exact", head: true })
       .gte("ingested_at_utc", twentyFourHoursAgo)
       .not("human_summary", "is", null);
 
+    if (summariesErr) {
+      console.error("[morning-digest] summaries count error:", summariesErr.message);
+      sectionErrors.push({ section: "pipeline_health_summaries", message: summariesErr.message });
+    }
+
     // 5e: journal_runs last 24h
-    const { data: journalRunStats } = await db
+    const { data: journalRunStats, error: journalRunErr } = await db
       .from("journal_runs")
       .select("status")
       .gte("created_at", twentyFourHoursAgo);
+
+    if (journalRunErr) {
+      console.error("[morning-digest] journal_runs error:", journalRunErr.message);
+      sectionErrors.push({ section: "pipeline_health_runs", message: journalRunErr.message });
+    }
 
     const runsByStatus: Record<string, number> = {};
     for (const r of journalRunStats || []) {
@@ -485,6 +520,21 @@ Deno.serve(async (req: Request) => {
       degraded: sectionErrors.length > 0,
       ms: Date.now() - t0,
     };
+
+    // Fail loud if all primary sections errored (unreachable DB returns empty not {})
+    const PRIMARY_SECTIONS = ["unresolved_signals", "open_loops", "review_pressure", "recent_claims"];
+    const failedPrimary = PRIMARY_SECTIONS.filter(
+      (s) => sectionErrors.some((e) => e.section === s),
+    );
+    if (failedPrimary.length === PRIMARY_SECTIONS.length) {
+      console.error("[morning-digest] all primary sections failed — DB likely unreachable");
+      return unavailableResponse(
+        t0,
+        503,
+        "TRANSFORM_ERROR",
+        `All primary sections failed: ${failedPrimary.join(", ")}`,
+      );
+    }
 
     if (!hasDigestIntegrity(digest)) {
       console.error("[morning-digest] integrity guard failed");
