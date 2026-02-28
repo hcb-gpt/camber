@@ -126,7 +126,23 @@ final class BootstrapService {
 
         let (data, response) = try await session.data(from: url)
         try validateHTTPResponse(response)
-        return try decoder.decode(AssistantContextPacket.self, from: data)
+        do {
+            return try decoder.decode(AssistantContextPacket.self, from: data)
+        } catch let error as DecodingError {
+            let path: String = switch error {
+            case .typeMismatch(_, let context),
+                 .valueNotFound(_, let context),
+                 .keyNotFound(_, let context),
+                 .dataCorrupted(let context):
+                context.codingPath.map(\.stringValue).joined(separator: ".")
+            @unknown default:
+                "unknown"
+            }
+            let preview = String(data: data.prefix(400), encoding: .utf8) ?? "<non-utf8>"
+            print("[AssistantContextDecode] path=\(path) error=\(error)")
+            print("[AssistantContextDecode] payload_preview=\(preview)")
+            throw BootstrapServiceError.apiError("Assistant context decode failure at path: \(path)")
+        }
     }
 
     // MARK: - Assistant Chat
