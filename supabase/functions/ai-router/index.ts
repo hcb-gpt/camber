@@ -142,7 +142,7 @@
  *   - span_id, project_id, confidence, decision, reasoning, anchors
  */
 import "jsr:@supabase/functions-js/edge-runtime.d.ts";
-import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
+import { createClient, type SupabaseClient } from "https://esm.sh/@supabase/supabase-js@2";
 import { evaluateJunkCallPrefilter } from "../_shared/junk_call_prefilter.ts";
 import { parseLlmJson } from "../_shared/llm_json.ts";
 import { getModelConfigCached } from "../_shared/model_config.ts";
@@ -175,16 +175,113 @@ const WORLD_MODEL_FACTS_MAX_PER_PROJECT = Math.max(
 const PROMPT_VERSION = WORLD_MODEL_FACTS_ENABLED ? "v1.12.0_world_model_facts" : PROMPT_VERSION_BASE;
 
 // Confidence thresholds (3-band policy v1.15.0, extended v1.17.0)
-const THRESHOLD_AUTO_ASSIGN = 0.75;
+const DEFAULT_THRESHOLD_AUTO_ASSIGN = 0.75;
 const THRESHOLD_REVIEW = 0.25;
 const THRESHOLD_SAFE_LOW_ASSIGN = 0.40;
 const THRESHOLD_HIGH_CONFIDENCE_GAP_ASSIGN = 0.70;
 const MIN_RUNNER_UP_GAP = 0.20;
 const THRESHOLD_WEAK_REVIEW_CONFIDENCE = 0.30;
 const THRESHOLD_WEAK_REVIEW_CROSSREF = 0.20;
+const AUTO_ASSIGN_THRESHOLD_CONFIG_KEY = "ai_router_auto_assign_threshold";
+const AUTO_ASSIGN_THRESHOLD_MIN = 0.50;
+const AUTO_ASSIGN_THRESHOLD_MAX = 0.95;
+const AUTO_ASSIGN_THRESHOLD_CACHE_TTL_MS = 60 * 1000;
+type AutoAssignThresholdSource = "inference_config" | "default";
+let autoAssignThresholdCache: { value: number; source: AutoAssignThresholdSource; expiresAt: number } | null = null;
 
 // Defense-in-depth: closed-project hard filter (mirrors context-assembly VALID_PROJECT_STATUSES)
 const ATTRIBUTION_ELIGIBLE_STATUSES = new Set(["active", "warranty", "estimating"]);
+
+function parseConfigNumber(value: unknown): number | null {
+  if (typeof value === "number" && Number.isFinite(value)) return value;
+  if (typeof value === "string") {
+    const parsed = Number(value.trim());
+    return Number.isFinite(parsed) ? parsed : null;
+  }
+  if (value && typeof value === "object" && !Array.isArray(value) && "value" in (value as Record<string, unknown>)) {
+    return parseConfigNumber((value as Record<string, unknown>).value);
+  }
+  return null;
+}
+
+function clampAutoAssignThreshold(value: number): number {
+  return Math.min(AUTO_ASSIGN_THRESHOLD_MAX, Math.max(AUTO_ASSIGN_THRESHOLD_MIN, value));
+}
+
+async function getAutoAssignThresholdCached(
+  db: SupabaseClient,
+): Promise<{ value: number; source: AutoAssignThresholdSource }> {
+  const now = Date.now();
+  if (autoAssignThresholdCache && autoAssignThresholdCache.expiresAt > now) {
+    return {
+      value: autoAssignThresholdCache.value,
+      source: autoAssignThresholdCache.source,
+    };
+  }
+
+  const fallback = {
+    value: DEFAULT_THRESHOLD_AUTO_ASSIGN,
+    source: "default" as const,
+  };
+
+  try {
+    const { data, error } = await db
+      .from("inference_config")
+      .select("config_value")
+      .eq("config_key", AUTO_ASSIGN_THRESHOLD_CONFIG_KEY)
+      .maybeSingle();
+
+    if (error || !data) {
+      if (error) {
+        console.warn(
+          `[ai-router] threshold config read failed (${AUTO_ASSIGN_THRESHOLD_CONFIG_KEY}): ${error.message}. Using default.`,
+        );
+      }
+      autoAssignThresholdCache = {
+        value: fallback.value,
+        source: fallback.source,
+        expiresAt: now + AUTO_ASSIGN_THRESHOLD_CACHE_TTL_MS,
+      };
+      return fallback;
+    }
+
+    const parsed = parseConfigNumber(data.config_value);
+    if (parsed === null) {
+      console.warn(
+        `[ai-router] threshold config parse failed (${AUTO_ASSIGN_THRESHOLD_CONFIG_KEY}). Using default.`,
+      );
+      autoAssignThresholdCache = {
+        value: fallback.value,
+        source: fallback.source,
+        expiresAt: now + AUTO_ASSIGN_THRESHOLD_CACHE_TTL_MS,
+      };
+      return fallback;
+    }
+
+    const resolved = {
+      value: clampAutoAssignThreshold(parsed),
+      source: "inference_config" as const,
+    };
+    autoAssignThresholdCache = {
+      value: resolved.value,
+      source: resolved.source,
+      expiresAt: now + AUTO_ASSIGN_THRESHOLD_CACHE_TTL_MS,
+    };
+    return resolved;
+  } catch (error: any) {
+    console.warn(
+      `[ai-router] threshold config exception (${AUTO_ASSIGN_THRESHOLD_CONFIG_KEY}): ${
+        error?.message || "unknown_error"
+      }. Using default.`,
+    );
+    autoAssignThresholdCache = {
+      value: fallback.value,
+      source: fallback.source,
+      expiresAt: now + AUTO_ASSIGN_THRESHOLD_CACHE_TTL_MS,
+    };
+    return fallback;
+  }
+}
 
 // ============================================================
 // TYPES
@@ -1577,6 +1674,11 @@ Deno.serve(async (req: Request) => {
     maxTokens: DEFAULT_MAX_TOKENS,
     temperature: DEFAULT_TEMPERATURE,
   });
+  const autoAssignThresholdConfig = await getAutoAssignThresholdCached(db);
+  const thresholdAutoAssign = autoAssignThresholdConfig.value;
+  console.log(
+    `[ai-router] auto_assign_threshold=${thresholdAutoAssign.toFixed(2)} source=${autoAssignThresholdConfig.source}`,
+  );
 
   let result: AttributionResult;
   let raw_response: any = null;
@@ -1810,7 +1912,7 @@ Deno.serve(async (req: Request) => {
       );
     }
 
-    if (decision === "assign" && confidence < THRESHOLD_AUTO_ASSIGN) {
+    if (decision === "assign" && confidence < thresholdAutoAssign) {
       decision = "review";
     }
     if (confidence < THRESHOLD_REVIEW) {
@@ -1830,7 +1932,7 @@ Deno.serve(async (req: Request) => {
       });
       if (safeLowAssign.promoted) {
         decision = "assign";
-        confidence = Math.max(confidence, THRESHOLD_AUTO_ASSIGN);
+        confidence = Math.max(confidence, thresholdAutoAssign);
         reasoning = `${reasoning} safe_low_confidence_assign: ${safeLowAssign.reason}.`;
         console.log(
           `[ai-router] Safe low-confidence assign promoted review→assign: project=${project_id} reason=${safeLowAssign.reason}`,
@@ -1850,7 +1952,7 @@ Deno.serve(async (req: Request) => {
       });
       if (highConfGap.promoted) {
         decision = "assign";
-        confidence = Math.max(confidence, THRESHOLD_AUTO_ASSIGN);
+        confidence = Math.max(confidence, thresholdAutoAssign);
         reasoning = `${reasoning} ${highConfGap.reason}.`;
         console.log(
           `[ai-router] High-confidence gap assign promoted review→assign: project=${project_id} ${highConfGap.reason}`,
@@ -1929,7 +2031,7 @@ Deno.serve(async (req: Request) => {
     if (homeownerOverrideStrongAnchor && homeownerOverrideProjectId.length > 0) {
       const shouldForceHomeownerAssign = decision !== "assign" ||
         project_id !== homeownerOverrideProjectId ||
-        confidence < THRESHOLD_AUTO_ASSIGN;
+        confidence < thresholdAutoAssign;
 
       if (shouldForceHomeownerAssign) {
         const previousDecision = decision;
@@ -1937,7 +2039,7 @@ Deno.serve(async (req: Request) => {
         homeownerDeterministicGateApplied = true;
         decision = "assign";
         project_id = homeownerOverrideProjectId;
-        confidence = Math.max(confidence, THRESHOLD_AUTO_ASSIGN, 0.92);
+        confidence = Math.max(confidence, thresholdAutoAssign, 0.92);
         reasoning =
           `${reasoning} deterministic_homeowner_override_gate: forced assign to homeowner project ${homeownerOverrideProjectId} (prev_decision=${previousDecision}, prev_project=${
             previousProject || "null"
@@ -1960,7 +2062,7 @@ Deno.serve(async (req: Request) => {
     ) {
       const shouldForceClientAssign = decision !== "assign" ||
         project_id !== clientOverrideProjectId ||
-        confidence < THRESHOLD_AUTO_ASSIGN;
+        confidence < thresholdAutoAssign;
 
       if (shouldForceClientAssign) {
         const previousDecision = decision;
@@ -1969,7 +2071,7 @@ Deno.serve(async (req: Request) => {
         clientDeterministicAssignApplied = true;
         decision = "assign";
         project_id = clientOverrideProjectId;
-        confidence = Math.max(confidence, THRESHOLD_AUTO_ASSIGN, 0.92);
+        confidence = Math.max(confidence, thresholdAutoAssign, 0.92);
         reasoning =
           `${reasoning} deterministic_client_override_gate: forced assign to client project ${clientOverrideProjectId} (prev_decision=${previousDecision}, prev_project=${
             previousProject || "null"
@@ -2202,7 +2304,7 @@ Deno.serve(async (req: Request) => {
       null;
     const preservedAppliedAtUtc = existingAttribution?.applied_at_utc ?? null;
 
-    const wouldApply = result.decision === "assign" && result.confidence >= THRESHOLD_AUTO_ASSIGN;
+    const wouldApply = result.decision === "assign" && result.confidence >= thresholdAutoAssign;
     const newLock = wouldApply ? "ai" : null;
     const lockCanOverwrite = canOverwriteLock(currentLock, newLock);
 
@@ -2220,7 +2322,7 @@ Deno.serve(async (req: Request) => {
 
       if (
         result.decision === "assign" &&
-        result.confidence >= THRESHOLD_AUTO_ASSIGN &&
+        result.confidence >= thresholdAutoAssign &&
         ((hasValidAnchor && hasStoplineProvenanceForApply) || allowDeterministicHomeownerAssign ||
           allowDeterministicClientAssign)
       ) {
@@ -2229,7 +2331,7 @@ Deno.serve(async (req: Request) => {
         gatekeeper_reason = "auto_assigned";
       } else if (
         result.decision === "review" ||
-        (result.confidence >= THRESHOLD_REVIEW && result.confidence < THRESHOLD_AUTO_ASSIGN)
+        (result.confidence >= THRESHOLD_REVIEW && result.confidence < thresholdAutoAssign)
       ) {
         applied = false;
         applied_project_id = null;
@@ -2437,6 +2539,11 @@ Deno.serve(async (req: Request) => {
           reason_codes: junkCallFilterReasonCodes,
           signal_summary: junkCallFilterSignalSummary,
         },
+        thresholds: {
+          auto_assign: thresholdAutoAssign,
+          auto_assign_source: autoAssignThresholdConfig.source,
+          review: THRESHOLD_REVIEW,
+        },
         model_id: modelConfig.modelId,
         prompt_version: PROMPT_VERSION,
         created_at_utc: new Date().toISOString(),
@@ -2606,6 +2713,11 @@ Deno.serve(async (req: Request) => {
       },
       post_hooks: {
         journal_extract_fired,
+      },
+      thresholds: {
+        auto_assign: thresholdAutoAssign,
+        auto_assign_source: autoAssignThresholdConfig.source,
+        review: THRESHOLD_REVIEW,
       },
       model_error,
       dry_run,
