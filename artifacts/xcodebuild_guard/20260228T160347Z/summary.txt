@@ -1,0 +1,6 @@
+out_dir=artifacts/xcodebuild_guard/20260228T160347Z
+scheme=CamberRedline
+preferred_simulator_name=iPhone 15
+device_udid=48090FFA-E208-4332-BBFC-8EE3E81F740C
+build_status=0
+build_log=artifacts/xcodebuild_guard/20260228T160347Z/build.log
