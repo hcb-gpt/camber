@@ -1,0 +1,153 @@
+import SwiftUI
+
+struct AssistantChatView: View {
+    @StateObject private var viewModel = AssistantViewModel()
+    var contactId: String? = nil
+    var projectId: String? = nil
+    var initialMessage: String? = nil
+
+    private let assistantTint = Color(red: 0.369, green: 0.361, blue: 0.902) // #5E5CE6
+
+    var body: some View {
+        VStack(spacing: 0) {
+            ScrollViewReader { proxy in
+                ScrollView {
+                    LazyVStack(spacing: 16) {
+                        if viewModel.messages.isEmpty {
+                            emptyState
+                        } else {
+                            ForEach(viewModel.messages) { msg in
+                                chatBubble(msg)
+                                    .id(msg.id)
+                            }
+                        }
+                    }
+                    .padding()
+                }
+                .onChange(of: viewModel.messages.count) { _, _ in
+                    withAnimation {
+                        proxy.scrollTo(viewModel.messages.last?.id, anchor: .bottom)
+                    }
+                }
+                .onChange(of: viewModel.messages.last?.content) { _, _ in
+                    proxy.scrollTo(viewModel.messages.last?.id, anchor: .bottom)
+                }
+            }
+
+            inputArea
+        }
+        .navigationTitle(contactId != nil ? "Contact Assistant" : (projectId != nil ? "Project Assistant" : "Assistant"))
+        .navigationBarTitleDisplayMode(.inline)
+        .background(Color.black)
+        .toolbar {
+            ToolbarItem(placement: .topBarLeading) {
+                NavigationLink(destination: AssistantContextDebugView()) {
+                    Image(systemName: "chart.bar.doc.horizontal")
+                        .foregroundStyle(.secondary)
+                }
+            }
+            ToolbarItem(placement: .topBarTrailing) {
+                Button {
+                    viewModel.clearChat()
+                } label: {
+                    Image(systemName: "trash")
+                        .foregroundStyle(.secondary)
+                }
+            }
+        }
+        .task {
+            if let initial = initialMessage, viewModel.messages.isEmpty {
+                viewModel.currentInput = initial
+                await viewModel.sendMessage(contactId: contactId, projectId: projectId)
+            }
+        }
+    }
+
+    private var emptyState: some View {
+        VStack(spacing: 20) {
+            Spacer(minLength: 50)
+            Image(systemName: "brain.head.profile")
+                .font(.system(size: 60))
+                .foregroundStyle(assistantTint)
+            
+            Text("How can I help you today?")
+                .font(.title3)
+                .fontWeight(.medium)
+                .foregroundStyle(.white)
+            
+            VStack(spacing: 12) {
+                suggestionButton("What is going on recently?")
+                if contactId != nil {
+                    suggestionButton("Summarize our recent interactions")
+                }
+                if projectId != nil {
+                    suggestionButton("Any open loops for this project?")
+                }
+            }
+            .padding(.horizontal, 40)
+            
+            Spacer()
+        }
+        .multilineTextAlignment(.center)
+    }
+
+    private func suggestionButton(_ text: String) -> some View {
+        Button {
+            viewModel.currentInput = text
+            Task { await viewModel.sendMessage(contactId: contactId, projectId: projectId) }
+        } label: {
+            Text(text)
+                .font(.subheadline)
+                .padding(.horizontal, 16)
+                .padding(.vertical, 10)
+                .background(Color.white.opacity(0.1))
+                .clipShape(Capsule())
+                .foregroundStyle(.white)
+        }
+    }
+
+    private func chatBubble(_ msg: AssistantMessage) -> some View {
+        HStack {
+            if msg.role == .user { Spacer(minLength: 50) }
+            
+            Text(msg.content)
+                .font(.subheadline)
+                .padding(.horizontal, 14)
+                .padding(.vertical, 10)
+                .background(msg.role == .user ? assistantTint : Color.white.opacity(0.1))
+                .clipShape(RoundedRectangle(cornerRadius: 18))
+                .foregroundStyle(.white)
+            
+            if msg.role == .assistant { Spacer(minLength: 50) }
+        }
+    }
+
+    private var inputArea: some View {
+        VStack(spacing: 0) {
+            Divider()
+                .background(Color.white.opacity(0.1))
+            
+            HStack(spacing: 12) {
+                TextField("Ask anything...", text: $viewModel.currentInput, axis: .vertical)
+                    .textFieldStyle(.plain)
+                    .padding(.horizontal, 16)
+                    .padding(.vertical, 10)
+                    .background(Color.white.opacity(0.05))
+                    .clipShape(RoundedRectangle(cornerRadius: 20))
+                    .foregroundStyle(.white)
+                    .lineLimit(1...5)
+                
+                Button {
+                    Task { await viewModel.sendMessage(contactId: contactId, projectId: projectId) }
+                } label: {
+                    Image(systemName: "arrow.up.circle.fill")
+                        .font(.system(size: 32))
+                        .foregroundStyle(viewModel.currentInput.isEmpty ? Color.gray : assistantTint)
+                }
+                .disabled(viewModel.currentInput.isEmpty || viewModel.isLoading)
+            }
+            .padding()
+            .background(Color(red: 0.05, green: 0.05, blue: 0.05))
+        }
+    }
+}

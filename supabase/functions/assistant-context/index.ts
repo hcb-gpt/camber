@@ -6,8 +6,7 @@ const FUNCTION_VERSION = "assistant-context_v1.0.0";
 function corsHeaders(): Record<string, string> {
   return {
     "Access-Control-Allow-Origin": "*",
-    "Access-Control-Allow-Headers":
-      "authorization, x-edge-secret, content-type",
+    "Access-Control-Allow-Headers": "authorization, x-edge-secret, content-type",
     "Access-Control-Allow-Methods": "GET, OPTIONS",
   };
 }

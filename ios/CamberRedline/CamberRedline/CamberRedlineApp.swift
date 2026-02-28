@@ -35,9 +35,11 @@ struct CamberRedlineApp: App {
                 }
                 .tag(1)
 
-                AssistantContextDebugView()
+                NavigationStack {
+                    AssistantChatView()
+                }
                 .tabItem {
-                    Label("Context", systemImage: "brain.head.profile")
+                    Label("Assistant", systemImage: "brain.head.profile")
                 }
                 .tag(2)
             }

@@ -762,6 +762,15 @@ private struct ContactHeader: View {
             Spacer()
 
             HStack(spacing: 8) {
+                NavigationLink(destination: AssistantChatView(contactId: contactId, initialMessage: "What's the latest with \(displayName)?")) {
+                    Image(systemName: "brain.head.profile")
+                        .font(.subheadline)
+                        .foregroundStyle(.white)
+                        .frame(width: 32, height: 32)
+                        .background(Color(red: 0.369, green: 0.361, blue: 0.902), in: Circle())
+                }
+                .buttonStyle(.plain)
+
                 Button(action: onCall) {
                     Image(systemName: "phone.fill")
                         .font(.subheadline)
