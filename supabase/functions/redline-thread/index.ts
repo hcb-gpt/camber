@@ -518,11 +518,29 @@ async function handleContacts(db: any, url: URL, t0: number): Promise<Response> 
   const selectColumns =
     "contact_id, contact_name, contact_phone, call_count, sms_count, claim_count, ungraded_count, last_activity, last_snippet, last_direction, last_interaction_type";
 
-  const contactsSource = "redline_contacts";
-  const { data, error } = await db
-    .from(contactsSource)
-    .select(selectColumns)
-    .order("last_activity", { ascending: false, nullsFirst: false });
+  // Cascade: unified matview → unified view → legacy view
+  const contactsSources = [
+    "redline_contacts_unified_matview",
+    "redline_contacts_unified",
+    "redline_contacts",
+  ];
+  let data: any = null;
+  let error: any = null;
+  let contactsSource = contactsSources[0];
+  for (const src of contactsSources) {
+    const result = await db
+      .from(src)
+      .select(selectColumns)
+      .order("last_activity", { ascending: false, nullsFirst: false });
+    if (!result.error) {
+      data = result.data;
+      error = null;
+      contactsSource = src;
+      break;
+    }
+    console.warn(`[redline-thread] ${src} query failed, trying next: ${result.error.message}`);
+    error = result.error;
+  }
 
   if (error) {
     return json({ ok: false, error_code: "contacts_query_failed", error: error.message }, 500);
@@ -894,7 +912,7 @@ async function handleSanity(db: any, t0: number): Promise<Response> {
       .order("sent_at", { ascending: false, nullsFirst: false })
       .limit(10),
     db
-      .from("redline_contacts")
+      .from("redline_contacts_unified_matview")
       .select("contact_id, contact_name, last_activity, last_interaction_type")
       .order("last_activity", { ascending: false, nullsFirst: false })
       .limit(5),
@@ -998,17 +1016,44 @@ async function handleThread(
   };
   const computeStart = performance.now();
 
-  const { data: contact, error: contactErr } = await timeDb("db_contact", () =>
+  const { data: contactRow, error: contactErr } = await timeDb("db_contact", () =>
     db
       .from("contacts")
       .select("id, name, phone")
       .eq("id", contactId)
       .single());
+  let resolvedContact = contactRow;
+  const smsOnlyContactDigits = parseSmsOnlyContactDigits(contactId);
 
-  if (contactErr || !contact) {
+  if (!resolvedContact && smsOnlyContactDigits) {
+    const smsOnlyPhoneVariants = buildPhoneVariants(smsOnlyContactDigits);
+    let lookupQuery = db
+      .from("sms_messages")
+      .select("contact_name, contact_phone")
+      .not("contact_phone", "is", null)
+      .order("sent_at", { ascending: false, nullsFirst: false })
+      .limit(1);
+    if (smsOnlyPhoneVariants.length === 1) {
+      lookupQuery = lookupQuery.eq("contact_phone", smsOnlyPhoneVariants[0]);
+    } else if (smsOnlyPhoneVariants.length > 1) {
+      lookupQuery = lookupQuery.in("contact_phone", smsOnlyPhoneVariants);
+    }
+    const { data: smsContactRows, error: smsContactErr } = await timeDb("db_sms_contact_fallback", () => lookupQuery);
+    if (!smsContactErr && smsContactRows && smsContactRows.length > 0) {
+      const latest = smsContactRows[0];
+      resolvedContact = {
+        id: contactId,
+        name: String(latest?.contact_name || "").trim() || (latest?.contact_phone || smsOnlyContactDigits),
+        phone: String(latest?.contact_phone || "").trim() || smsOnlyContactDigits,
+      };
+    }
+  }
+
+  if (!resolvedContact) {
     return json({ ok: false, error_code: "contact_not_found", error: contactErr?.message || "not found" }, 404);
   }
-  const contactPhoneVariants = buildPhoneVariants(contact.phone);
+  const contact = resolvedContact;
+  const contactPhoneVariants = buildPhoneVariants(resolvedContact.phone);
 
   const scanWindow = Math.min(Math.max(offset + limit + 20, 40), 120);
   const queryPageSize = 40;
