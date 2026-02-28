@@ -50,5 +50,4 @@ BEGIN
     v_violations;
 END;
 $$ LANGUAGE plpgsql SECURITY DEFINER;
-
 COMMENT ON FUNCTION ci_gate_no_double_covered IS 'CI Gate 4: Span with RESOLVED attribution (needs_review=false) cannot also have pending review';

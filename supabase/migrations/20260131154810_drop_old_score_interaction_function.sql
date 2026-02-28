@@ -1,8 +1,4 @@
--- drop_old_score_interaction_function
--- Applied via MCP: 2026-01-31
--- Drops old score_interaction(text, boolean) overload to resolve ambiguity
+-- Drop the old score_interaction function with 2 args
+DROP FUNCTION IF EXISTS score_interaction(text, boolean);
 
--- This migration was applied directly to production via MCP.
--- Stub file created for migration drift closure.
-
-SELECT 1; -- no-op placeholder
+-- The new single-arg version remains;

@@ -37,7 +37,6 @@ FROM (
     )
 ) combined
 WHERE alias IS NOT NULL AND alias <> '';
-
 COMMENT ON VIEW v_project_alias_lookup IS
   'Unified project alias lookup combining project_aliases table and legacy projects.aliases[] array. '
   'Filters to active/warranty/estimating client projects not on the attribution blocklist. '

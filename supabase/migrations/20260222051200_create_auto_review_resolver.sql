@@ -5,7 +5,6 @@
 -- - Log all auto decisions in review_audit
 
 begin;
-
 create table if not exists public.review_audit (
   id uuid primary key default gen_random_uuid(),
   run_id uuid not null,
@@ -26,25 +25,18 @@ create table if not exists public.review_audit (
   details jsonb null,
   created_at timestamptz not null default now()
 );
-
 create index if not exists idx_review_audit_created_at
   on public.review_audit(created_at desc);
-
 create index if not exists idx_review_audit_run_id
   on public.review_audit(run_id);
-
 create index if not exists idx_review_audit_review_queue_id
   on public.review_audit(review_queue_id);
-
 create index if not exists idx_review_audit_reason_action
   on public.review_audit(reason, audit_action);
-
 comment on table public.review_audit is
   'Audit log for automated review_queue decisions (auto resolve/dismiss/skip).';
-
 comment on column public.review_audit.reason is
   'Decision reason: auto_high_confidence or auto_low_confidence; skipped reasons track why no write occurred.';
-
 create or replace function public.run_auto_review_resolver(
   p_high_conf numeric default 0.85,
   p_low_conf numeric default 0.20,
@@ -425,12 +417,9 @@ begin
   );
 end;
 $$;
-
 comment on function public.run_auto_review_resolver is
   'Auto-resolves/dismisses pending review_queue rows by confidence thresholds. Logs all decisions to review_audit.';
-
 grant execute on function public.run_auto_review_resolver(numeric, numeric, integer, text, boolean) to service_role;
-
 do $do$
 begin
   if exists (select 1 from pg_extension where extname = 'pg_cron') then
@@ -453,5 +442,4 @@ begin
   end if;
 end;
 $do$;
-
 commit;

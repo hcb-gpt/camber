@@ -3,7 +3,6 @@
 
 ALTER TABLE public.journal_claims
 DROP CONSTRAINT IF EXISTS journal_claims_epistemic_status_check;
-
 ALTER TABLE public.journal_claims
 ADD CONSTRAINT journal_claims_epistemic_status_check
 CHECK (
@@ -21,6 +20,5 @@ CHECK (
     ]
   )
 );
-
 COMMENT ON CONSTRAINT journal_claims_epistemic_status_check ON public.journal_claims IS
 'Allowed epistemic statuses for extraction. Upgraded set plus legacy stated/uncertain during transition.';

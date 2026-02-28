@@ -75,11 +75,13 @@
  */
 import "jsr:@supabase/functions-js/edge-runtime.d.ts";
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
+import { getModelConfigCached } from "../_shared/model_config.ts";
 
-const FUNCTION_VERSION = "v1.3.2";
+const FUNCTION_VERSION = "v1.3.3";
 const PROMPT_VERSION = "journal-extract-v2";
-const MAX_TOKENS = 4096;
-const DEFAULT_MODEL = "claude-3-haiku-20240307";
+const DEFAULT_MAX_TOKENS = 4096;
+const DEFAULT_MODEL_ID = "gpt-4o-mini";
+const DEFAULT_TEMPERATURE = 0;
 const DEFAULT_TIMEOUT_MS = 30000;
 const MAX_TRANSCRIPT_CHARS = 8000; // Cap transcript to prevent inference timeouts
 const JOURNAL_CONSOLIDATE_TIMEOUT_MS = 120000;
@@ -377,13 +379,15 @@ async function triggerLoopClosure(
 }
 
 /**
- * Call Anthropic API for claim extraction with AbortController-backed timeout.
+ * Call OpenAI API for claim extraction with AbortController-backed timeout.
  * The AbortController ensures the HTTP request is actually cancelled on timeout,
  * not just abandoned (which would leak connections).
  */
 async function callLlm(
-  anthropicKey: string,
+  openaiKey: string,
   model: string,
+  maxTokens: number,
+  temperature: number,
   systemPrompt: string,
   userPrompt: string,
   timeoutMs: number,
@@ -393,19 +397,20 @@ async function callLlm(
   const timeoutHandle = setTimeout(() => controller.abort(), timeoutMs);
 
   try {
-    const resp = await fetch("https://api.anthropic.com/v1/messages", {
+    const resp = await fetch("https://api.openai.com/v1/chat/completions", {
       method: "POST",
       headers: {
         "Content-Type": "application/json",
-        "x-api-key": anthropicKey,
-        "anthropic-version": "2023-06-01",
+        "Authorization": `Bearer ${openaiKey}`,
       },
       body: JSON.stringify({
         model,
-        max_tokens: MAX_TOKENS,
-        temperature: 0,
-        system: systemPrompt,
-        messages: [{ role: "user", content: userPrompt }],
+        max_tokens: maxTokens,
+        temperature,
+        messages: [
+          { role: "system", content: systemPrompt },
+          { role: "user", content: userPrompt },
+        ],
       }),
       signal: controller.signal,
     });
@@ -414,18 +419,17 @@ async function callLlm(
 
     if (!resp.ok) {
       const errText = await resp.text();
-      throw new Error(`anthropic_${resp.status}: ${errText.slice(0, 200)}`);
+      throw new Error(`openai_${resp.status}: ${errText.slice(0, 200)}`);
     }
 
     const payload = await resp.json();
-    const textBlock = (payload?.content || []).find((b: any) => b?.type === "text");
-    const rawContent = textBlock?.text || "";
-    const tokens_used = (payload?.usage?.input_tokens || 0) + (payload?.usage?.output_tokens || 0);
+    const rawContent = payload?.choices?.[0]?.message?.content || "";
+    const tokens_used = (payload?.usage?.prompt_tokens || 0) + (payload?.usage?.completion_tokens || 0);
 
     return { rawContent, tokens_used, inference_ms };
   } catch (err: any) {
     if (err.name === "AbortError" || controller.signal.aborted) {
-      throw new Error(`anthropic_extract_timeout: request aborted after ${timeoutMs}ms`);
+      throw new Error(`openai_extract_timeout: request aborted after ${timeoutMs}ms`);
     }
     throw err;
   } finally {
@@ -579,18 +583,25 @@ Deno.serve(async (req: Request) => {
     Deno.env.get("SUPABASE_URL")!,
     Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!,
   );
+  const modelConfig = await getModelConfigCached(db, {
+    functionName: "journal-extract",
+    modelId: DEFAULT_MODEL_ID,
+    maxTokens: DEFAULT_MAX_TOKENS,
+    temperature: DEFAULT_TEMPERATURE,
+  });
 
-  const anthropicKey = Deno.env.get("ANTHROPIC_API_KEY");
-  if (!anthropicKey) {
+  const openaiKey = Deno.env.get("OPENAI_API_KEY");
+  if (!openaiKey) {
     return new Response(
-      JSON.stringify({ ok: false, error: "missing_anthropic_key" }),
+      JSON.stringify({ ok: false, error: "missing_openai_key" }),
       { status: 500, headers: { "Content-Type": "application/json" } },
     );
   }
 
-  const model = Deno.env.get("JOURNAL_EXTRACT_MODEL") || DEFAULT_MODEL;
+  const model = modelConfig.modelId;
   const timeoutMs = Number(Deno.env.get("JOURNAL_EXTRACT_TIMEOUT_MS")) || DEFAULT_TIMEOUT_MS;
   const dry_run = body.dry_run === true;
+  const skip_attribution = body.skip_attribution === true;
 
   // Hoisted so catch block can reference it for failure recording
   let run_id: string | null = null;
@@ -763,7 +774,15 @@ Deno.serve(async (req: Request) => {
     let retried = false;
 
     // ── ATTEMPT 1: Normal extraction ──────────────────────────────
-    const result1 = await callLlm(anthropicKey, model, SYSTEM_PROMPT, userPrompt, timeoutMs);
+    const result1 = await callLlm(
+      openaiKey,
+      model,
+      modelConfig.maxTokens,
+      modelConfig.temperature,
+      SYSTEM_PROMPT,
+      userPrompt,
+      timeoutMs,
+    );
     tokens_used = result1.tokens_used;
     inference_ms = result1.inference_ms;
 
@@ -783,7 +802,15 @@ Deno.serve(async (req: Request) => {
       const retryPrompt =
         `TRANSCRIPT SEGMENT (span_id: ${span_id}, interaction: ${interaction_id}):\n"""\n${promptTranscript}\n"""\n\nExtract all project-relevant claims. Output ONLY valid JSON — no markdown, no code fences, no comments.`;
 
-      const result2 = await callLlm(anthropicKey, model, RETRY_SYSTEM_PROMPT, retryPrompt, timeoutMs);
+      const result2 = await callLlm(
+        openaiKey,
+        model,
+        modelConfig.maxTokens,
+        modelConfig.temperature,
+        RETRY_SYSTEM_PROMPT,
+        retryPrompt,
+        timeoutMs,
+      );
       tokens_used += result2.tokens_used;
       inference_ms += result2.inference_ms;
 
@@ -824,11 +851,12 @@ Deno.serve(async (req: Request) => {
 
     if (!dry_run && extraction.claims.length > 0) {
       // ── NULL PROJECT_ID GUARD ────────────────────────────────────
-      // journal_claims.project_id has NOT NULL + FK to projects(id).
-      // If span has no attribution yet, we cannot write claims — the FK
-      // would reject the insert. Return extraction results so caller
-      // knows claims were found, and can re-trigger after attribution.
-      if (!project_id) {
+      // In skip-attribution mode, project_id may be null — that's expected.
+      // journal_claims.project_id is now nullable (v2.9.0 migration) to
+      // support GT training set builds where claims are extracted without
+      // project attribution. Human grading in Redline replaces AI attribution.
+      // In normal mode, still block writes without project_id (FK safety).
+      if (!project_id && !skip_attribution) {
         skipped_no_project = true;
         console.warn(
           `[journal-extract] Skipping claim insert: span ${span_id} has no project attribution (FK constraint).`,
@@ -1070,6 +1098,7 @@ Deno.serve(async (req: Request) => {
         inference_ms,
         retried,
         dry_run,
+        skip_attribution,
         transcript_chars: transcript.length,
         truncated,
         prompt_version: PROMPT_VERSION,

@@ -1,0 +1,1284 @@
+# CamberRedline iOS App — Machine-Readable Wireframe
+# Generated: 2026-02-25
+# Source of truth: /Users/chadbarlow/gh/hcb-gpt/camber-calls/ios/CamberRedline/CamberRedline/
+
+app:
+  name: CamberRedline
+  bundle_id: com.heartwoodcustombuilders.CamberRedline
+  platform: iOS 17.0+
+  framework: SwiftUI
+  concurrency: Swift strict concurrency (complete)
+  theme: dark_mode_forced  # .preferredColorScheme(.dark) at App and View level
+  orientation: portrait_only
+  package_manager: SPM
+  dependencies:
+    - name: Supabase
+      source: https://github.com/supabase/supabase-swift.git
+      version: ">=2.0.0"
+      product: Supabase
+  project_generator: XcodeGen (project.yml)
+  marketing_version: "1.0.0"
+  build_number: "1"
+  development_team: ""  # unsigned — Xcode direct install (free Apple ID, 7-day re-sign)
+  description: >
+    A contact-threaded claim review app for the Camber pipeline. It displays
+    per-contact conversation histories (phone calls and SMS) with embedded
+    AI-extracted claims that a human reviewer can confirm, reject, or correct
+    in real time. Designed as a CEO-facing tool for grading claim accuracy.
+
+data_sources:
+  supabase_project:
+    ref: rjhdwidddtfetbwqolof
+    url: https://rjhdwidddtfetbwqolof.supabase.co
+    auth_mode: anon_key  # hardcoded in SupabaseService, no user auth
+    verify_jwt: false  # edge function runs without JWT verification
+
+  supabase_postgrest:
+    views:
+      - name: redline_contacts
+        usage: contact list (sorted by last_activity DESC)
+        queried_by: ContactListViewModel.loadContacts()
+    tables_subscribed_via_realtime:
+      - name: interactions
+        event: INSERT
+        channel_name: "new-interactions"
+        trigger: reloads full contact list
+      - name: claim_grades
+        events: [INSERT, UPDATE]
+        channel_name: "claim-grades-{contactId}"
+        trigger: in-place grade merge on matching claimId
+
+  edge_function:
+    slug: redline-thread
+    version: redline-thread_v1.0.0
+    base_url: https://rjhdwidddtfetbwqolof.supabase.co/functions/v1/redline-thread
+    auth: SUPABASE_SERVICE_ROLE_KEY (server-side, no client auth required)
+    endpoints:
+      - name: contacts
+        method: GET
+        params: "?action=contacts"
+        returns: "{ok, contacts[], function_version, ms}"
+        note: >
+          iOS app does NOT use this endpoint — it queries the redline_contacts
+          view via PostgREST instead. The edge function contacts endpoint is
+          used only by the web HTML UI.
+      - name: thread
+        method: GET
+        params: "?contact_id={uuid}&limit={int}&offset={int}"
+        returns: "{ok, contact, thread[], pagination{total,limit,offset}, function_version, ms}"
+        default_limit: 50
+        max_limit: 200
+        note: iOS app fetches threads from this endpoint via URLSession (not PostgREST).
+      - name: grade
+        method: POST
+        body: "{claim_id, grade, correction_text?, graded_by}"
+        valid_grades: [confirm, reject, correct]
+        constraint: "correction_text required when grade=correct"
+        upsert_conflict: "claim_id, graded_by"
+        returns: "{ok, grade, function_version, ms}"
+    also_serves:
+      - name: html_ui
+        method: GET
+        params: no query params (or ?contact_id for deep link)
+        returns: full HTML/CSS/JS single-page app (web v0)
+
+screens:
+  contact_list:
+    file: ContactListView.swift
+    path: /Users/chadbarlow/gh/hcb-gpt/camber-calls/ios/CamberRedline/CamberRedline/Views/ContactListView.swift
+    role: NavigationStack root
+    view_model: ContactListViewModel
+    layout:
+      - component: NavigationStack
+        children:
+          - component: List
+            style: .plain
+            background: Color.black
+            scroll_content_background: hidden
+            data_source: contactListViewModel.contacts
+            row:
+              component: NavigationLink(value: Contact)
+              child:
+                component: ContactRow
+                row_background: Color.clear
+                row_separator_tint: "Color(white: 0.2)"
+                elements:
+                  - name: initials_avatar
+                    type: Text (initials from name)
+                    font: system(size: 15, weight: .semibold)
+                    foreground: white
+                    frame: 44x44
+                    background: "Color(white: 0.25)"
+                    shape: Circle
+                  - name: contact_name
+                    type: Text
+                    binding: contact.name
+                    font: .body
+                    weight: .semibold
+                    foreground: white
+                  - name: relative_time
+                    type: Text
+                    binding: "computed from contact.lastActivity"
+                    font: .subheadline
+                    foreground: .secondary
+                    format: "now / Nm / Nh / Nd / MMM d"
+                    position: trailing in name HStack
+                  - name: interaction_type_icon
+                    type: Image(systemName)
+                    binding: "contact.lastInteractionType"
+                    values:
+                      sms: "message.fill"
+                      call: "phone.fill"
+                    font: .caption2
+                    foreground: .secondary
+                  - name: direction_arrow
+                    type: Image(systemName)
+                    binding: "contact.lastDirection"
+                    values:
+                      outbound: "arrow.up.right (blue)"
+                      inbound: "arrow.down.left (green)"
+                    font: .caption2
+                  - name: preview_text
+                    type: Text
+                    binding: "contact.lastSnippet or fallback '{N} calls . {M} messages'"
+                    font: .subheadline
+                    foreground: .secondary
+                    line_limit: 1
+                  - name: ungraded_badge
+                    type: Text
+                    binding: contact.ungradedCount
+                    condition: "ungradedCount > 0"
+                    font: .caption
+                    weight: .semibold
+                    foreground: white
+                    background: .orange
+                    shape: Capsule
+                    padding_h: 8
+                    padding_v: 4
+    overlays:
+      - name: loading_spinner
+        component: ProgressView
+        tint: white
+        condition: "isLoading && contacts.isEmpty"
+      - name: error_banner
+        component: Text
+        alignment: .bottom
+        font: .caption
+        foreground: .red
+        background: .ultraThinMaterial in RoundedRectangle(cornerRadius: 8)
+        condition: "error != nil"
+    interactions:
+      - pull_to_refresh:
+          action: contactListViewModel.loadContacts()
+          post_delay_ms: 300
+      - tap_row:
+          action: "NavigationLink pushes ThreadView with selected Contact"
+    lifecycle:
+      - task_on_appear:
+          - "loadContacts() if contacts.isEmpty"
+          - "subscribeToNewInteractions()"
+    realtime:
+      - channel: new-interactions
+        table: interactions
+        event: INSERT
+        trigger: "full contact list reload via reloadContactsFromRealtime()"
+
+  thread_view:
+    file: ThreadView.swift
+    path: /Users/chadbarlow/gh/hcb-gpt/camber-calls/ios/CamberRedline/CamberRedline/Views/ThreadView.swift
+    role: pushed from contact_list via NavigationLink
+    view_model: ThreadViewModel
+    nav_title: "contact.name"
+    nav_title_display_mode: .inline
+    layout:
+      - component: ScrollViewReader
+        children:
+          - component: ScrollView
+            children:
+              - component: LazyVStack
+                spacing: 12
+                padding_horizontal: default (via .padding(.horizontal))
+                padding_bottom: 16
+                items:
+                  - type: date_header
+                    condition: "new calendar day boundary (or first item)"
+                    component: Text
+                    content: "'Today' / 'Yesterday' / medium date format"
+                    font: .caption
+                    weight: .semibold
+                    foreground: .secondary
+                    padding_vertical: 8
+                  - type: call_summary_card
+                    condition: "ThreadItem.call"
+                    component: CallSummaryCard
+                    described_in: call_summary_card section below
+                  - type: sms_bubble
+                    condition: "ThreadItem.sms"
+                    component: SMSBubble
+                    described_in: sms_bubble section below
+    scroll_behavior:
+      - auto_scroll_to_bottom: true
+        trigger: "onChange(of: threadItems.count)"
+        animation: ".easeOut(duration: 0.2)"
+        anchor: .bottom
+    overlays:
+      - name: loading_spinner
+        component: ProgressView
+        tint: white
+        condition: "isLoading && threadItems.isEmpty"
+      - name: error_banner
+        component: Text
+        alignment: .bottom
+        font: .caption
+        foreground: .red
+        background: .ultraThinMaterial in RoundedRectangle(cornerRadius: 8)
+        condition: "error != nil"
+    interactions:
+      - pull_to_refresh:
+          action: "viewModel.loadThread(contactId:)"
+          post_delay_ms: 500
+    lifecycle:
+      - task_on_appear:
+          id: contact.contactId
+          actions:
+            - "set viewModel.currentContact = contact"
+            - "loadThread(contactId:)"
+            - "startClaimGradeSubscription(contactId:)"
+      - on_disappear:
+          action: "stopClaimGradeSubscription()"
+    realtime:
+      - channel: "claim-grades-{contactId}"
+        table: claim_grades
+        events: [INSERT, UPDATE]
+        trigger: "in-place grade merge via applyGradeUpdate() — no full reload"
+
+  call_summary_card:
+    file: CallSummaryCard.swift
+    path: /Users/chadbarlow/gh/hcb-gpt/camber-calls/ios/CamberRedline/CamberRedline/Views/CallSummaryCard.swift
+    role: card within thread_view LazyVStack
+    container:
+      component: VStack(alignment: .leading, spacing: 10)
+      padding: 14
+      background: "Color(UIColor.secondarySystemBackground)"
+      corner_radius: 14 (continuous)
+      left_accent_bar:
+        width: 3
+        corner_radius: 2
+        color_inbound: "Color(red: 0.19, green: 0.82, blue: 0.35)"  # green
+        color_outbound: "Color(red: 0, green: 0.48, blue: 1.0)"  # blue
+    sections:
+      - name: header
+        layout: HStack(spacing: 10)
+        elements:
+          - name: phone_icon
+            type: Image(systemName: "phone.circle.fill")
+            font: .title2
+            foreground: "inbound ? .green : .blue"
+          - name: title
+            type: Text("Phone Call")
+            font: .subheadline
+            weight: .semibold
+            foreground: white
+          - name: time_and_direction
+            type: HStack
+            children:
+              - Text(formattedTime)  # DateFormatter.timeStyle = .short
+              - Text(".")  # separator
+              - Text(direction.capitalized)
+            font: .caption
+            foreground: .secondary
+          - name: direction_arrow
+            type: Image(systemName)
+            values:
+              inbound: "arrow.down.left"
+              outbound: "arrow.up.right"
+            font: .caption
+            foreground: .secondary
+            position: trailing
+      - name: summary
+        condition: "entry.summary is non-nil and non-empty"
+        element:
+          type: Text
+          binding: entry.summary
+          font: .subheadline
+          foreground: "Color(.systemGray)"
+          line_limit: 3
+      - name: claims
+        condition: "allClaims (flattened from all spans) is non-empty"
+        elements:
+          - name: divider
+            type: Divider
+            overlay_color: "Color(.systemGray4)"
+          - name: claims_header
+            type: Text("Claims ({count})")
+            font: .caption
+            weight: .semibold
+            foreground: .secondary
+            text_case: .uppercase
+          - name: claim_rows
+            type: ForEach(allClaims)
+            child: ClaimRow
+            described_in: claim_row section below
+      - name: transcript_disclosure
+        condition: "any span has non-empty transcriptSegment"
+        elements:
+          - name: divider
+            type: Divider
+            overlay_color: "Color(.systemGray4)"
+          - name: disclosure_group
+            type: DisclosureGroup
+            label: "Show Transcript"
+            label_font: .caption
+            label_weight: .medium
+            label_foreground: .secondary
+            tint: .secondary
+            state: "@State showTranscript (default false)"
+            content:
+              - type: VStack(alignment: .leading, spacing: 8)
+                children:
+                  - for_each: entry.spans
+                    condition: "transcriptSegment is non-empty"
+                    elements:
+                      - name: span_label
+                        type: Text("Span {spanIndex}")
+                        font: .caption2
+                        weight: .bold
+                        foreground: .secondary
+                      - name: span_text
+                        type: Text(transcriptSegment)
+                        font: .caption
+                        foreground: "Color(.systemGray)"
+
+  claim_row:
+    file: ClaimRow.swift
+    path: /Users/chadbarlow/gh/hcb-gpt/camber-calls/ios/CamberRedline/CamberRedline/Views/ClaimRow.swift
+    role: individual claim within CallSummaryCard
+    layout:
+      component: HStack(alignment: .top, spacing: 8)
+      padding_vertical: 4
+      content_shape: Rectangle()  # expands tap target
+      elements:
+        - name: grade_indicator
+          component: GradeIndicator
+          padding_top: 2
+          described_in: grade_indicator section below
+        - name: claim_body
+          component: VStack(alignment: .leading, spacing: 4)
+          children:
+            - name: claim_type_badge
+              condition: "claimType is non-nil and non-empty"
+              type: Text
+              binding: claim.claimType
+              font: .caption2
+              weight: .semibold
+              foreground: white
+              background: "Color(.systemGray3)"
+              shape: Capsule
+              padding_h: 6
+              padding_v: 2
+            - name: claim_text
+              type: Text
+              binding: claim.claimText
+              font: .subheadline
+              foreground: white
+            - name: correction_display
+              condition: "grade == 'correct' && correctionText is non-empty"
+              type: HStack(spacing: 4)
+              children:
+                - Image(systemName: "pencil") font: .caption2
+                - Text(correctionText) font: .caption
+              foreground: .orange
+            - name: graded_by_label
+              condition: "gradedBy is non-empty"
+              type: Text("Graded by {gradedBy}")
+              font: .caption2
+              foreground: .secondary
+    interactions:
+      - swipe_leading:
+          allows_full_swipe: true
+          actions:
+            - label: Confirm
+              icon: "checkmark.circle"
+              tint: .green
+              action: "onGrade(.confirm, nil)"
+      - swipe_trailing:
+          actions:
+            - label: Reject
+              icon: "xmark.circle"
+              tint: .red
+              action: "onGrade(.reject, nil)"
+            - label: Correct
+              icon: "pencil.circle"
+              tint: .orange
+              action: "showCorrectionSheet = true"
+      - context_menu:
+          items:
+            - label: Confirm
+              icon: "checkmark.circle"
+              action: "onGrade(.confirm, nil)"
+            - label: Reject
+              icon: "xmark.circle"
+              role: .destructive
+              action: "onGrade(.reject, nil)"
+            - label: Correct
+              icon: "pencil.circle"
+              action: "showCorrectionSheet = true"
+      - sheet_trigger:
+          binding: "$showCorrectionSheet"
+          presents: CorrectionSheet
+
+  grade_indicator:
+    file: GradeIndicator.swift
+    path: /Users/chadbarlow/gh/hcb-gpt/camber-calls/ios/CamberRedline/CamberRedline/Views/GradeIndicator.swift
+    role: SF Symbol icon showing current grade state
+    size: 16pt
+    states:
+      - grade: null
+        icon: "circle"
+        color: .gray
+      - grade: confirm
+        icon: "checkmark.circle.fill"
+        color: .green
+      - grade: reject
+        icon: "xmark.circle.fill"
+        color: .red
+      - grade: correct
+        icon: "pencil.circle.fill"
+        color: .orange
+      - grade: unknown_value
+        icon: "circle"
+        color: .gray
+
+  sms_bubble:
+    file: SMSBubble.swift
+    path: /Users/chadbarlow/gh/hcb-gpt/camber-calls/ios/CamberRedline/CamberRedline/Views/SMSBubble.swift
+    role: chat bubble within thread_view LazyVStack
+    layout:
+      component: HStack
+      alignment_logic:
+        outbound: "Spacer(minLength: 60) on leading side"
+        inbound: "Spacer(minLength: 60) on trailing side"
+      children:
+        - name: bubble_content
+          component: VStack(alignment: direction-based)
+          children:
+            - name: message_text
+              type: Text
+              binding: entry.content
+              font: .body
+              foreground:
+                outbound: white
+                inbound: .primary
+              padding_h: 12
+              padding_v: 8
+              background:
+                outbound: "Color(red: 0, green: 0.478, blue: 1)"  # #007AFF
+                inbound: "Color(UIColor.tertiarySystemBackground)"
+              shape: UnevenRoundedRectangle
+              corner_radii:
+                outbound:
+                  topLeading: 18
+                  bottomLeading: 18
+                  bottomTrailing: 4  # pointed tail
+                  topTrailing: 18
+                inbound:
+                  topLeading: 18
+                  bottomLeading: 4  # pointed tail
+                  bottomTrailing: 18
+                  topTrailing: 18
+            - name: timestamp
+              type: Text
+              binding: "formattedTime (DateFormatter.timeStyle = .short)"
+              font: .caption2
+              foreground: .secondary
+              padding_h: 4
+
+  correction_sheet:
+    file: CorrectionSheet.swift
+    path: /Users/chadbarlow/gh/hcb-gpt/camber-calls/ios/CamberRedline/CamberRedline/Views/CorrectionSheet.swift
+    role: modal sheet for entering correction text
+    presentation:
+      style: .sheet
+      detents: [".height(200)"]
+      color_scheme: .dark
+    nav:
+      component: NavigationStack
+      title: "Correction"
+      title_display_mode: .inline
+      toolbar:
+        cancellation_action:
+          label: "Cancel"
+          action: dismiss()
+    layout:
+      component: VStack(spacing: 16)
+      padding: default (.padding())
+      background: Color.black
+      elements:
+        - name: text_field
+          type: TextField
+          placeholder: "Enter correction..."
+          binding: "$correctionText"
+          axis: .vertical
+          style: .plain
+          line_limit: "3...6"
+          padding: 12
+          background: "Color(UIColor.secondarySystemBackground)"
+          corner_radius: 10
+        - name: submit_button
+          type: Button
+          label: "Submit Correction"
+          weight: .semibold
+          style: .borderedProminent
+          tint: .orange
+          frame: maxWidth .infinity
+          padding_v: 12
+          disabled_when: "correctionText trimmed is empty"
+          action: "onSubmit(correctionText); dismiss()"
+        - name: spacer
+          type: Spacer
+
+view_models:
+  ContactListViewModel:
+    file: ThreadViewModel.swift  # defined in same file as ThreadViewModel
+    path: /Users/chadbarlow/gh/hcb-gpt/camber-calls/ios/CamberRedline/CamberRedline/ViewModels/ThreadViewModel.swift
+    annotations: ["@MainActor", "@Observable"]
+    state:
+      - name: contacts
+        type: "[Contact]"
+        default: "[]"
+      - name: isLoading
+        type: Bool
+        default: false
+      - name: error
+        type: "String?"
+        default: nil
+    private_state:
+      - name: service
+        type: SupabaseService
+        value: SupabaseService.shared
+      - name: interactionsChannel
+        type: "RealtimeChannelV2?"
+      - name: interactionsTask
+        type: "Task<Void, Never>?"
+    methods:
+      - name: loadContacts
+        access: public
+        async: true
+        description: "Fetches contacts from redline_contacts view via PostgREST"
+      - name: subscribeToNewInteractions
+        access: public
+        async: true
+        description: "Subscribes to INSERT on interactions table; auto-reloads contacts on new rows"
+      - name: unsubscribe
+        access: public
+        async: true
+        description: "Cancels realtime subscription and removes channel"
+      - name: reloadContactsFromRealtime
+        access: private
+        async: true
+        description: "Silent reload (no isLoading flag) triggered by realtime event"
+
+  ThreadViewModel:
+    file: ThreadViewModel.swift
+    path: /Users/chadbarlow/gh/hcb-gpt/camber-calls/ios/CamberRedline/CamberRedline/ViewModels/ThreadViewModel.swift
+    annotations: ["@MainActor", "@Observable"]
+    state:
+      - name: currentContact
+        type: "Contact?"
+        default: nil
+      - name: threadItems
+        type: "[ThreadItem]"
+        default: "[]"
+      - name: isLoading
+        type: Bool
+        default: false
+      - name: error
+        type: "String?"
+        default: nil
+    private_state:
+      - name: service
+        type: SupabaseService
+        value: SupabaseService.shared
+      - name: gradeChannel
+        type: "RealtimeChannelV2?"
+      - name: gradeInsertTask
+        type: "Task<Void, Never>?"
+      - name: gradeUpdateTask
+        type: "Task<Void, Never>?"
+      - name: subscribedContactId
+        type: "UUID?"
+    methods:
+      - name: loadThread
+        access: public
+        async: true
+        params: "contactId: UUID"
+        description: >
+          Fetches thread from edge function, converts RawThreadItem to ThreadItem,
+          sorts chronologically (ascending by eventAtDate)
+      - name: gradeClaim
+        access: public
+        async: true
+        params: "claimId: UUID, grade: GradeType, correctionText: String?"
+        description: >
+          Submits grade via edge function POST endpoint with gradedBy='ios_reviewer',
+          then reloads full thread
+      - name: startClaimGradeSubscription
+        access: public
+        async: true
+        params: "contactId: UUID"
+        description: >
+          Subscribes to INSERT and UPDATE on claim_grades table. Merges grade
+          changes in-place without full thread reload.
+      - name: stopClaimGradeSubscription
+        access: public
+        async: true
+        description: "Cancels grade realtime tasks and removes channel"
+      - name: applyGradeUpdate
+        access: private
+        params: "record: RealtimeGradeRecord"
+        description: >
+          Maps over threadItems -> call entries -> spans -> claims, replacing
+          the matching claimId with updated grade/correctionText/gradedBy
+
+models:
+  Contact:
+    file: Contact.swift
+    path: /Users/chadbarlow/gh/hcb-gpt/camber-calls/ios/CamberRedline/CamberRedline/Models/Contact.swift
+    protocols: [Codable, Identifiable, Hashable]
+    id_property: "contactId (UUID)"
+    fields:
+      - name: contactId
+        type: UUID
+        json_key: contact_id
+      - name: name
+        type: String
+        json_key: contact_name
+      - name: phone
+        type: String
+        json_key: contact_phone
+      - name: callCount
+        type: Int
+        json_key: call_count
+        default: 0
+      - name: smsCount
+        type: Int
+        json_key: sms_count
+        default: 0
+      - name: claimCount
+        type: Int
+        json_key: claim_count
+        default: 0
+      - name: ungradedCount
+        type: Int
+        json_key: ungraded_count
+        default: 0
+      - name: lastActivity
+        type: "String?"
+        json_key: last_activity
+      - name: lastSnippet
+        type: "String?"
+        json_key: last_snippet
+      - name: lastDirection
+        type: "String?"
+        json_key: last_direction
+      - name: lastInteractionType
+        type: "String?"
+        json_key: last_interaction_type
+
+  ThreadItem:
+    file: ThreadItem.swift
+    path: /Users/chadbarlow/gh/hcb-gpt/camber-calls/ios/CamberRedline/CamberRedline/Models/ThreadItem.swift
+    type: enum
+    protocols: [Identifiable]
+    variants:
+      - name: call
+        associated_value: CallEntry
+        id_format: "call-{interactionId}"
+      - name: sms
+        associated_value: SMSEntry
+        id_format: "sms-{smsId}"
+    computed_properties:
+      - name: eventAtDate
+        type: "Date?"
+        description: "Parses ISO8601 eventAt string (with or without fractional seconds)"
+
+  CallEntry:
+    file: ThreadItem.swift
+    protocols: [Codable]
+    fields:
+      - name: interactionId
+        type: String
+        json_key: interaction_id
+      - name: eventAt
+        type: String
+        json_key: event_at
+      - name: direction
+        type: "String?"
+        json_key: direction
+      - name: summary
+        type: "String?"
+        json_key: summary
+      - name: spans
+        type: "[SpanEntry]"
+        json_key: spans
+
+  SpanEntry:
+    file: ThreadItem.swift
+    protocols: [Codable, Identifiable]
+    id_property: "spanId (UUID)"
+    fields:
+      - name: spanId
+        type: UUID
+        json_key: span_id
+      - name: spanIndex
+        type: Int
+        json_key: span_index
+      - name: transcriptSegment
+        type: "String?"
+        json_key: transcript_segment
+      - name: claims
+        type: "[ClaimEntry]"
+        json_key: claims
+
+  ClaimEntry:
+    file: ThreadItem.swift
+    protocols: [Codable, Identifiable]
+    id_property: "claimId (UUID)"
+    fields:
+      - name: claimId
+        type: UUID
+        json_key: claim_id
+      - name: claimType
+        type: "String?"
+        json_key: claim_type
+      - name: claimText
+        type: String
+        json_key: claim_text
+      - name: grade
+        type: "String?"
+        json_key: grade
+      - name: correctionText
+        type: "String?"
+        json_key: correction_text
+      - name: gradedBy
+        type: "String?"
+        json_key: graded_by
+
+  SMSEntry:
+    file: ThreadItem.swift
+    protocols: [Codable, Identifiable]
+    id_property: "smsId (UUID)"
+    fields:
+      - name: smsId
+        type: UUID
+        json_key: sms_id
+      - name: eventAt
+        type: String
+        json_key: event_at
+      - name: direction
+        type: "String?"
+        json_key: direction
+      - name: content
+        type: "String?"
+        json_key: content
+
+  GradeType:
+    file: ClaimGrade.swift
+    path: /Users/chadbarlow/gh/hcb-gpt/camber-calls/ios/CamberRedline/CamberRedline/Models/ClaimGrade.swift
+    type: enum
+    raw_type: String
+    protocols: [CaseIterable]
+    cases:
+      - confirm
+      - reject
+      - correct
+
+  NewGrade:
+    file: ClaimGrade.swift
+    protocols: [Encodable]
+    fields:
+      - name: claimId
+        type: UUID
+        json_key: claim_id
+      - name: grade
+        type: String
+        json_key: grade
+      - name: correctionText
+        type: "String?"
+        json_key: correction_text
+      - name: gradedBy
+        type: String
+        json_key: graded_by
+
+  ThreadResponse:
+    file: SupabaseService.swift
+    protocols: [Decodable]
+    fields:
+      - name: ok
+        type: Bool
+      - name: contact
+        type: ThreadContactInfo
+      - name: thread
+        type: "[RawThreadItem]"
+      - name: pagination
+        type: ThreadPagination
+
+  ThreadContactInfo:
+    file: SupabaseService.swift
+    protocols: [Decodable]
+    fields:
+      - name: id
+        type: UUID
+      - name: name
+        type: String
+      - name: phone
+        type: String
+
+  ThreadPagination:
+    file: SupabaseService.swift
+    protocols: [Decodable]
+    fields:
+      - name: total
+        type: Int
+      - name: limit
+        type: Int
+      - name: offset
+        type: Int
+
+  RawThreadItem:
+    file: SupabaseService.swift
+    protocols: [Decodable]
+    description: >
+      Polymorphic decoder that reads the 'type' field and conditionally
+      decodes either a CallEntry or SMSEntry from the flat JSON object.
+    fields:
+      - name: type
+        type: String
+      - name: callEntry
+        type: "CallEntry?"
+      - name: smsEntry
+        type: "SMSEntry?"
+    methods:
+      - name: toThreadItem
+        returns: "ThreadItem?"
+        description: "Converts to strongly-typed ThreadItem enum"
+
+  RealtimeGradeRecord:
+    file: ThreadViewModel.swift
+    access: private
+    protocols: [Decodable]
+    fields:
+      - name: claimId
+        type: UUID
+        json_key: claim_id
+      - name: grade
+        type: "String?"
+        json_key: grade
+      - name: correctionText
+        type: "String?"
+        json_key: correction_text
+      - name: gradedBy
+        type: "String?"
+        json_key: graded_by
+
+  ServiceError:
+    file: SupabaseService.swift
+    type: enum
+    protocols: [LocalizedError]
+    cases:
+      - name: invalidResponse
+        description: "Response was not an HTTPURLResponse"
+      - name: httpError
+        associated: "statusCode: Int"
+        description: "Non-2xx HTTP status code"
+      - name: apiError
+        associated: "String"
+        description: "API returned ok=false or custom error message"
+
+services:
+  SupabaseService:
+    file: SupabaseService.swift
+    path: /Users/chadbarlow/gh/hcb-gpt/camber-calls/ios/CamberRedline/CamberRedline/Services/SupabaseService.swift
+    annotations: ["@MainActor"]
+    pattern: "singleton (SupabaseService.shared)"
+    properties:
+      - name: client
+        type: SupabaseClient
+        access: public
+        description: "Supabase SDK client used for PostgREST queries and Realtime subscriptions"
+      - name: edgeFunctionBaseURL
+        type: URL
+        access: private
+        value: "https://rjhdwidddtfetbwqolof.supabase.co/functions/v1/redline-thread"
+    methods:
+      - name: fetchContactsList
+        access: public
+        async: true
+        throws: true
+        returns: "[Contact]"
+        data_path: "PostgREST: redline_contacts view, ordered by last_activity DESC"
+      - name: fetchContacts
+        access: public
+        async: true
+        throws: true
+        returns: "[Contact]"
+        description: "Thin wrapper around fetchContactsList()"
+      - name: fetchThread
+        access: public
+        async: true
+        throws: true
+        params: "contactId: UUID, limit: Int = 100"
+        returns: ThreadResponse
+        data_path: "URLSession GET to edge function ?contact_id=&limit="
+      - name: gradeClaimViaAPI
+        access: public
+        async: true
+        throws: true
+        params: "claimId: UUID, grade: String, correctionText: String?, gradedBy: String"
+        data_path: "URLSession POST to edge function with JSON body"
+
+design_tokens:
+  colors:
+    background: "#000000 (Color.black)"
+    card_background: "UIColor.secondarySystemBackground (system dark: ~#1C1C1E)"
+    inbound_bubble: "UIColor.tertiarySystemBackground (system dark: ~#2C2C2E)"
+    outbound_bubble: "#007AFF (Color(red: 0, green: 0.478, blue: 1))"
+    call_accent_inbound: "Color(red: 0.19, green: 0.82, blue: 0.35)"  # bright green
+    call_accent_outbound: "Color(red: 0, green: 0.48, blue: 1.0)"  # blue
+    confirm_green: ".green (system green, ~#30D158)"
+    reject_red: ".red (system red, ~#FF453A)"
+    correct_orange: ".orange (system orange, ~#FF9F0A)"
+    ungraded_gray: ".gray (system gray)"
+    text_primary: ".white"
+    text_secondary: ".secondary"
+    text_summary: "Color(.systemGray)"
+    divider: "Color(.systemGray4)"
+    claim_type_badge_bg: "Color(.systemGray3)"
+    avatar_bg: "Color(white: 0.25)"
+    row_separator: "Color(white: 0.2)"
+    direction_outbound: ".blue"
+    direction_inbound: ".green"
+    error_text: ".red"
+    error_background: ".ultraThinMaterial"
+
+  typography:
+    nav_title: system default (NavigationStack)
+    contact_name: ".body, .semibold"
+    relative_time: ".subheadline"
+    preview_text: ".subheadline"
+    ungraded_badge: ".caption, .semibold"
+    initials: "system(size: 15, weight: .semibold)"
+    card_title: ".subheadline, .semibold"
+    card_time_direction: ".caption"
+    card_summary: ".subheadline"
+    claims_header: ".caption, .semibold, .uppercase"
+    claim_type_badge: ".caption2, .semibold"
+    claim_text: ".subheadline"
+    correction_icon: ".caption2"
+    correction_text: ".caption"
+    graded_by: ".caption2"
+    grade_indicator_icon: "system(size: 16)"
+    date_header: ".caption, .semibold"
+    transcript_toggle: ".caption, .medium"
+    span_label: ".caption2, .bold"
+    span_text: ".caption"
+    sms_body: ".body"
+    sms_time: ".caption2"
+    direction_icon: ".caption2"
+    interaction_icon: ".caption2"
+    phone_icon: ".title2"
+    direction_arrow_card: ".caption"
+    error_text: ".caption"
+    sheet_textfield: default (TextField)
+    sheet_button: ".semibold"
+
+  spacing:
+    list_row_vertical_padding: 4
+    contact_row_hstack_spacing: 12
+    card_internal_padding: 14
+    card_vstack_spacing: 10
+    card_header_hstack_spacing: 10
+    thread_lazystack_spacing: 12
+    thread_horizontal_padding: system default (.padding(.horizontal))
+    thread_bottom_padding: 16
+    claim_row_hstack_spacing: 8
+    claim_row_vertical_padding: 4
+    claim_vstack_spacing: 4
+    sms_bubble_padding_h: 12
+    sms_bubble_padding_v: 8
+    sms_spacer_min_length: 60
+    correction_sheet_vstack_spacing: 16
+    correction_sheet_textfield_padding: 12
+    correction_sheet_button_padding_v: 12
+    date_header_vertical_padding: 8
+    transcript_content_top_padding: 4
+    transcript_span_vstack_spacing: 8
+    error_banner_padding: 8
+
+  corner_radii:
+    card: 14 (continuous)
+    sms_bubble_large: 18
+    sms_bubble_tail: 4
+    claim_type_badge: capsule
+    ungraded_badge: capsule
+    avatar: circle (full round)
+    error_banner: 8
+    correction_textfield: 10
+    correction_sheet_detent_height: 200
+    accent_bar: 2
+
+  haptics:
+    note: >
+      No explicit haptic feedback is implemented in the current codebase.
+      System haptics fire automatically for contextMenu and swipeActions
+      via UIKit, but no manual UINotificationFeedbackGenerator calls exist.
+
+navigation_flow:
+  entry_point: CamberRedlineApp
+  graph:
+    - screen: ContactListView
+      type: NavigationStack root
+      transitions:
+        - target: ThreadView
+          trigger: tap on ContactRow (NavigationLink)
+          data_passed: Contact
+    - screen: ThreadView
+      type: pushed destination
+      transitions:
+        - target: CorrectionSheet
+          trigger: swipe-trailing "Correct" or context menu "Correct" on ClaimRow
+          data_passed: "onSubmit callback closure"
+          presentation: .sheet
+    - screen: CorrectionSheet
+      type: modal sheet
+      transitions:
+        - target: dismiss
+          trigger: "Cancel toolbar button or Submit Correction button"
+
+state_ownership:
+  description: >
+    Both view models are created at the App level and passed down.
+    ContactListViewModel is owned by CamberRedlineApp and injected into
+    ContactListView. ThreadViewModel is also owned by CamberRedlineApp and
+    shared — ThreadView receives it via parameter. This means thread state
+    persists across navigation pops (no reload needed if returning to same contact).
+  app_level_state:
+    - "@State contactListViewModel: ContactListViewModel"
+    - "@State threadViewModel: ThreadViewModel"
+  injection_pattern: "direct parameter passing (not @Environment)"
+
+known_limitations:
+  - title: "Hardcoded anon key"
+    description: >
+      The Supabase anon key is hardcoded in SupabaseService.swift. No key
+      rotation mechanism or config file exists. The key is committed to the
+      repo in plaintext.
+    severity: medium
+
+  - title: "No user authentication"
+    description: >
+      The app has no login flow. All API calls use the anon key. The edge
+      function runs with verify_jwt=false. The graded_by field is hardcoded
+      to 'ios_reviewer'. There is no way to distinguish between multiple
+      human reviewers.
+    severity: medium
+
+  - title: "Thread loaded via edge function, not PostgREST"
+    description: >
+      Contacts use the redline_contacts view via PostgREST (efficient),
+      but threads are fetched from the edge function endpoint via raw
+      URLSession. The edge function uses source_span_id joins which return
+      fewer claims than the call_id path (known deficiency: only ~21% of
+      claims visible for some contacts due to is_superseded filtering).
+    severity: high
+
+  - title: "Full thread reload after grading"
+    description: >
+      After gradeClaimViaAPI() succeeds, the entire thread is reloaded via
+      loadThreadInternal(). Although Realtime subscription exists for
+      in-place merging, the POST-then-reload pattern causes a redundant
+      full fetch. Realtime alone would suffice.
+    severity: low
+
+  - title: "No pagination support in UI"
+    description: >
+      The edge function supports limit/offset pagination, but the iOS app
+      hardcodes limit=100 and never requests subsequent pages. Contacts
+      with more than 100 interactions will have older items truncated.
+    severity: medium
+
+  - title: "No offline support"
+    description: >
+      No local caching, Core Data, or SwiftData persistence. The app
+      requires network connectivity for all operations. Queued grades are
+      not supported — a failed grade POST shows an error but does not retry.
+    severity: low
+
+  - title: "No search or filtering"
+    description: >
+      No ability to search contacts, filter by claim type, filter by
+      graded/ungraded status, or search within transcripts.
+    severity: low
+
+  - title: "Single shared ThreadViewModel"
+    description: >
+      One ThreadViewModel instance is shared for all contacts. Navigating
+      to a different contact replaces the previous thread data. There is no
+      per-contact caching.
+    severity: low
+
+  - title: "No haptic feedback on grade actions"
+    description: >
+      The iOS architecture spec called for manual UINotificationFeedbackGenerator
+      (.success for confirm, .rigid for reject), but no explicit haptic
+      code exists. Only system-default context menu haptics are present.
+    severity: low
+
+  - title: "Date parsing duplicated"
+    description: >
+      ISO8601 date parsing is independently implemented in both
+      ContactRow (with 3 formatters including postgres format) and
+      ThreadItem (with 2 formatters). No shared utility.
+    severity: low
+
+  - title: "SMS has no claim extraction"
+    description: >
+      SMS messages appear as chat bubbles but have no claims, no grading
+      capability, and no pipeline integration. They are display-only.
+    severity: info
+
+  - title: "No empty state design"
+    description: >
+      When a contact has zero thread items, the screen shows nothing
+      (no illustration, no message). The only empty state handling is
+      the loading spinner while data is being fetched.
+    severity: low
+
+  - title: "portrait-only locked"
+    description: >
+      The app is locked to portrait orientation in project.yml. Landscape
+      is not supported, which may be limiting on iPad.
+    severity: info
+
+  - title: "No iPad optimization"
+    description: >
+      The app is iPhone-focused with no iPad split-view or sidebar
+      navigation adaptation. It will run on iPad but not use the screen
+      efficiently.
+    severity: low
+
+  - title: "word_count field from API is unused"
+    description: >
+      The edge function returns word_count per span, but the SpanEntry
+      model does not decode it. It is silently dropped.
+    severity: info
+
+  - title: "No TestFlight or CI"
+    description: >
+      No development team configured, no CI pipeline, no automated tests.
+      Distribution is via Xcode direct install only (free Apple ID, 7-day
+      re-sign cycle).
+    severity: info
+
+improvement_areas:
+  - area: "Claim visibility"
+    priority: high
+    description: >
+      Switch thread fetching from the edge function's source_span_id join
+      path to using PostgREST against the redline_thread view, which uses
+      the call_id join path and returns all claims (not just the ~21%
+      visible through non-superseded spans).
+
+  - area: "User identity for grading"
+    priority: high
+    description: >
+      Replace the hardcoded 'ios_reviewer' graded_by value with actual
+      user identification. Options: simple username prompt at launch,
+      Supabase Auth integration, or device name.
+
+  - area: "Grade-only optimistic update"
+    priority: medium
+    description: >
+      After submitting a grade, update the local ClaimEntry immediately
+      (optimistic) and rely on the Realtime subscription for confirmation,
+      instead of doing a full thread reload. This would eliminate the
+      redundant network round-trip.
+
+  - area: "Pagination / infinite scroll"
+    priority: medium
+    description: >
+      Implement infinite scroll in ThreadView using the edge function's
+      offset parameter. Load initial batch, then fetch older items as the
+      user scrolls up.
+
+  - area: "Search and filtering"
+    priority: medium
+    description: >
+      Add a search bar on ContactListView (by name/phone). Add filter
+      chips on ThreadView to show only ungraded claims, or filter by
+      claim type.
+
+  - area: "Shared date parsing utility"
+    priority: low
+    description: >
+      Extract the duplicated ISO8601/postgres date parsing into a single
+      shared DateParser utility used by both ContactRow and ThreadItem.
+
+  - area: "Empty and error states"
+    priority: low
+    description: >
+      Design proper empty states with illustrations and helpful messages
+      for: no contacts, no thread items, no claims. Improve error states
+      beyond a small red caption at the bottom.
+
+  - area: "Haptic feedback"
+    priority: low
+    description: >
+      Add explicit UINotificationFeedbackGenerator calls for grade actions:
+      .success for confirm, .error for reject, .warning or custom for
+      correct. Adds tactile confirmation to the grading flow.
+
+  - area: "iPad sidebar navigation"
+    priority: low
+    description: >
+      Adapt ContactListView to use a sidebar/detail split on iPad using
+      NavigationSplitView, showing contacts on the left and the thread
+      on the right.
+
+  - area: "Offline grade queue"
+    priority: low
+    description: >
+      Queue grade submissions when offline and automatically retry when
+      connectivity returns. Could use SwiftData or UserDefaults for
+      persistence.
+
+  - area: "Accessibility"
+    priority: medium
+    description: >
+      No explicit accessibility labels, hints, or traits are defined.
+      SwiftUI provides some automatic accessibility, but custom components
+      like GradeIndicator and the swipe/context menu grading flow would
+      benefit from explicit VoiceOver support.
+
+  - area: "Grade statistics summary"
+    priority: low
+    description: >
+      The web UI shows a stats bar (confirmed/rejected/corrected/ungraded
+      counts) at the top of the thread. The iOS app does not. Adding this
+      would give reviewers a progress overview.
+
+  - area: "Pull-to-refresh delay"
+    priority: low
+    description: >
+      Artificial Task.sleep delays (300ms on contacts, 500ms on thread)
+      are added after refresh completes. These serve no functional purpose
+      and slow down the UX. They were likely added to prevent the refresh
+      indicator from dismissing too quickly, but could be shortened or
+      removed.
+
+  - area: "Claim type visual hierarchy"
+    priority: low
+    description: >
+      Claim types (commitment, blocker, deadline, etc.) are shown as small
+      gray capsule badges. Consider color-coding by type to make it easier
+      to scan for high-priority claim types at a glance.

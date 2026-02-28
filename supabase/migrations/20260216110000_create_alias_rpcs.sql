@@ -57,10 +57,8 @@ BEGIN
   RETURN jsonb_build_object('ok', true, 'alias', v_alias, 'project_id', v_project_id);
 END;
 $$;
-
 COMMENT ON FUNCTION promote_alias(uuid, text) IS
   'Promotes a pending suggested alias into project_aliases and marks the suggestion approved.';
-
 -- ============================================================
 -- RPC 2: retire_aliases_for_closed_projects
 -- Deactivates aliases for closed/inactive projects.
@@ -95,10 +93,8 @@ BEGIN
   );
 END;
 $$;
-
 COMMENT ON FUNCTION retire_aliases_for_closed_projects() IS
   'Sets active=false on all project_aliases rows where the project status is closed or inactive.';
-
 -- ============================================================
 -- RPC 3: check_project_alias_collision
 -- Checks if a proposed alias collides with other projects.
@@ -127,6 +123,5 @@ BEGIN
   RETURN v_collisions;
 END;
 $$;
-
 COMMENT ON FUNCTION check_project_alias_collision(text, uuid) IS
   'Returns a JSON array of collisions where the given alias is already used by other projects.';

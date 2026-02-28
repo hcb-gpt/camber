@@ -124,7 +124,6 @@ BEGIN
   RETURN;
 END;
 $$;
-
 COMMENT ON FUNCTION test_phonetic_adjacent_only() IS
 'Regression tests for phonetic-adjacent-only initiative.
 Validates: no substring matching, short-token guards, word boundaries.

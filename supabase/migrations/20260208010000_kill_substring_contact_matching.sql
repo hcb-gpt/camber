@@ -46,13 +46,10 @@ BEGIN
     ORDER BY 6, 2;  -- match_type, contact_name (positional for UNION compat)
 END;
 $$ LANGUAGE plpgsql;
-
 COMMENT ON FUNCTION find_contact_by_name_or_alias(text) IS
 'Search for contacts by name or any registered alias. Exact match only (no substring).
 v2: Removed ILIKE substring matching to prevent false positives on short tokens.
 v2.1: Fixed ORDER BY to use positional refs for UNION compatibility.';
-
-
 -- 2) match_text_to_contact: was using ILIKE '%alias%' (substring in text)
 --    Now: word-boundary matching using regexp
 CREATE OR REPLACE FUNCTION match_text_to_contact(input_text text)
@@ -88,7 +85,6 @@ BEGIN
     ORDER BY confidence DESC, c.name;
 END;
 $$ LANGUAGE plpgsql;
-
 COMMENT ON FUNCTION match_text_to_contact(text) IS
 'Given a text string, find contacts whose name or aliases appear as whole words in the text.
 v2: Replaced ILIKE substring with word-boundary regex. Min alias length 4.';

@@ -53,7 +53,6 @@ BEGIN
   ORDER BY ac.project_id, ac.alias;
 END;
 $function$;
-
 COMMENT ON FUNCTION scan_transcript_for_projects IS
 'Scans transcript for known project aliases. Direction: aliases -> transcript.
 v2: Removed substring fallback (LIKE). Word-boundary regex only (\y).
