@@ -27,7 +27,7 @@ struct CamberRedlineApp: App {
                 }
                 .tag(0)
 
-                TriageView()
+                AttributionTriageCardsView()
                 .tabItem {
                     Label("Triage", systemImage: "checkmark.circle.fill")
                 }
