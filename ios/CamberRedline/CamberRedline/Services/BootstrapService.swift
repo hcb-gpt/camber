@@ -106,6 +106,29 @@ final class BootstrapService {
         try decodeOkResponse(data, action: "undo")
     }
 
+    // MARK: - Assistant Context
+
+    private let assistantContextURL = URL(
+        string: "https://rjhdwidddtfetbwqolof.supabase.co/functions/v1/assistant-context"
+    )!
+
+    func fetchAssistantContext(projectId: String? = nil) async throws -> AssistantContextPacket {
+        var components = URLComponents(url: assistantContextURL, resolvingAgainstBaseURL: false)!
+        var queryItems: [URLQueryItem] = []
+        if let projectId {
+            queryItems.append(URLQueryItem(name: "project_id", value: projectId))
+        }
+        components.queryItems = queryItems.isEmpty ? nil : queryItems
+
+        guard let url = components.url else {
+            throw BootstrapServiceError.invalidURL
+        }
+
+        let (data, response) = try await session.data(from: url)
+        try validateHTTPResponse(response)
+        return try decoder.decode(AssistantContextPacket.self, from: data)
+    }
+
     // MARK: - Helpers
 
     private func post<T: Encodable>(action: String, body: T) async throws -> Data {
