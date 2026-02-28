@@ -6,8 +6,8 @@
  * @date 2026-01-31
  * @purpose Segment transcripts into N spans for multi-project attribution
  *
- * Auth: verify_jwt is false (set in config.toml); request-level auth is
- *       X-Edge-Secret == EDGE_SHARED_SECRET, validated in handler.
+ * Auth: verify_jwt=false is set in config.toml; runtime auth requires
+ *       X-Edge-Secret to match EDGE_SHARED_SECRET in the request handler.
  * Called from: segment-call only
  *
  * STOPLINES (from CLAUDE.md):
