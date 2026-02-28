@@ -95,6 +95,7 @@
  */
 import "jsr:@supabase/functions-js/edge-runtime.d.ts";
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
+import { validateEdgeSecret } from "../_shared/auth.ts";
 import { computeClaimCrossref } from "./claim_crossref.ts";
 import { findHomeownerOverrideConflict, isHomeownerRoleLabel } from "./homeowner_override.ts";
 
@@ -1149,13 +1150,13 @@ Deno.serve(async (req: Request) => {
   // AUTH GATE: X-Edge-Secret (internal) OR JWT (external)
   // v1.4.1: Added X-Edge-Secret path for function-to-function calls
   //         (segment-call sends X-Edge-Secret, not JWT)
+  // v2.2.1: Uses _shared/auth.ts validateEdgeSecret (constant-time comparison)
   // ========================================
-  const edgeSecretHeader = req.headers.get("X-Edge-Secret");
   const expectedSecret = Deno.env.get("EDGE_SHARED_SECRET");
   const authHeader = req.headers.get("Authorization");
 
-  // Path 1: Internal function-to-function via X-Edge-Secret
-  const hasValidEdgeSecret = !!(expectedSecret && edgeSecretHeader && edgeSecretHeader === expectedSecret);
+  // Path 1: Internal function-to-function via X-Edge-Secret (constant-time)
+  const hasValidEdgeSecret = validateEdgeSecret(req);
 
   let body: any;
   try {
