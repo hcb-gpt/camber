@@ -1,7 +1,7 @@
 import "jsr:@supabase/functions-js/edge-runtime.d.ts";
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
 
-const FUNCTION_VERSION = "assistant-context_v1.0.0";
+const FUNCTION_VERSION = "assistant-context_v1.1.0";
 
 function corsHeaders(): Record<string, string> {
   return {
@@ -16,6 +16,11 @@ function json(data: unknown, status = 200): Response {
     status,
     headers: { "Content-Type": "application/json", ...corsHeaders() },
   });
+}
+
+function asNumber(value: unknown): number {
+  const num = Number(value);
+  return Number.isFinite(num) ? num : 0;
 }
 
 Deno.serve(async (req: Request): Promise<Response> => {
@@ -46,10 +51,24 @@ Deno.serve(async (req: Request): Promise<Response> => {
       .select("capability, total, last_at, hours_stale");
 
     // 2. Top active projects (by 7-day interactions)
-    const { data: projectFeed } = await sb
+    const { data: projectFeedRaw } = await sb
       .from("v_project_feed")
       .select(
-        "project_id, project_name, phase, interactions_7d, active_journal_claims, open_loops, pending_reviews, striking_signal_count, risk_flag",
+        [
+          "project_id",
+          "project_name",
+          "phase",
+          "interactions_7d",
+          "active_journal_claims_total",
+          "active_journal_claims_7d",
+          "open_loops_total",
+          "open_loops_7d",
+          "pending_reviews_span_total",
+          "pending_reviews_queue_total",
+          "pending_reviews_queue_7d",
+          "striking_signal_count",
+          "risk_flag",
+        ].join(", "),
       )
       .order("interactions_7d", { ascending: false })
       .limit(limit);
@@ -67,6 +86,14 @@ Deno.serve(async (req: Request): Promise<Response> => {
       .select("*")
       .limit(1)
       .maybeSingle();
+
+    const { data: reviewSummaryByProject } = await sb
+      .from("v_review_queue_project_summary")
+      .select(
+        "project_id, project_name, pending_reviews_total, pending_reviews_7d, oldest_pending_created_at, latest_pending_created_at",
+      )
+      .order("pending_reviews_total", { ascending: false })
+      .limit(10);
 
     // 5. Recent calls (last 24h)
     const { data: recentCalls, count: callCount24h } = await sb
@@ -112,14 +139,38 @@ Deno.serve(async (req: Request): Promise<Response> => {
       };
     }
 
+    const projectFeedRows = Array.isArray(projectFeedRaw)
+      ? (projectFeedRaw as unknown as Array<Record<string, unknown>>)
+      : [];
+
+    const projectFeed = projectFeedRows.map((row) => ({
+      ...row,
+      // Backward-compatible display aliases now explicitly 7d-windowed.
+      active_journal_claims: asNumber(row.active_journal_claims_7d),
+      open_loops: asNumber(row.open_loops_7d),
+      pending_reviews: asNumber(row.pending_reviews_queue_7d),
+    }));
+
     const packet = {
       ok: true,
       generated_at: new Date().toISOString(),
       function_version: FUNCTION_VERSION,
+      metric_contract: {
+        version: "assistant_context_metric_contract_v2",
+        top_projects: {
+          calls: "interactions_7d",
+          claims_display: "active_journal_claims_7d",
+          loops_display: "open_loops_7d",
+          reviews_display: "pending_reviews_queue_7d",
+          reviews_span_total: "pending_reviews_span_total",
+          reviews_queue_total: "pending_reviews_queue_total",
+        },
+      },
       pipeline_health: pipelineHealth ?? [],
       top_projects: projectFeed ?? [],
       who_needs_you: whoNeeds ?? [],
       review_pressure: reviewSummary,
+      review_pressure_by_project: reviewSummaryByProject ?? [],
       recent_activity: {
         calls_24h: callCount24h ?? 0,
         latest_calls: recentCalls ?? [],
