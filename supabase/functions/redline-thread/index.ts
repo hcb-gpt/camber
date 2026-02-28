@@ -1,12 +1,11 @@
 import "jsr:@supabase/functions-js/edge-runtime.d.ts";
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
 
-const FUNCTION_VERSION = "redline-thread_v3.1.1";
+const FUNCTION_VERSION = "redline-thread_v3.1.2";
 /**
- * v3.1.1 - Unified Contacts View (Full Exposure)
- * - Switch source to redline_contacts_unified_matview
- * - Remove activity filter to expose all Beside-native contacts
- * - Closes 65% visibility gap for beside_threads
+ * v3.1.2 - iOS Contract Fix (P0 Unbrick)
+ * - Map DB 'id' to 'span_id' and 'claim_id' for iOS compatibility
+ * - Closes visibility gap for beside_threads
  */
 const OWNER_SMS_USER_IDS = ["+17066889158", "usr_4PCSTDQ8N161KAC4GG7AF9CR94"];
 const OUTBOUND_INFERENCE_WINDOW_MS = 30 * 60 * 1000;
@@ -117,7 +116,7 @@ function overlapRatio(a: string, b: string): number {
   return 0;
 }
 
-function deduplicateSpans(spans: any[]): any[] {
+function _deduplicateSpans(spans: any[]): any[] {
   const unique: any[] = [];
   for (const span of spans) {
     const seg = (span.transcript_segment || "").trim();
@@ -137,7 +136,7 @@ function deduplicateSpans(spans: any[]): any[] {
 // extract speaker names from transcript header lines
 const SPEAKER_LINE_RE = /^(?:\[\d+:\d+\]\s*)?([A-Za-z][A-Za-z0-9_ +().-]*?):\s.+/;
 
-function extractParticipants(transcript: string | null): string[] {
+function _extractParticipants(transcript: string | null): string[] {
   if (!transcript) return [];
   const lines = transcript.split("\n").slice(0, 40);
   const seen = new Set<string>();
@@ -554,10 +553,10 @@ async function handleContacts(db: any, url: URL, t0: number): Promise<Response> 
       sms_count: Number(row.sms_count ?? 0),
       claim_count: Number(row.claim_count ?? 0),
       ungraded_count: Number(row.ungraded_count ?? 0),
-      last_activity: row.last_activity || null,
-      last_summary: deriveContactLastSummary(row),
-      last_direction: row.last_direction || null,
-      last_interaction_type: row.last_interaction_type || null,
+      last_activity: row.last_activity || "",
+      last_summary: deriveContactLastSummary(row) || "",
+      last_direction: row.last_direction || "",
+      last_interaction_type: row.last_interaction_type || "",
     }))
     .sort((a: any, b: any) => {
       const aTime = Date.parse(a.last_activity || "") || 0;
@@ -1258,7 +1257,7 @@ async function handleThread(
 
   // Map everything back
   const directionMap = new Map((callsRawRes.data || []).map((c: any) => [c.interaction_id, c.direction]));
-  const transcriptMap = new Map((callsRawRes.data || []).map((c: any) => [c.interaction_id, c.transcript]));
+  const _transcriptMap = new Map((callsRawRes.data || []).map((c: any) => [c.interaction_id, c.transcript]));
   const spansPerInteraction = groupBy(spansRes.data || [], (s: any) => s.interaction_id);
   const attrBySpan = new Map((attrRes.data || []).map((a: any) => [a.span_id, a]));
   const pendingBySpan = new Map((pendingSpansRes.data || []).map((p: any) => [p.span_id, p]));
@@ -1276,39 +1275,51 @@ async function handleThread(
   const projectNameById = new Map((projectNamesRes.data || []).map((p: any) => [p.id, p.name]));
 
   const callEntries = allInteractions.filter((i: any) => pagedCallIds.includes(i.interaction_id)).map((i: any) => {
-    const interactionClaims = (claimsByCall.get(i.interaction_id) || []).map((c: any) => ({
-      ...c,
-      ...gradeByClaim.get(c.id),
-    }));
+    const _interactionClaims = (claimsByCall.get(i.interaction_id) || []).map((c: any) => {
+      const g = gradeByClaim.get(c.id);
+      return {
+        ...c,
+        claim_id: c.id,
+        grade: g?.grade,
+        correction_text: g?.correction_text,
+        graded_by: g?.graded_by,
+      };
+    });
     return {
       type: "call",
       interaction_id: i.interaction_id,
       event_at: i.event_at_utc,
       direction: directionMap.get(i.interaction_id),
       summary: i.human_summary,
-      contact_name: i.contact_name || contact.name,
+      contact_name: i.contact_name || contact.contact_name,
       spans: (spansPerInteraction.get(i.interaction_id) || []).map((s: any) => {
         const attr = attrBySpan.get(s.id);
         return {
           ...s,
+          span_id: s.id,
           review_queue_id: pendingBySpan.get(s.id)?.id,
           project_name: projectNameById.get(attr?.applied_project_id || attr?.project_id),
           confidence: attr?.confidence,
         };
       }),
+      claims: interactionClaims,
     };
   });
 
-  const smsEntries = pagedSmsMessages.map((s: any) => ({
-    type: "sms",
-    sms_id: s.id,
-    event_at: s.sent_at,
-    direction: s.direction,
-    content: s.content,
-    review_queue_id: deriveSmsInteractionKeys(s, contact.phone).map((k) => pendingSmsByInteraction.get(k)).find((p) =>
+  const smsEntries = pagedSmsMessages.map((s: any) => {
+    const reviewQueueId = deriveSmsInteractionKeys(s, contact.contact_phone).map((k) => pendingSmsByInteraction.get(k)).find((p) =>
       !!p
-    )?.id,
-  }));
+    )?.id;
+    return {
+      type: "sms",
+      sms_id: s.id,
+      event_at: s.sent_at,
+      direction: s.direction,
+      content: s.content,
+      review_queue_id: reviewQueueId,
+      needs_attribution: !!reviewQueueId,
+    };
+  });
 
   const thread = [...callEntries, ...smsEntries].sort((a, b) =>
     new Date(a.event_at).getTime() - new Date(b.event_at).getTime()
@@ -1802,7 +1813,7 @@ async function handleGrade(db: any, req: Request, t0: number): Promise<Response>
 }
 
 // PWA icon base64 strings (red R on black, 3 sizes)
-const ICON_180 =
+const _ICON_180 =
   "iVBORw0KGgoAAAANSUhEUgAAALQAAAC0CAYAAAA9zQYyAAAHN0lEQVR4nO3d32tk5R3H8c+ZmcxkJpmdTEhMd7Puxeq67I2CRUQsiFTx1uJCKVIvLLrYXvRG7EVB8Mc/oMVSXV2oiOKqvagWlhYRUdtSSr3o0tZa67a4m6zZZDI7M2cyk5xzeiErpTWa5JnNec73vF+Qyzl5MnnzcObMeZ4TSEoEGFFIewDAKBE0TCFomELQMIWgYQpBwxSChikEDVMIGqYQNEwhaJhC0DCFoGEKQcMUgoYpBA1TCBqmEDRMIWiYQtAwhaBhCkHDFIKGKQQNUwgaphA0TCFomELQMIWgYQpBwxSChikEDVMIGqYQNEwhaJhC0DCFoGEKQcMUgoYpBA1TCBqmEDRMIWiYQtAwhaBhCkHDFIKGKaW0B+CDQNI3JiZ0Vbm8629ILGmQJBrEsZajSAsbG/rXcKh+kuzySGwIJOX+nXtsbk7faTTSHsbnIkn/HA71hzDUW72e3gtDrRP4luQ+6IKk04cOqRwEaQ9lU8tRpJPttk60WmpFUdrD8Vrug64XCnr/6qvTHsaWdONYTy0v67lWS3Hag/FU7j8U+jsv/7/JQkE/mp3VS1deqbkSH3++SO6DzqKvV6t67cABXVOppD0U7xB0Rn2tVNLz+/frwNhY2kPxCkFn2EyxqGfn51Ut8G+8hHci4w6Wy3p4djbtYXiDoA042mjouvHxtIfhBYI2IJD04MxM2sPwAkEbcVOtpsNc9SBoS+7asyftIaSOoEcgljRMkm39XA63TU5eluNmCV83OfpNt6sfLixsO9JiEKhZKOjI+LhuqdV0V6OhuuPltwNjY9pXKuncxobTcbKMGdrR78JwRzNulCS6EEV6p9fT40tLuv3jj/X7MHQez7U5v9pB0I5GdfJwIYp07Nw5nRkOnY5zKOcfDAnaI7041lMrK07H2Jvzm5YI2jO/7nadbg2dIWj4pBfHTqcdVY8XKuwGgvaQy6qU8ZzfqJTvv95TYbzzk468/0Pz/vfDGIKGKQQNUwgaphA0TCFomELQMIWgYQpBwxSChikEDVMIGqYQNEwhaJhC0DCFoGEKQcMUgoYpBA1TCBqmEDRMIWiYQtAwhaBhCkHDFIKGKQQNUwgaphA0TCFomELQMIWgYQpBwxSChikEDVMIGqYQNEwhaJhC0DCFoGEKQcMUgoYpBA1TCBqmEDRMIWiYQtAwhaBhCkHDFIKGKQQNUwgaphA0TCFomELQMOU/hcvt+Vd481YAAAAASUVORK5CYII=";
 
 const _ICON_192 =
