@@ -558,7 +558,6 @@ async function handleContacts(db: any, url: URL, t0: number): Promise<Response> 
       last_direction: row.last_direction || "",
       last_interaction_type: row.last_interaction_type || "",
     }))
-
     .sort((a: any, b: any) => {
       const aTime = Date.parse(a.last_activity || "") || 0;
       const bTime = Date.parse(b.last_activity || "") || 0;
@@ -1308,9 +1307,8 @@ async function handleThread(
   });
 
   const smsEntries = pagedSmsMessages.map((s: any) => {
-    const reviewQueueId = deriveSmsInteractionKeys(s, contact.contact_phone).map((k) => pendingSmsByInteraction.get(k)).find((p) =>
-      !!p
-    )?.id;
+    const reviewQueueId = deriveSmsInteractionKeys(s, contact.contact_phone).map((k) => pendingSmsByInteraction.get(k))
+      .find((p) => !!p)?.id;
     return {
       type: "sms",
       sms_id: s.id,
