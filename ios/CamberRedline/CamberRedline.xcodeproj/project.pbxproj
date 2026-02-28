@@ -30,6 +30,9 @@
 		A1B2C3D4E5F60005AABBCC03 /* BootstrapService.swift in Sources */ = {isa = PBXBuildFile; fileRef = A1B2C3D4E5F60006AABBCC03 /* BootstrapService.swift */; };
 		A1B2C3D4E5F60007AABBCC04 /* TriageViewModel.swift in Sources */ = {isa = PBXBuildFile; fileRef = A1B2C3D4E5F60008AABBCC04 /* TriageViewModel.swift */; };
 		A1B2C3D4E5F60009AABBCC05 /* TriageView.swift in Sources */ = {isa = PBXBuildFile; fileRef = A1B2C3D4E5F6000AAABBCC05 /* TriageView.swift */; };
+		B1A2B3C4D5E6F70100112233 /* AttributionTriageCardsView.swift in Sources */ = {isa = PBXBuildFile; fileRef = B1A2B3C4D5E6F70200112233 /* AttributionTriageCardsView.swift */; };
+		B1A2B3C4D5E6F70300112233 /* ProjectPickerSheet.swift in Sources */ = {isa = PBXBuildFile; fileRef = B1A2B3C4D5E6F70400112233 /* ProjectPickerSheet.swift */; };
+		B1A2B3C4D5E6F70500112233 /* CardTriageViewModel.swift in Sources */ = {isa = PBXBuildFile; fileRef = B1A2B3C4D5E6F70600112233 /* CardTriageViewModel.swift */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXFileReference section */
@@ -56,6 +59,9 @@
 		A1B2C3D4E5F60006AABBCC03 /* BootstrapService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BootstrapService.swift; sourceTree = "<group>"; };
 		A1B2C3D4E5F60008AABBCC04 /* TriageViewModel.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TriageViewModel.swift; sourceTree = "<group>"; };
 		A1B2C3D4E5F6000AAABBCC05 /* TriageView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TriageView.swift; sourceTree = "<group>"; };
+		B1A2B3C4D5E6F70200112233 /* AttributionTriageCardsView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AttributionTriageCardsView.swift; sourceTree = "<group>"; };
+		B1A2B3C4D5E6F70400112233 /* ProjectPickerSheet.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ProjectPickerSheet.swift; sourceTree = "<group>"; };
+		B1A2B3C4D5E6F70600112233 /* CardTriageViewModel.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CardTriageViewModel.swift; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
 /* Begin PBXFrameworksBuildPhase section */
@@ -84,6 +90,8 @@
 				CD4E5F6A7B8C9D0E1F2A3B4C /* SpeakerTurnBubble.swift */,
 				055EAEA048AB6BB4CA4EEE80 /* ThreadView.swift */,
 				A1B2C3D4E5F6000AAABBCC05 /* TriageView.swift */,
+				B1A2B3C4D5E6F70200112233 /* AttributionTriageCardsView.swift */,
+				B1A2B3C4D5E6F70400112233 /* ProjectPickerSheet.swift */,
 			);
 			path = Views;
 			sourceTree = "<group>";
@@ -105,6 +113,7 @@
 			children = (
 				51E44482F637661C85D155F8 /* ThreadViewModel.swift */,
 				A1B2C3D4E5F60008AABBCC04 /* TriageViewModel.swift */,
+				B1A2B3C4D5E6F70600112233 /* CardTriageViewModel.swift */,
 			);
 			path = ViewModels;
 			sourceTree = "<group>";
@@ -226,6 +235,9 @@
 				A1B2C3D4E5F60005AABBCC03 /* BootstrapService.swift in Sources */,
 				A1B2C3D4E5F60007AABBCC04 /* TriageViewModel.swift in Sources */,
 				A1B2C3D4E5F60009AABBCC05 /* TriageView.swift in Sources */,
+				B1A2B3C4D5E6F70100112233 /* AttributionTriageCardsView.swift in Sources */,
+				B1A2B3C4D5E6F70300112233 /* ProjectPickerSheet.swift in Sources */,
+				B1A2B3C4D5E6F70500112233 /* CardTriageViewModel.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};

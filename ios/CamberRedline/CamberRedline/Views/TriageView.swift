@@ -22,7 +22,9 @@ private extension Color {
     }
 }
 
-struct TriageView: View {
+/// Legacy list-based triage view. Archived in favor of AttributionTriageCardsView.
+/// Kept for reference and rollback. Not wired to any tab.
+struct LegacyTriageView: View {
     @State private var viewModel = TriageViewModel()
     @State private var expandedCallIds: Set<String> = []
     @State private var selectedSpan: TriageSpan?
@@ -490,5 +492,5 @@ private struct TriageSpanRow: View {
 }
 
 #Preview {
-    TriageView()
+    LegacyTriageView()
 }
