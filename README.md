@@ -49,6 +49,17 @@ supabase functions serve process-call --env-file .env.local
 supabase functions deploy process-call --no-verify-jwt
 ```
 
+## iOS (CamberRedline)
+
+One-command simulator build guard (useful for `ship/latest` sanity checks):
+
+```bash
+cd camber-calls-ship
+./scripts/xcodebuild_camberredline_guard.sh
+```
+
+The guard writes a scrubbed build log under `artifacts/xcodebuild_guard/<UTC_STAMP>/build.log`.
+
 ## Read-Only SQL Access
 
 For DATA/DEV sessions, use:

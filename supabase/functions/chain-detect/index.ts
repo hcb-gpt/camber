@@ -21,11 +21,13 @@
  */
 import "jsr:@supabase/functions-js/edge-runtime.d.ts";
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
+import { getModelConfigCached } from "../_shared/model_config.ts";
 
 const CHAIN_VERSION = "v1.0.0";
 const PROMPT_VERSION = "v1.0.0";
-const MODEL_ID = "gpt-4o-mini";
-const MAX_TOKENS = 1024;
+const DEFAULT_MODEL_ID = Deno.env.get("CHAIN_DETECT_MODEL") || "gpt-4o-mini";
+const DEFAULT_MAX_TOKENS = 1024;
+const DEFAULT_TEMPERATURE = 0;
 
 const jsonHeaders = { "Content-Type": "application/json" };
 
@@ -178,6 +180,12 @@ Deno.serve(async (req: Request) => {
     Deno.env.get("SUPABASE_URL")!,
     Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!,
   );
+  const modelConfig = await getModelConfigCached(db, {
+    functionName: "chain-detect",
+    modelId: DEFAULT_MODEL_ID,
+    maxTokens: DEFAULT_MAX_TOKENS,
+    temperature: DEFAULT_TEMPERATURE,
+  });
 
   let contactPhone: string;
   let chainDate: string;
@@ -366,8 +374,9 @@ Deno.serve(async (req: Request) => {
           "Authorization": `Bearer ${openaiKey}`,
         },
         body: JSON.stringify({
-          model: MODEL_ID,
-          max_tokens: MAX_TOKENS,
+          model: modelConfig.modelId,
+          max_tokens: modelConfig.maxTokens,
+          temperature: modelConfig.temperature,
           messages: [
             { role: "system", content: SYSTEM_PROMPT },
             {
@@ -452,7 +461,8 @@ Deno.serve(async (req: Request) => {
       chain_assessment: assessment.chain_assessment,
       chain_significance: assessment.chain_significance,
       chain_pattern: assessment.chain_pattern,
-      model_id: callCount > 1 ? MODEL_ID : null,
+      model_id: callCount > 1 ? modelConfig.modelId : null,
+      model_source: callCount > 1 ? modelConfig.source : null,
       prompt_version: callCount > 1 ? PROMPT_VERSION : null,
       tokens_used: tokens_used || null,
       inference_ms: inference_ms || null,
@@ -491,7 +501,8 @@ Deno.serve(async (req: Request) => {
       persisted,
       model_error,
       dry_run,
-      model_id: callCount > 1 ? MODEL_ID : null,
+      model_id: callCount > 1 ? modelConfig.modelId : null,
+      model_source: callCount > 1 ? modelConfig.source : null,
       tokens_used,
       inference_ms,
       version: CHAIN_VERSION,

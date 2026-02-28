@@ -144,7 +144,7 @@ struct AssistantContextDebugView: View {
                             miniStat("\(proj.activeJournalClaims ?? 0) claims")
                             miniStat("\(proj.openLoops ?? 0) loops")
                             if (proj.pendingReviews ?? 0) > 0 {
-                                miniStat("\(proj.pendingReviews!) reviews", tint: .accentAmber)
+                                miniStat("\(proj.pendingReviews!) reviews", tint: Color.accentAmber)
                             }
                         }
                     }
@@ -220,7 +220,7 @@ struct AssistantContextDebugView: View {
                 Spacer()
                 Text("\(activity?.calls24h ?? 0) in 24h")
                     .font(.caption2)
-                    .foregroundStyle(.accentGreen)
+                    .foregroundStyle(Color.accentGreen)
             }
 
             if let calls = activity?.latestCalls, !calls.isEmpty {
@@ -249,14 +249,14 @@ struct AssistantContextDebugView: View {
         VStack(spacing: 8) {
             Image(systemName: "exclamationmark.triangle")
                 .font(.title2)
-                .foregroundStyle(.accentRed)
+                .foregroundStyle(Color.accentRed)
             Text(message)
                 .font(.caption)
                 .foregroundStyle(.white)
                 .multilineTextAlignment(.center)
             Button("Retry") { Task { await load() } }
                 .buttonStyle(.borderedProminent)
-                .tint(.accentRed)
+                .tint(Color.accentRed)
         }
         .padding(20)
     }
@@ -283,16 +283,16 @@ struct AssistantContextDebugView: View {
 
     private func stalenessColor(_ hoursStr: String?) -> Color {
         guard let str = hoursStr, let hours = Double(str) else { return .secondary }
-        if hours < 1 { return .accentGreen }
-        if hours < 6 { return .accentAmber }
-        return .accentRed
+        if hours < 1 { return Color.accentGreen }
+        if hours < 6 { return Color.accentAmber }
+        return Color.accentRed
     }
 
     private func riskDot(_ flag: String?) -> some View {
         let color: Color = switch flag {
-        case "high_open_loops", "elevated_striking": .accentRed
-        case "stale_project": .accentAmber
-        default: .accentGreen
+        case "high_open_loops", "elevated_striking": Color.accentRed
+        case "stale_project": Color.accentAmber
+        default: Color.accentGreen
         }
         return Circle().fill(color).frame(width: 6, height: 6)
     }
@@ -307,7 +307,7 @@ struct AssistantContextDebugView: View {
         }
         return Image(systemName: icon)
             .font(.caption)
-            .foregroundStyle(.accentAmber)
+            .foregroundStyle(Color.accentAmber)
             .frame(width: 16)
     }
 

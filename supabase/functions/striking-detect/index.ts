@@ -17,11 +17,13 @@
  */
 import "jsr:@supabase/functions-js/edge-runtime.d.ts";
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
+import { getModelConfigCached } from "../_shared/model_config.ts";
 
 const STRIKING_VERSION = "v1.0.0";
 const PROMPT_VERSION = "v1.0.0";
-const MODEL_ID = "gpt-4o-mini";
-const MAX_TOKENS = 1024;
+const DEFAULT_MODEL_ID = Deno.env.get("STRIKING_DETECT_MODEL") || "gpt-4o-mini";
+const DEFAULT_MAX_TOKENS = 1024;
+const DEFAULT_TEMPERATURE = 0;
 
 const jsonHeaders = { "Content-Type": "application/json" };
 
@@ -184,6 +186,12 @@ Deno.serve(async (req: Request) => {
     Deno.env.get("SUPABASE_URL")!,
     Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!,
   );
+  const modelConfig = await getModelConfigCached(db, {
+    functionName: "striking-detect",
+    modelId: DEFAULT_MODEL_ID,
+    maxTokens: DEFAULT_MAX_TOKENS,
+    temperature: DEFAULT_TEMPERATURE,
+  });
 
   // ============================================================
   // FETCH TRANSCRIPT (from param or span)
@@ -212,9 +220,10 @@ Deno.serve(async (req: Request) => {
 
     spanTranscript = spanRow.transcript_segment;
   }
+  const transcriptText = spanTranscript ?? "";
 
   // Skip very short transcripts (< 50 chars likely noise)
-  if (spanTranscript.length < 50) {
+  if (transcriptText.length < 50) {
     return new Response(
       JSON.stringify({
         ok: true,
@@ -246,9 +255,9 @@ Deno.serve(async (req: Request) => {
     const inferenceStart = Date.now();
 
     // Truncate transcript for prompt (max 6000 chars to keep costs down)
-    const promptTranscript = spanTranscript.length > 6000
-      ? spanTranscript.slice(0, 6000) + "...[truncated]"
-      : spanTranscript;
+    const promptTranscript = transcriptText.length > 6000
+      ? transcriptText.slice(0, 6000) + "...[truncated]"
+      : transcriptText;
 
     const resp = await fetch("https://api.openai.com/v1/chat/completions", {
       method: "POST",
@@ -257,8 +266,9 @@ Deno.serve(async (req: Request) => {
         "Authorization": `Bearer ${openaiKey}`,
       },
       body: JSON.stringify({
-        model: MODEL_ID,
-        max_tokens: MAX_TOKENS,
+        model: modelConfig.modelId,
+        max_tokens: modelConfig.maxTokens,
+        temperature: modelConfig.temperature,
         messages: [
           { role: "system", content: SYSTEM_PROMPT },
           { role: "user", content: buildUserPrompt(promptTranscript) },
@@ -295,7 +305,7 @@ Deno.serve(async (req: Request) => {
 
         // Validate quote appears in transcript
         const quoteNorm = (sig.quote || "").toLowerCase().replace(/\s+/g, " ").trim();
-        const transcriptNorm = spanTranscript.toLowerCase().replace(/\s+/g, " ").trim();
+        const transcriptNorm = transcriptText.toLowerCase().replace(/\s+/g, " ").trim();
         const quoteInTranscript = quoteNorm.length >= 3 && transcriptNorm.includes(quoteNorm);
 
         if (!quoteInTranscript) {
@@ -348,7 +358,7 @@ Deno.serve(async (req: Request) => {
       striking_score: result.striking_score,
       signals: result.signals,
       primary_signal_type: result.primary_signal_type,
-      model_id: MODEL_ID,
+      model_id: modelConfig.modelId,
       prompt_version: PROMPT_VERSION,
       tokens_used,
       inference_ms,
@@ -380,7 +390,8 @@ Deno.serve(async (req: Request) => {
       persisted,
       model_error,
       dry_run,
-      model_id: MODEL_ID,
+      model_id: modelConfig.modelId,
+      model_source: modelConfig.source,
       prompt_version: PROMPT_VERSION,
       tokens_used,
       inference_ms,

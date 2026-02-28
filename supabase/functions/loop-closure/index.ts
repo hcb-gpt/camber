@@ -25,12 +25,14 @@
  */
 import "jsr:@supabase/functions-js/edge-runtime.d.ts";
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
+import { getModelConfigCached } from "../_shared/model_config.ts";
 
 const FUNCTION_VERSION = "v1.0.0";
 const CLOSURE_CONFIDENCE_THRESHOLD = 0.75;
 const MAX_OPEN_LOOPS_PER_PROJECT = 50;
 const MAX_TOKENS = 2048;
 const DEFAULT_MODEL = "gpt-4o-mini";
+const DEFAULT_TEMPERATURE = 0;
 const DEFAULT_TIMEOUT_MS = 60000;
 
 interface LoopMatch {
@@ -228,6 +230,13 @@ Deno.serve(async (req: Request) => {
   const timeoutMs = Number(Deno.env.get("LOOP_CLOSURE_TIMEOUT_MS")) || DEFAULT_TIMEOUT_MS;
 
   try {
+    const modelConfig = await getModelConfigCached(db, {
+      functionName: "loop-closure",
+      modelId: model,
+      maxTokens: MAX_TOKENS,
+      temperature: DEFAULT_TEMPERATURE,
+    });
+
     // 1. Fetch open loops for this project
     const { data: openLoops, error: loopsErr } = await db
       .from("journal_open_loops")
@@ -296,9 +305,9 @@ Deno.serve(async (req: Request) => {
           "Authorization": `Bearer ${openaiKey}`,
         },
         body: JSON.stringify({
-          model,
-          max_tokens: MAX_TOKENS,
-          temperature: 0,
+          model: modelConfig.modelId,
+          max_tokens: modelConfig.maxTokens,
+          temperature: modelConfig.temperature,
           messages: [
             { role: "system", content: systemPrompt },
             { role: "user", content: userPrompt },
@@ -391,7 +400,8 @@ Deno.serve(async (req: Request) => {
         loops_closed: closures.length,
         closures,
         below_threshold: belowThreshold,
-        model,
+        model: modelConfig.modelId,
+        model_source: modelConfig.source,
         tokens_used,
         inference_ms,
         dry_run,

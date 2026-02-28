@@ -13,6 +13,7 @@ import "jsr:@supabase/functions-js/edge-runtime.d.ts";
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
 import { authErrorResponse, requireEdgeSecret } from "../_shared/auth.ts";
 import { parseLlmJson } from "../_shared/llm_json.ts";
+import { getModelConfigCached } from "../_shared/model_config.ts";
 
 const FUNCTION_VERSION = "v0.1.1";
 const SAFE_FALLBACK_MODEL_ID = "gpt-4o-mini";
@@ -25,6 +26,7 @@ const FALLBACK_MODEL_ID = Deno.env.get("AUDIT_ATTRIBUTION_MODEL_FALLBACK") ||
 const PROMPT_VERSION = Deno.env.get("AUDIT_ATTRIBUTION_PROMPT_VERSION") || "prod_attrib_audit_v1";
 const REVIEWER_PROVIDER = "openai";
 const MAX_TOKENS = Number(Deno.env.get("AUDIT_ATTRIBUTION_MAX_TOKENS") || "1400");
+const DEFAULT_TEMPERATURE = 0;
 const LLM_TIMEOUT_MS = Number(Deno.env.get("AUDIT_ATTRIBUTION_TIMEOUT_MS") || "18000");
 const JSON_HEADERS = { "Content-Type": "application/json" };
 
@@ -911,6 +913,10 @@ Deno.serve(async (req: Request) => {
       headers: JSON_HEADERS,
     });
   }
+  const db = createClient(
+    Deno.env.get("SUPABASE_URL") || "",
+    Deno.env.get("SUPABASE_SERVICE_ROLE_KEY") || "",
+  );
 
   const deterministicTags: string[] = [];
   const deterministicMissing: string[] = [];
@@ -965,12 +971,35 @@ Deno.serve(async (req: Request) => {
     deterministicMissing.push("as_of_project_context_observed_at<=call_at_utc");
   }
 
+  let requestedModelId = REQUESTED_MODEL_ID;
+  let fallbackModelId = FALLBACK_MODEL_ID;
+  let runtimeMaxTokens = MAX_TOKENS;
+  let runtimeTemperature = DEFAULT_TEMPERATURE;
+  let modelConfigSource: "pipeline_model_config" | "default" = "default";
+  try {
+    const modelConfig = await getModelConfigCached(db, {
+      functionName: "audit-attribution",
+      modelId: REQUESTED_MODEL_ID,
+      maxTokens: MAX_TOKENS,
+      temperature: DEFAULT_TEMPERATURE,
+      fallbackModelId: FALLBACK_MODEL_ID,
+    });
+    requestedModelId = modelConfig.modelId;
+    fallbackModelId = modelConfig.fallbackModelId || FALLBACK_MODEL_ID;
+    runtimeMaxTokens = modelConfig.maxTokens;
+    runtimeTemperature = modelConfig.temperature;
+    modelConfigSource = modelConfig.source;
+  } catch (error: unknown) {
+    const message = error instanceof Error ? error.message : String(error || "unknown");
+    console.warn(`[audit-attribution] model config fallback: ${message}`);
+  }
+
   const openaiKey = Deno.env.get("OPENAI_API_KEY") || "";
 
   let output: ReviewerOutput;
   let llmParseMode = "none";
   let llmRawPreview = "";
-  let usedModelId = REQUESTED_MODEL_ID;
+  let usedModelId = requestedModelId;
   try {
     const callReviewer = async (modelId: string) => {
       const fetchPromise = fetch("https://api.openai.com/v1/chat/completions", {
@@ -981,7 +1010,8 @@ Deno.serve(async (req: Request) => {
         },
         body: JSON.stringify({
           model: modelId,
-          max_tokens: MAX_TOKENS,
+          max_tokens: runtimeMaxTokens,
+          temperature: runtimeTemperature,
           messages: [
             { role: "system", content: SYSTEM_PROMPT },
             { role: "user", content: buildUserPrompt(packet) },
@@ -1000,7 +1030,7 @@ Deno.serve(async (req: Request) => {
       ]);
     };
 
-    const candidateModels = listCandidateModels(REQUESTED_MODEL_ID, FALLBACK_MODEL_ID);
+    const candidateModels = listCandidateModels(requestedModelId, fallbackModelId);
     let llmResp: unknown = null;
     let lastModelError: unknown = null;
     for (let i = 0; i < candidateModels.length; i++) {
@@ -1116,11 +1146,6 @@ Deno.serve(async (req: Request) => {
     output.verdict = "INSUFFICIENT";
   }
 
-  const db = createClient(
-    Deno.env.get("SUPABASE_URL") || "",
-    Deno.env.get("SUPABASE_SERVICE_ROLE_KEY") || "",
-  );
-
   let persisted: JsonRecord = { persisted: false };
   if (!normalized.dry_run && normalized.persist) {
     const persistMeta = {
@@ -1205,6 +1230,7 @@ Deno.serve(async (req: Request) => {
       ok: true,
       version: FUNCTION_VERSION,
       model_id: usedModelId,
+      model_source: modelConfigSource,
       prompt_version: PROMPT_VERSION,
       ms: Date.now() - t0,
       reviewer_output: output,

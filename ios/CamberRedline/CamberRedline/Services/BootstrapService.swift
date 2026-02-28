@@ -1,4 +1,14 @@
 import Foundation
+import os
+
+private enum BootstrapSmokeAutomation {
+    static let launchFlag = "--smoke-drive"
+    static let logger = Logger(subsystem: "CamberRedline", category: "smoke")
+
+    static var isEnabled: Bool {
+        ProcessInfo.processInfo.arguments.contains(launchFlag)
+    }
+}
 
 // MARK: - BootstrapService
 
@@ -77,9 +87,15 @@ final class BootstrapService {
     func resolve(
         queueId: String,
         projectId: String,
+        notes: String? = nil,
         userId: String = "ios-user"
     ) async throws -> ResolveResponse {
-        let body = ResolveRequest(reviewQueueId: queueId, projectId: projectId, userId: userId)
+        let body = ResolveRequest(
+            reviewQueueId: queueId,
+            projectId: projectId,
+            notes: notes,
+            userId: userId
+        )
         let data = try await post(action: "resolve", body: body)
         let response = try decoder.decode(ResolveResponse.self, from: data)
         guard response.ok else {
@@ -92,8 +108,18 @@ final class BootstrapService {
 
     // MARK: - Dismiss
 
-    func dismiss(queueId: String, userId: String = "ios-user") async throws {
-        let body = DismissRequest(reviewQueueId: queueId, userId: userId)
+    func dismiss(
+        queueId: String,
+        reason: String? = nil,
+        notes: String? = nil,
+        userId: String = "ios-user"
+    ) async throws {
+        let body = DismissRequest(
+            reviewQueueId: queueId,
+            reason: reason,
+            notes: notes,
+            userId: userId
+        )
         let data = try await post(action: "dismiss", body: body)
         try decodeOkResponse(data, action: "dismiss")
     }
@@ -126,7 +152,34 @@ final class BootstrapService {
 
         let (data, response) = try await session.data(from: url)
         try validateHTTPResponse(response)
-        return try decoder.decode(AssistantContextPacket.self, from: data)
+        do {
+            let decoded = try decoder.decode(AssistantContextPacket.self, from: data)
+            if BootstrapSmokeAutomation.isEnabled,
+               let http = response as? HTTPURLResponse {
+                let requestId =
+                    http.value(forHTTPHeaderField: "x-request-id") ??
+                    http.value(forHTTPHeaderField: "sb-request-id")
+
+                BootstrapSmokeAutomation.logger.log(
+                    "SMOKE_EVENT ASSISTANT_CONTEXT request_id=\(requestId ?? "missing", privacy: .public) version=\(decoded.functionVersion ?? "", privacy: .public)"
+                )
+            }
+            return decoded
+        } catch let error as DecodingError {
+            let path: String = switch error {
+            case .typeMismatch(_, let context),
+                 .valueNotFound(_, let context),
+                 .keyNotFound(_, let context),
+                 .dataCorrupted(let context):
+                context.codingPath.map(\.stringValue).joined(separator: ".")
+            @unknown default:
+                "unknown"
+            }
+            let preview = String(data: data.prefix(400), encoding: .utf8) ?? "<non-utf8>"
+            print("[AssistantContextDecode] path=\(path) error=\(error)")
+            print("[AssistantContextDecode] payload_preview=\(preview)")
+            throw BootstrapServiceError.apiError("Assistant context decode failure at path: \(path)")
+        }
     }
 
     // MARK: - Assistant Chat
@@ -135,11 +188,16 @@ final class BootstrapService {
         string: "https://rjhdwidddtfetbwqolof.supabase.co/functions/v1/redline-assistant"
     )!
 
+    private let assistantFeedbackURL = URL(
+        string: "https://rjhdwidddtfetbwqolof.supabase.co/functions/v1/assistant-feedback"
+    )!
+
     func streamAssistantChat(
         message: String,
         contactId: String? = nil,
-        projectId: String? = nil
-    ) async throws -> AsyncThrowingStream<String, Error> {
+        projectId: String? = nil,
+        history: [AssistantChatHistoryMessage] = []
+    ) async throws -> AssistantChatSession {
         var request = URLRequest(url: assistantChatURL)
         request.httpMethod = "POST"
         request.setValue("application/json", forHTTPHeaderField: "Content-Type")
@@ -147,15 +205,45 @@ final class BootstrapService {
         let body: [String: Any] = [
             "message": message,
             "contact_id": contactId as Any,
-            "project_id": projectId as Any
+            "project_id": projectId as Any,
+            "history": history.map { ["role": $0.role, "content": $0.content] }
         ].compactMapValues { $0 }
 
         request.httpBody = try JSONSerialization.data(withJSONObject: body)
+        let payloadString = String(data: request.httpBody ?? Data(), encoding: .utf8) ?? "{}"
 
         let (bytes, response) = try await session.bytes(for: request)
-        try validateHTTPResponse(response)
+        guard let http = response as? HTTPURLResponse else {
+            throw BootstrapServiceError.invalidResponse
+        }
 
-        return AsyncThrowingStream { continuation in
+        let requestId = http.value(forHTTPHeaderField: "x-request-id")
+            ?? http.value(forHTTPHeaderField: "sb-request-id")
+        let provider = http.value(forHTTPHeaderField: "x-assistant-provider")
+        let model = http.value(forHTTPHeaderField: "x-assistant-model")
+        let providerWarning = http.value(forHTTPHeaderField: "x-assistant-provider-warning")
+
+        if !(200...299).contains(http.statusCode) {
+            var errorBody = ""
+            do {
+                for try await line in bytes.lines {
+                    errorBody += line + "\n"
+                }
+            } catch {
+                throw AssistantChatHTTPError(
+                    statusCode: http.statusCode,
+                    requestId: requestId,
+                    body: "Unable to read error body: \(error.localizedDescription)"
+                )
+            }
+            throw AssistantChatHTTPError(
+                statusCode: http.statusCode,
+                requestId: requestId,
+                body: errorBody.trimmingCharacters(in: .whitespacesAndNewlines)
+            )
+        }
+
+        let stream = AsyncThrowingStream<String, Error> { continuation in
             Task {
                 do {
                     for try await line in bytes.lines {
@@ -180,6 +268,35 @@ final class BootstrapService {
                 }
             }
         }
+
+        return AssistantChatSession(
+            stream: stream,
+            debug: AssistantChatDebugInfo(
+                endpointURL: assistantChatURL.absoluteString,
+                payloadJSON: payloadString,
+                statusCode: http.statusCode,
+                requestId: requestId,
+                provider: provider,
+                model: model,
+                providerWarning: providerWarning
+            )
+        )
+    }
+
+    func submitAssistantFeedback(_ payload: AssistantFeedbackPayload) async throws -> AssistantFeedbackResponse {
+        var request = URLRequest(url: assistantFeedbackURL)
+        request.httpMethod = "POST"
+        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        request.httpBody = try encoder.encode(payload)
+
+        let (data, response) = try await session.data(for: request)
+        try validateHTTPResponse(response)
+
+        let decoded = try decoder.decode(AssistantFeedbackResponse.self, from: data)
+        guard decoded.ok else {
+            throw BootstrapServiceError.apiError(decoded.error ?? "assistant feedback returned ok=false")
+        }
+        return decoded
     }
 
     // MARK: - Helpers
@@ -249,21 +366,27 @@ private struct BootstrapActionResponse: Decodable {
 private struct ResolveRequest: Encodable {
     let reviewQueueId: String
     let projectId: String
+    let notes: String?
     let userId: String
 
     enum CodingKeys: String, CodingKey {
         case reviewQueueId = "review_queue_id"
         case projectId = "project_id"
+        case notes
         case userId = "user_id"
     }
 }
 
 private struct DismissRequest: Encodable {
     let reviewQueueId: String
+    let reason: String?
+    let notes: String?
     let userId: String
 
     enum CodingKeys: String, CodingKey {
         case reviewQueueId = "review_queue_id"
+        case reason
+        case notes
         case userId = "user_id"
     }
 }
@@ -295,5 +418,76 @@ enum BootstrapServiceError: LocalizedError {
         case .apiError(let message):
             return message
         }
+    }
+}
+
+struct AssistantChatHistoryMessage: Encodable {
+    let role: String
+    let content: String
+}
+
+struct AssistantChatDebugInfo {
+    let endpointURL: String
+    let payloadJSON: String
+    let statusCode: Int
+    let requestId: String?
+    let provider: String?
+    let model: String?
+    let providerWarning: String?
+}
+
+struct AssistantChatSession {
+    let stream: AsyncThrowingStream<String, Error>
+    let debug: AssistantChatDebugInfo
+}
+
+struct AssistantFeedbackPayload: Encodable {
+    let messageId: String
+    let messageRole: String
+    let feedback: String
+    let note: String?
+    let requestId: String?
+    let contactId: String?
+    let projectId: String?
+    let prompt: String?
+    let responseExcerpt: String?
+
+    enum CodingKeys: String, CodingKey {
+        case messageId = "message_id"
+        case messageRole = "message_role"
+        case feedback
+        case note
+        case requestId = "request_id"
+        case contactId = "contact_id"
+        case projectId = "project_id"
+        case prompt
+        case responseExcerpt = "response_excerpt"
+    }
+}
+
+struct AssistantFeedbackResponse: Decodable {
+    let ok: Bool
+    let feedbackId: String?
+    let requestId: String?
+    let error: String?
+
+    enum CodingKeys: String, CodingKey {
+        case ok
+        case feedbackId = "feedback_id"
+        case requestId = "request_id"
+        case error
+    }
+}
+
+struct AssistantChatHTTPError: LocalizedError {
+    let statusCode: Int
+    let requestId: String?
+    let body: String
+
+    var errorDescription: String? {
+        if let requestId, !requestId.isEmpty {
+            return "HTTP \(statusCode) (request_id: \(requestId)). \(body)"
+        }
+        return "HTTP \(statusCode). \(body)"
     }
 }

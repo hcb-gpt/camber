@@ -36,6 +36,14 @@ struct PipelineCapability: Decodable, Identifiable {
         case lastAt = "last_at"
         case hoursStale = "hours_stale"
     }
+
+    init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        capability = try container.decode(String.self, forKey: .capability)
+        total = try container.decodeIfPresent(Int.self, forKey: .total)
+        lastAt = try container.decodeIfPresent(String.self, forKey: .lastAt)
+        hoursStale = try container.decodeLossyStringIfPresent(forKey: .hoursStale)
+    }
 }
 
 struct ProjectSnapshot: Decodable, Identifiable {
@@ -74,6 +82,15 @@ struct PeopleSignal: Decodable, Identifiable {
     enum CodingKeys: String, CodingKey {
         case category, project, detail, speaker
         case hoursAgo = "hours_ago"
+    }
+
+    init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        category = try container.decode(String.self, forKey: .category)
+        project = try container.decode(String.self, forKey: .project)
+        detail = try container.decode(String.self, forKey: .detail)
+        speaker = try container.decodeIfPresent(String.self, forKey: .speaker)
+        hoursAgo = try container.decodeLossyString(forKey: .hoursAgo)
     }
 }
 
@@ -117,5 +134,46 @@ struct RecentCall: Decodable, Identifiable {
         case channel
         case eventAtUtc = "event_at_utc"
         case summary
+    }
+}
+
+private extension KeyedDecodingContainer {
+    func decodeLossyString(forKey key: Key) throws -> String {
+        if let stringValue = try? decode(String.self, forKey: key) {
+            return stringValue
+        }
+        if let intValue = try? decode(Int.self, forKey: key) {
+            return String(intValue)
+        }
+        if let doubleValue = try? decode(Double.self, forKey: key) {
+            return String(doubleValue)
+        }
+        throw DecodingError.typeMismatch(
+            String.self,
+            .init(
+                codingPath: codingPath + [key],
+                debugDescription: "Expected String/Int/Double for \(key.stringValue)"
+            )
+        )
+    }
+
+    func decodeLossyStringIfPresent(forKey key: Key) throws -> String? {
+        guard contains(key) else { return nil }
+        if let stringValue = try? decodeIfPresent(String.self, forKey: key) {
+            return stringValue
+        }
+        if let intValue = try? decodeIfPresent(Int.self, forKey: key) {
+            return String(intValue)
+        }
+        if let doubleValue = try? decodeIfPresent(Double.self, forKey: key) {
+            return String(doubleValue)
+        }
+        throw DecodingError.typeMismatch(
+            String.self,
+            .init(
+                codingPath: codingPath + [key],
+                debugDescription: "Expected String/Int/Double for \(key.stringValue)"
+            )
+        )
     }
 }

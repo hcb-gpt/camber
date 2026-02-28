@@ -1,5 +1,15 @@
 import Foundation
 import SwiftUI
+import os
+
+private enum AssistantRequestLogging {
+    static let logger = Logger(subsystem: "CamberRedline", category: "smoke")
+    static let smokeDriveFlag = "--smoke-drive"
+
+    static var isSmokeDriveEnabled: Bool {
+        ProcessInfo.processInfo.arguments.contains(smokeDriveFlag)
+    }
+}
 
 struct AssistantMessage: Identifiable {
     let id = UUID()
@@ -28,24 +38,30 @@ final class AssistantViewModel: ObservableObject {
         currentInput = ""
         isLoading = true
 
-        var assistantMsg = AssistantMessage(role: .assistant, content: "")
+        let assistantMsg = AssistantMessage(role: .assistant, content: "")
         messages.append(assistantMsg)
         let assistantIndex = messages.count - 1
 
         do {
-            let stream = try await BootstrapService.shared.streamAssistantChat(
+            let session = try await BootstrapService.shared.streamAssistantChat(
                 message: input,
                 contactId: contactId,
                 projectId: projectId
             )
 
-            for try await chunk in stream {
+            if AssistantRequestLogging.isSmokeDriveEnabled,
+               let requestId = session.debug.requestId,
+               !requestId.isEmpty {
+                AssistantRequestLogging.logger.log(
+                    "SMOKE_EVENT ASSISTANT_REQUEST_ID request_id=\(requestId, privacy: .public) prompt=\(input, privacy: .public)"
+                )
+            }
+
+            for try await chunk in session.stream {
                 messages[assistantIndex].content += chunk
             }
         } catch {
-            messages[assistantIndex].content += "
-
-Error: \(error.localizedDescription)"
+            messages[assistantIndex].content += "\n\nError: \(error.localizedDescription)"
         }
 
         isLoading = false

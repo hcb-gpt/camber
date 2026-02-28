@@ -1,4 +1,15 @@
 import SwiftUI
+import os
+
+private enum TriageSmokeAutomation {
+    static let launchFlag = "--smoke-drive"
+    static let triageNotification = Notification.Name("camber.smoke.runTriage")
+    static let logger = Logger(subsystem: "CamberRedline", category: "smoke")
+
+    static var isEnabled: Bool {
+        ProcessInfo.processInfo.arguments.contains(launchFlag)
+    }
+}
 
 private extension Color {
     static let cardsBg = Color.black
@@ -8,12 +19,18 @@ private extension Color {
     static let yesGreen = Color(red: 0.188, green: 0.82, blue: 0.345)     // #30D158
     static let noRed = Color(red: 1.0, green: 0.231, blue: 0.188)         // #FF3B30
     static let undoAmber = Color(red: 1.0, green: 0.624, blue: 0.04)      // #FF9F0A
+    static let commentBlue = Color(red: 0.188, green: 0.478, blue: 1.0)   // #307AFF
 }
 
 struct AttributionTriageCardsView: View {
     @State private var viewModel = CardTriageViewModel()
     @State private var showProjectPicker = false
     @State private var pickerCard: CardItem?
+    @State private var pickerMode: PickerMode = .project
+    @State private var pendingResolveNote: String?
+    @State private var showCommentComposer = false
+    @State private var commentCard: CardItem?
+    @State private var didRunSmokeTriage = false
 
     var body: some View {
         NavigationStack {
@@ -49,16 +66,58 @@ struct AttributionTriageCardsView: View {
                     await viewModel.loadQueue()
                 }
             }
+            .onReceive(NotificationCenter.default.publisher(for: TriageSmokeAutomation.triageNotification)) { _ in
+                guard TriageSmokeAutomation.isEnabled else { return }
+                guard !didRunSmokeTriage else { return }
+                didRunSmokeTriage = true
+                Task { await runSmokeSwipes() }
+            }
             .sheet(isPresented: $showProjectPicker) {
                 if let card = pickerCard {
                     ProjectPickerSheet(
                         card: card,
                         projects: viewModel.projectOptions(for: card),
                         onSelect: { projectId in
-                            Task { await viewModel.resolve(card, to: projectId) }
+                            let notes = pendingResolveNote
+                            pendingResolveNote = nil
+                            Task { await viewModel.resolve(card, to: projectId, notes: notes) }
                         },
                         onDismissItem: {
                             Task { await viewModel.dismiss(card) }
+                        },
+                        onBizDevNoProject: {
+                            Task {
+                                await viewModel.dismiss(
+                                    card,
+                                    reason: "bizdev_no_project",
+                                    notes: "no_project_selected"
+                                )
+                            }
+                        },
+                        showsDismissAction: pickerMode != .commentOnly
+                    )
+                }
+            }
+            .sheet(isPresented: $showCommentComposer) {
+                if let card = commentCard {
+                    TriageCommentSheet(
+                        card: card,
+                        suggestedProjectName: viewModel.projectName(for: card.projectId),
+                        onCancel: {
+                            commentCard = nil
+                        },
+                        onSubmit: { note in
+                            let trimmed = note.trimmingCharacters(in: .whitespacesAndNewlines)
+                            let finalNote = trimmed.isEmpty ? nil : trimmed
+                            if let projectId = card.projectId {
+                                Task { await viewModel.resolve(card, to: projectId, notes: finalNote) }
+                            } else {
+                                pendingResolveNote = finalNote
+                                pickerMode = .commentOnly
+                                pickerCard = card
+                                showProjectPicker = true
+                            }
+                            commentCard = nil
                         }
                     )
                 }
@@ -111,6 +170,7 @@ struct AttributionTriageCardsView: View {
                     isTop: isTop,
                     onSwipeRight: {
                         guard let projectId = card.projectId else {
+                            pickerMode = .project
                             pickerCard = card
                             showProjectPicker = true
                             return
@@ -118,8 +178,16 @@ struct AttributionTriageCardsView: View {
                         Task { await viewModel.resolve(card, to: projectId) }
                     },
                     onSwipeLeft: {
+                        pickerMode = .project
                         pickerCard = card
                         showProjectPicker = true
+                    },
+                    onSwipeUp: {
+                        Task { await viewModel.dismissUndecided(card) }
+                    },
+                    onSwipeDown: {
+                        commentCard = card
+                        showCommentComposer = true
                     }
                 )
                 .zIndex(isTop ? 1 : 0)
@@ -135,16 +203,29 @@ struct AttributionTriageCardsView: View {
     // MARK: - Action Hints
 
     private var actionHints: some View {
-        HStack(spacing: 0) {
-            Label("NO", systemImage: "arrow.left")
-                .font(.caption)
-                .fontWeight(.semibold)
-                .foregroundStyle(Color.noRed.opacity(0.7))
-            Spacer()
-            Label("YES", systemImage: "arrow.right")
-                .font(.caption)
-                .fontWeight(.semibold)
-                .foregroundStyle(Color.yesGreen.opacity(0.7))
+        VStack(spacing: 6) {
+            HStack(spacing: 0) {
+                Label("NO", systemImage: "arrow.left")
+                    .font(.caption)
+                    .fontWeight(.semibold)
+                    .foregroundStyle(Color.noRed.opacity(0.7))
+                Spacer()
+                Label("YES", systemImage: "arrow.right")
+                    .font(.caption)
+                    .fontWeight(.semibold)
+                    .foregroundStyle(Color.yesGreen.opacity(0.7))
+            }
+            HStack(spacing: 0) {
+                Label("LATER", systemImage: "arrow.up")
+                    .font(.caption2)
+                    .fontWeight(.semibold)
+                    .foregroundStyle(Color.undoAmber.opacity(0.8))
+                Spacer()
+                Label("NOTE", systemImage: "arrow.down")
+                    .font(.caption2)
+                    .fontWeight(.semibold)
+                    .foregroundStyle(Color.commentBlue.opacity(0.8))
+            }
         }
         .padding(.horizontal, 40)
         .padding(.bottom, 12)
@@ -205,6 +286,67 @@ struct AttributionTriageCardsView: View {
             .padding(.bottom, 60)
             .onTapGesture { viewModel.error = nil }
     }
+
+    private func runSmokeSwipes() async {
+        if viewModel.queue.isEmpty {
+            await viewModel.loadQueue()
+        }
+
+        guard !viewModel.queue.isEmpty else {
+            TriageSmokeAutomation.logger.log("SMOKE_EVENT TRIAGE_EMPTY")
+            return
+        }
+
+        // P0 validation: ensure BizDev / No Project action exists and is wired.
+        // Show the project picker sheet long enough for the simulator smoke harness
+        // to capture screenshot/video evidence.
+        if let card = viewModel.queue.first {
+            pickerMode = .project
+            pickerCard = card
+            showProjectPicker = true
+            TriageSmokeAutomation.logger.log("SMOKE_EVENT TRIAGE_OPEN_PICKER queue=\(card.queueId, privacy: .public)")
+            try? await Task.sleep(for: .seconds(5))
+
+            TriageSmokeAutomation.logger.log("SMOKE_EVENT TRIAGE_BIZDEV queue=\(card.queueId, privacy: .public)")
+            await viewModel.dismiss(card, reason: "bizdev_no_project", notes: "no_project_selected")
+
+            showProjectPicker = false
+            pickerCard = nil
+            try? await Task.sleep(for: .seconds(1))
+        }
+
+        let steps = min(6, viewModel.queue.count)
+        for index in 0..<steps {
+            guard let card = viewModel.queue.first else { break }
+
+            switch index % 4 {
+            case 0 where card.projectId != nil:
+                TriageSmokeAutomation.logger.log("SMOKE_EVENT TRIAGE_RESOLVE queue=\(card.queueId, privacy: .public) project=\(card.projectId!, privacy: .public)")
+                await viewModel.resolve(card, to: card.projectId!)
+            case 1:
+                TriageSmokeAutomation.logger.log("SMOKE_EVENT TRIAGE_DISMISS queue=\(card.queueId, privacy: .public)")
+                await viewModel.dismiss(card)
+            case 2:
+                TriageSmokeAutomation.logger.log("SMOKE_EVENT TRIAGE_UNDECIDED queue=\(card.queueId, privacy: .public)")
+                await viewModel.dismissUndecided(card)
+            case 3:
+                TriageSmokeAutomation.logger.log("SMOKE_EVENT TRIAGE_COMMENT queue=\(card.queueId, privacy: .public)")
+                await viewModel.resolve(card, to: card.projectId ?? "", notes: "smoke-comment")
+            default:
+                TriageSmokeAutomation.logger.log("SMOKE_EVENT TRIAGE_DISMISS queue=\(card.queueId, privacy: .public)")
+                await viewModel.dismiss(card)
+            }
+
+            try? await Task.sleep(for: .milliseconds(1200))
+        }
+
+        TriageSmokeAutomation.logger.log("SMOKE_EVENT TRIAGE_DONE remaining=\(viewModel.queue.count, privacy: .public)")
+    }
+
+    private enum PickerMode {
+        case project
+        case commentOnly
+    }
 }
 
 // MARK: - SwipeableTriageCard
@@ -215,11 +357,14 @@ private struct SwipeableTriageCard: View {
     let isTop: Bool
     let onSwipeRight: () -> Void
     let onSwipeLeft: () -> Void
+    let onSwipeUp: () -> Void
+    let onSwipeDown: () -> Void
 
     @State private var offset: CGSize = .zero
     @State private var rotation: Double = 0
 
-    private let swipeThreshold: CGFloat = 100
+    private let horizontalSwipeThreshold: CGFloat = 100
+    private let verticalSwipeThreshold: CGFloat = 90
 
     var body: some View {
         VStack(alignment: .leading, spacing: 14) {
@@ -312,7 +457,21 @@ private struct SwipeableTriageCard: View {
                     .opacity(min(1, Double(offset.width - 40) / 60))
             }
         }
-        .offset(x: offset.width)
+        .overlay(alignment: .top) {
+            if offset.height < -40 {
+                swipeLabel("LATER", icon: "arrow.up", color: .undoAmber)
+                    .padding(.top, 16)
+                    .opacity(min(1, Double(-offset.height - 40) / 60))
+            }
+        }
+        .overlay(alignment: .bottom) {
+            if offset.height > 40 {
+                swipeLabel("NOTE", icon: "text.bubble", color: .commentBlue)
+                    .padding(.bottom, 16)
+                    .opacity(min(1, Double(offset.height - 40) / 60))
+            }
+        }
+        .offset(x: offset.width, y: offset.height)
         .rotationEffect(.degrees(rotation))
         .gesture(
             DragGesture()
@@ -323,10 +482,20 @@ private struct SwipeableTriageCard: View {
                 }
                 .onEnded { value in
                     guard isTop else { return }
-                    if value.translation.width > swipeThreshold {
+                    if value.translation.width > horizontalSwipeThreshold,
+                       abs(value.translation.width) >= abs(value.translation.height) {
                         swipeAway(direction: .right)
-                    } else if value.translation.width < -swipeThreshold {
+                    } else if value.translation.width < -horizontalSwipeThreshold,
+                              abs(value.translation.width) >= abs(value.translation.height) {
                         swipeAway(direction: .left)
+                    } else if value.translation.height < -verticalSwipeThreshold,
+                              abs(value.translation.height) > abs(value.translation.width) {
+                        swipeAway(direction: .up)
+                    } else if value.translation.height > verticalSwipeThreshold,
+                              abs(value.translation.height) > abs(value.translation.width) {
+                        // DOWN: card stays in queue — snap back then open comment sheet
+                        snapBack()
+                        onSwipeDown()
                     } else {
                         snapBack()
                     }
@@ -350,11 +519,13 @@ private struct SwipeableTriageCard: View {
     private var swipeIndicatorColor: Color {
         if offset.width > 40 { return Color.yesGreen.opacity(swipeIndicatorOpacity) }
         if offset.width < -40 { return Color.noRed.opacity(swipeIndicatorOpacity) }
+        if offset.height < -40 { return Color.undoAmber.opacity(swipeIndicatorOpacity) }
+        if offset.height > 40 { return Color.commentBlue.opacity(swipeIndicatorOpacity) }
         return Color.cardStroke
     }
 
     private var swipeIndicatorOpacity: Double {
-        let magnitude = abs(offset.width)
+        let magnitude = max(abs(offset.width), abs(offset.height))
         guard magnitude > 40 else { return 0 }
         return min(1, Double(magnitude - 40) / 60)
     }
@@ -367,10 +538,29 @@ private struct SwipeableTriageCard: View {
     }
 
     private func swipeAway(direction: SwipeDirection) {
-        let offscreen: CGFloat = direction == .right ? 500 : -500
+        let offscreenX: CGFloat
+        let offscreenY: CGFloat
+        switch direction {
+        case .right:
+            offscreenX = 500
+            offscreenY = 0
+        case .left:
+            offscreenX = -500
+            offscreenY = 0
+        case .up:
+            offscreenX = 0
+            offscreenY = -700
+        }
         withAnimation(.easeIn(duration: 0.25)) {
-            offset = CGSize(width: offscreen, height: 0)
-            rotation = direction == .right ? 15 : -15
+            offset = CGSize(width: offscreenX, height: offscreenY)
+            switch direction {
+            case .right:
+                rotation = 15
+            case .left:
+                rotation = -15
+            case .up:
+                rotation = 0
+            }
         }
         DispatchQueue.main.asyncAfter(deadline: .now() + 0.25) {
             offset = .zero
@@ -378,6 +568,7 @@ private struct SwipeableTriageCard: View {
             switch direction {
             case .right: onSwipeRight()
             case .left: onSwipeLeft()
+            case .up: onSwipeUp()
             }
         }
     }
@@ -389,5 +580,56 @@ private struct SwipeableTriageCard: View {
         }
     }
 
-    private enum SwipeDirection { case left, right }
+    private enum SwipeDirection { case left, right, up }
+}
+
+private struct TriageCommentSheet: View {
+    @Environment(\.dismiss) private var dismiss
+
+    let card: CardItem
+    let suggestedProjectName: String?
+    let onCancel: () -> Void
+    let onSubmit: (String) -> Void
+
+    @State private var note = ""
+
+    var body: some View {
+        NavigationStack {
+            Form {
+                if let suggestedProjectName {
+                    Section("Resolve Target") {
+                        Text(suggestedProjectName)
+                            .foregroundStyle(.white)
+                    }
+                } else {
+                    Section("Resolve Target") {
+                        Text("No AI guess. Pick project after comment.")
+                            .foregroundStyle(.secondary)
+                    }
+                }
+                Section("Comment") {
+                    TextField("Add context for this resolution", text: $note, axis: .vertical)
+                        .lineLimit(3...6)
+                }
+            }
+            .navigationTitle("Comment")
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                ToolbarItem(placement: .cancellationAction) {
+                    Button("Cancel") {
+                        dismiss()
+                        onCancel()
+                    }
+                }
+                ToolbarItem(placement: .confirmationAction) {
+                    Button("Resolve") {
+                        dismiss()
+                        onSubmit(note)
+                    }
+                }
+            }
+        }
+        .presentationDetents([.medium])
+        .preferredColorScheme(.dark)
+    }
 }
