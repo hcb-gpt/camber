@@ -142,6 +142,21 @@ final class CardTriageViewModel {
             try await service.dismiss(queueId: card.queueId)
         } catch {
             self.error = error.localizedDescription
+            queue.insert(
+                CardItem(
+                    queueId: card.queueId,
+                    spanId: card.spanId,
+                    interactionId: card.interactionId,
+                    contactName: card.contactName,
+                    eventDate: card.eventDate,
+                    transcriptSegment: card.transcriptSegment,
+                    projectId: card.projectId,
+                    confidence: card.confidence,
+                    candidates: card.candidates
+                ),
+                at: min(idx, queue.count)
+            )
+            resolvedCount = max(0, resolvedCount - 1)
         }
 
         if queue.count < 5 {
