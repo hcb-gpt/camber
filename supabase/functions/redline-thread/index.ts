@@ -585,11 +585,28 @@ async function handleContacts(db: any, url: URL, t0: number): Promise<Response> 
     }));
 
   // Filter ghost rows: contact exists but has zero activity (no calls, no SMS, no last_activity)
-  const contacts = mapped
-    .filter((row: any) =>
-      row.call_count + row.sms_count > 0 ||
-      (row.last_activity != null && row.last_activity !== "")
-    )
+  const liveRows = mapped.filter((row: any) =>
+    row.call_count + row.sms_count > 0 ||
+    (row.last_activity != null && row.last_activity !== "")
+  );
+
+  // Validate contact_ids still exist in the contacts table (matview can lag deletes)
+  const candidateIds = liveRows.map((r: any) => r.contact_id).filter(Boolean);
+  let validIdSet: Set<string> | null = null;
+  if (candidateIds.length > 0) {
+    const { data: validRows, error: validErr } = await db
+      .from("contacts")
+      .select("id")
+      .in("id", candidateIds);
+    if (!validErr && validRows) {
+      validIdSet = new Set(validRows.map((r: any) => r.id));
+    } else {
+      console.warn(`[contacts] Contact validation query failed, skipping orphan filter: ${validErr?.message}`);
+    }
+  }
+
+  const contacts = liveRows
+    .filter((row: any) => validIdSet === null || validIdSet.has(row.contact_id))
     .sort((a: any, b: any) => {
       const aTime = Date.parse(a.last_activity || "") || 0;
       const bTime = Date.parse(b.last_activity || "") || 0;
@@ -597,9 +614,13 @@ async function handleContacts(db: any, url: URL, t0: number): Promise<Response> 
       return String(a.name || "").localeCompare(String(b.name || ""));
     });
 
-  const filteredCount = mapped.length - contacts.length;
-  if (filteredCount > 0) {
-    console.log(`[contacts] Filtered ${filteredCount} empty rows`);
+  const filteredEmpty = mapped.length - liveRows.length;
+  const filteredOrphan = validIdSet ? liveRows.length - contacts.length : 0;
+  const filteredCount = filteredEmpty + filteredOrphan;
+  if (filteredEmpty > 0 || filteredOrphan > 0) {
+    console.log(
+      `[contacts] Filtered ${filteredCount} rows (${filteredEmpty} empty, ${filteredOrphan} orphaned)`,
+    );
   }
 
   contactsCache = {
