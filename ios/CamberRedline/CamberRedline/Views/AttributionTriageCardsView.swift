@@ -412,7 +412,9 @@ private struct SwipeableTriageCard: View {
                         if ty < -swipeThreshold {
                             swipeAway(direction: .up)
                         } else if ty > swipeThreshold {
-                            swipeAway(direction: .down)
+                            // DOWN: card stays in queue — snap back then open comment sheet
+                            snapBack()
+                            onSwipeDown?()
                         } else {
                             snapBack()
                         }
@@ -473,9 +475,6 @@ private struct SwipeableTriageCard: View {
             case .up:
                 offset = CGSize(width: 0, height: -800)
                 rotation = 0
-            case .down:
-                offset = CGSize(width: 0, height: 800)
-                rotation = 0
             }
         }
         DispatchQueue.main.asyncAfter(deadline: .now() + 0.25) {
@@ -485,7 +484,6 @@ private struct SwipeableTriageCard: View {
             case .right: onSwipeRight()
             case .left: onSwipeLeft()
             case .up: onSwipeUp?()
-            case .down: onSwipeDown?()
             }
         }
     }
@@ -497,7 +495,7 @@ private struct SwipeableTriageCard: View {
         }
     }
 
-    private enum SwipeDirection { case left, right, up, down }
+    private enum SwipeDirection { case left, right, up }
 }
 
 // MARK: - Comment Sheet
