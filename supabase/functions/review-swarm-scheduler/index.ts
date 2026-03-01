@@ -27,7 +27,7 @@ import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
 import { authErrorResponse, requireEdgeSecret } from "../_shared/auth.ts";
 
 const FUNCTION_SLUG = "review-swarm-scheduler";
-const FUNCTION_VERSION = "v1.2.1";
+const FUNCTION_VERSION = "v1.3.1";
 const JSON_HEADERS = { "Content-Type": "application/json" };
 
 const TRIGGER_OPEN_COUNT = 150;
