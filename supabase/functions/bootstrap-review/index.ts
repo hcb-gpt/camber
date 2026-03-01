@@ -1,7 +1,7 @@
 import "jsr:@supabase/functions-js/edge-runtime.d.ts";
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
 
-const FUNCTION_VERSION = "bootstrap-review_v1.1.5";
+const FUNCTION_VERSION = "bootstrap-review_v1.2.0";
 type ReviewQueueSource = "pipeline" | "redline";
 
 // ─── Helpers ─────────────────────────────────────────────────────────
@@ -203,32 +203,28 @@ async function handleQueue(
   maxAgeDays: number,
   t0: number,
 ): Promise<Response> {
-  // Fetch pending span-based review rows directly so filtering happens
-  // before LIMIT (avoids empty pages with nonzero pending totals).
-  const queueSelect = "id, span_id, interaction_id, context_payload, reasons, reason_codes, module, status, created_at";
+  // DB-side freshness predicate via RPC — joins review_queue with interactions
+  // and filters by COALESCE(event_at_utc, created_at) >= now() - N days.
+  // This prevents LIMIT from clipping fresh items behind a wall of stale ones.
+  const cutoffDate = new Date(Date.now() - maxAgeDays * 24 * 60 * 60 * 1000);
+  const cutoffIso = cutoffDate.toISOString();
 
   let rqData: any[] | null = null;
   let rqErr: any = null;
   {
-    const primary = await db
-      .from("review_queue")
-      .select(queueSelect)
-      .eq("status", "pending")
-      .not("span_id", "is", null)
-      .or("module.eq.attribution,module.is.null")
-      .order("created_at", { ascending: false })
-      .limit(limit);
+    const primary = await db.rpc("fresh_review_queue", {
+      p_max_age_days: maxAgeDays,
+      p_limit: limit,
+    });
     rqData = primary.data;
     rqErr = primary.error;
 
+    // Fallback: if module column doesn't exist, use the no-module variant
     if (rqErr && isMissingColumnError(rqErr.message || "", "module")) {
-      const fallback = await db
-        .from("review_queue")
-        .select(queueSelect)
-        .eq("status", "pending")
-        .not("span_id", "is", null)
-        .order("created_at", { ascending: false })
-        .limit(limit);
+      const fallback = await db.rpc("fresh_review_queue_no_module", {
+        p_max_age_days: maxAgeDays,
+        p_limit: limit,
+      });
       rqData = fallback.data;
       rqErr = fallback.error;
     }
