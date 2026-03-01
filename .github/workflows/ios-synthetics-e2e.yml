@@ -5,10 +5,7 @@ on:
     - cron: "0 * * * *"
   push:
     branches:
-<<<<<<< HEAD
-=======
       - master
->>>>>>> dev3-fix-timestamp
       - main
     paths:
       - "scripts/ios_synthetics_e2e_gate.sh"
