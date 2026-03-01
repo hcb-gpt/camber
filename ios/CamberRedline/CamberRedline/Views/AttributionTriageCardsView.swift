@@ -220,7 +220,7 @@ struct AttributionTriageCardsView: View {
     private var actionHints: some View {
         VStack(spacing: 6) {
             HStack(spacing: 0) {
-                Label("NO", systemImage: "arrow.left")
+                Label("PICK", systemImage: "arrow.left")
                     .font(.caption)
                     .fontWeight(.semibold)
                     .foregroundStyle(Color.noRed.opacity(0.7))
@@ -530,7 +530,7 @@ private struct SwipeableTriageCard: View {
         )
         .overlay(alignment: .topLeading) {
             if offset.width < -40 {
-                swipeLabel("NO", icon: "xmark", color: .noRed)
+                swipeLabel("PICK", icon: "arrow.left.arrow.right", color: .noRed)
                     .padding(16)
                     .opacity(min(1, Double(-offset.width - 40) / 60))
             }
