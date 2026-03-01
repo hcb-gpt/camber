@@ -457,6 +457,7 @@ Deno.serve(async (req: Request) => {
   const iid = raw.interaction_id || raw.call_id || `unknown_${run_id}`;
   const id_gen = !raw.interaction_id && !raw.call_id;
   const is_shadow = raw.is_shadow === true || iid.startsWith("cll_SHADOW_") || provenance_source === "shadow";
+  const is_synthetic = raw.is_synthetic === true || iid.startsWith("cll_SYNTH_") || provenance_source === "test";
 
   let audit_id: number | null = null, cr_uuid: string | null = null;
   let contact_id: string | null = null, contact_name: string | null = null;

@@ -188,8 +188,7 @@ async function backfillSchedulerItems(
           { timezone: "America/New_York" },
         );
 
-        stats.by_confidence[resolution.confidence] =
-          (stats.by_confidence[resolution.confidence] || 0) + 1;
+        stats.by_confidence[resolution.confidence] = (stats.by_confidence[resolution.confidence] || 0) + 1;
 
         // Build audit row
         auditRows.push({
@@ -357,8 +356,7 @@ async function backfillOpenLoops(
           { timezone: "America/New_York" },
         );
 
-        stats.by_confidence[resolution.confidence] =
-          (stats.by_confidence[resolution.confidence] || 0) + 1;
+        stats.by_confidence[resolution.confidence] = (stats.by_confidence[resolution.confidence] || 0) + 1;
 
         auditRows.push({
           source_table: "journal_open_loops",

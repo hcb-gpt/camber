@@ -126,8 +126,18 @@ function resolveTimezone(timeHint: string, options: ResolveTimeOptions): string 
 }
 
 const IANA_PREFIXES = new Set([
-  "Africa", "America", "Antarctica", "Arctic", "Asia", "Atlantic",
-  "Australia", "Europe", "Indian", "Pacific", "Etc", "US",
+  "Africa",
+  "America",
+  "Antarctica",
+  "Arctic",
+  "Asia",
+  "Atlantic",
+  "Australia",
+  "Europe",
+  "Indian",
+  "Pacific",
+  "Etc",
+  "US",
 ]);
 
 function detectExplicitTimezone(timeHint: string): string | null {
