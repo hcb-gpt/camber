@@ -13,6 +13,9 @@ struct CardItem: Identifiable {
     let projectId: String?  // ai_guess_project_id
     let confidence: Double
     let candidates: [Candidate]
+    let reasonCodes: [String]
+    let evidenceAnchors: [Anchor]
+    let keywords: [String]
 
     init(from item: ReviewItem) {
         id = item.id
@@ -27,6 +30,9 @@ struct CardItem: Identifiable {
         projectId = item.aiGuessProjectId
         confidence = item.confidence ?? 0
         candidates = item.contextPayload?.candidates ?? []
+        reasonCodes = item.reasonCodes ?? item.reasons ?? []
+        evidenceAnchors = item.contextPayload?.anchors ?? []
+        keywords = item.contextPayload?.keywords ?? []
     }
 }
 
@@ -38,11 +44,16 @@ final class CardTriageViewModel {
     var error: String?
     var lastAction: TriageAction?
     var resolvedCount: Int = 0
+    var activityLog: [ActivityEntry] = []
+    var skippedCount: Int = 0
+    var escalatedCount: Int = 0
 
     private let service = BootstrapService.shared
     private var projectNameById: [String: String] = [:]
     private var totalAtLoad: Int = 0
     private var undoDeadline: Date?
+    let sessionStartTime = Date()
+    var cardViewStartTime: Date?
 
     struct TriageAction {
         let queueId: String
@@ -50,7 +61,16 @@ final class CardTriageViewModel {
         let timestamp: Date
         let label: String
 
-        enum Kind { case resolved, dismissed }
+        enum Kind { case resolved, dismissed, escalated, skipped }
+    }
+
+    struct ActivityEntry: Identifiable {
+        let id = UUID()
+        let action: String       // "resolved", "dismissed", "escalated", "skipped"
+        let reasonCode: String?
+        let timeSpentSec: Int
+        let timestamp: Date
+        let contactName: String
     }
 
     var canUndo: Bool {
@@ -62,6 +82,20 @@ final class CardTriageViewModel {
         let total = resolvedCount + queue.count
         guard total > 0 else { return 0 }
         return Double(resolvedCount) / Double(total)
+    }
+
+    /// Cards resolved per hour based on session elapsed time.
+    var resolveRatePerHour: Double {
+        let elapsed = Date().timeIntervalSince(sessionStartTime)
+        guard elapsed > 0, resolvedCount > 0 else { return 0 }
+        return Double(resolvedCount) / elapsed * 3600
+    }
+
+    /// Average seconds spent per card (resolved + escalated + dismissed).
+    var avgSecondsPerCard: Int {
+        guard !activityLog.isEmpty else { return 0 }
+        let total = activityLog.reduce(0) { $0 + $1.timeSpentSec }
+        return total / activityLog.count
     }
 
     // MARK: - Load
@@ -80,6 +114,7 @@ final class CardTriageViewModel {
 
             let sorted = response.items.sorted { $0.sortDate > $1.sortDate }
             queue = sorted.map { CardItem(from: $0) }
+            cardViewStartTime = Date()
         } catch {
             self.error = error.localizedDescription
         }
@@ -88,9 +123,18 @@ final class CardTriageViewModel {
     // MARK: - Actions
 
     func resolve(_ card: CardItem, to projectId: String, notes: String? = nil) async {
+        let timeSpent = recordTimeSpent()
         guard let idx = queue.firstIndex(where: { $0.id == card.id }) else { return }
         queue.remove(at: idx)
         resolvedCount += 1
+
+        activityLog.append(ActivityEntry(
+            action: "resolved",
+            reasonCode: nil,
+            timeSpentSec: timeSpent,
+            timestamp: Date(),
+            contactName: card.contactName
+        ))
 
         lastAction = TriageAction(
             queueId: card.queueId,
@@ -105,29 +149,29 @@ final class CardTriageViewModel {
             _ = try await service.resolve(queueId: card.queueId, projectId: projectId, notes: notes)
         } catch {
             self.error = error.localizedDescription
-            // Re-insert card on failure
-            queue.insert(CardItem(queueId: card.queueId, spanId: card.spanId,
-                                  interactionId: card.interactionId,
-                                  contactName: card.contactName,
-                                  eventDate: card.eventDate,
-                                  transcriptSegment: card.transcriptSegment,
-                                  projectId: card.projectId,
-                                  confidence: card.confidence,
-                                  candidates: card.candidates),
-                         at: min(idx, queue.count))
+            queue.insert(CardItem(from: card), at: min(idx, queue.count))
             resolvedCount = max(0, resolvedCount - 1)
+            activityLog.removeLast()
         }
 
-        // Prefetch more if running low
         if queue.count < 5 {
             await prefetchMore()
         }
     }
 
     func dismiss(_ card: CardItem, reason: String? = nil, notes: String? = nil) async {
+        let timeSpent = recordTimeSpent()
         guard let idx = queue.firstIndex(where: { $0.id == card.id }) else { return }
         queue.remove(at: idx)
         resolvedCount += 1
+
+        activityLog.append(ActivityEntry(
+            action: "dismissed",
+            reasonCode: reason,
+            timeSpentSec: timeSpent,
+            timestamp: Date(),
+            contactName: card.contactName
+        ))
 
         lastAction = TriageAction(
             queueId: card.queueId,
@@ -142,21 +186,9 @@ final class CardTriageViewModel {
             try await service.dismiss(queueId: card.queueId, reason: reason, notes: notes)
         } catch {
             self.error = error.localizedDescription
-            queue.insert(
-                CardItem(
-                    queueId: card.queueId,
-                    spanId: card.spanId,
-                    interactionId: card.interactionId,
-                    contactName: card.contactName,
-                    eventDate: card.eventDate,
-                    transcriptSegment: card.transcriptSegment,
-                    projectId: card.projectId,
-                    confidence: card.confidence,
-                    candidates: card.candidates
-                ),
-                at: min(idx, queue.count)
-            )
+            queue.insert(CardItem(from: card), at: min(idx, queue.count))
             resolvedCount = max(0, resolvedCount - 1)
+            activityLog.removeLast()
         }
 
         if queue.count < 5 {
@@ -168,6 +200,74 @@ final class CardTriageViewModel {
         await dismiss(card, reason: "undecided", notes: notes)
     }
 
+    func escalate(_ card: CardItem, reason: String) async {
+        let timeSpent = recordTimeSpent()
+        guard let idx = queue.firstIndex(where: { $0.id == card.id }) else { return }
+        queue.remove(at: idx)
+        resolvedCount += 1
+        escalatedCount += 1
+
+        activityLog.append(ActivityEntry(
+            action: "escalated",
+            reasonCode: reason,
+            timeSpentSec: timeSpent,
+            timestamp: Date(),
+            contactName: card.contactName
+        ))
+
+        lastAction = TriageAction(
+            queueId: card.queueId,
+            kind: .escalated,
+            timestamp: Date(),
+            label: "escalated"
+        )
+        undoDeadline = Date().addingTimeInterval(25)
+        startUndoTimer()
+
+        do {
+            try await service.dismiss(
+                queueId: card.queueId,
+                reason: "escalated",
+                notes: reason
+            )
+        } catch {
+            self.error = error.localizedDescription
+            queue.insert(CardItem(from: card), at: min(idx, queue.count))
+            resolvedCount = max(0, resolvedCount - 1)
+            escalatedCount = max(0, escalatedCount - 1)
+            activityLog.removeLast()
+        }
+
+        if queue.count < 5 {
+            await prefetchMore()
+        }
+    }
+
+    func skip(_ card: CardItem) {
+        let timeSpent = recordTimeSpent()
+        guard let idx = queue.firstIndex(where: { $0.id == card.id }) else { return }
+        let removed = queue.remove(at: idx)
+        queue.append(removed)
+        skippedCount += 1
+
+        activityLog.append(ActivityEntry(
+            action: "skipped",
+            reasonCode: nil,
+            timeSpentSec: timeSpent,
+            timestamp: Date(),
+            contactName: card.contactName
+        ))
+
+        lastAction = TriageAction(
+            queueId: card.queueId,
+            kind: .skipped,
+            timestamp: Date(),
+            label: "skipped"
+        )
+        // No undo for skip — card is still in queue
+        undoDeadline = nil
+    }
+
     func undo() async {
         guard let action = lastAction, canUndo else { return }
         lastAction = nil
@@ -176,6 +276,9 @@ final class CardTriageViewModel {
         do {
             try await service.undo(queueId: action.queueId)
             resolvedCount = max(0, resolvedCount - 1)
+            if action.kind == .escalated {
+                escalatedCount = max(0, escalatedCount - 1)
+            }
             await loadQueue()
         } catch {
             self.error = "Undo failed: \(error.localizedDescription)"
@@ -215,6 +318,13 @@ final class CardTriageViewModel {
         return Array(options.prefix(20))
     }
 
+    private func recordTimeSpent() -> Int {
+        let now = Date()
+        let spent = cardViewStartTime.map { Int(now.timeIntervalSince($0)) } ?? 0
+        cardViewStartTime = now
+        return spent
+    }
+
     private func prefetchMore() async {
         guard !isLoading else { return }
         do {
@@ -248,18 +358,19 @@ final class CardTriageViewModel {
 
 // Convenience initializer for re-inserting on error
 private extension CardItem {
-    init(queueId: String, spanId: String, interactionId: String,
-         contactName: String, eventDate: Date?, transcriptSegment: String,
-         projectId: String?, confidence: Double, candidates: [Candidate]) {
-        self.id = queueId
-        self.queueId = queueId
-        self.spanId = spanId
-        self.interactionId = interactionId
-        self.contactName = contactName
-        self.eventDate = eventDate
-        self.transcriptSegment = transcriptSegment
-        self.projectId = projectId
-        self.confidence = confidence
-        self.candidates = candidates
+    init(from source: CardItem) {
+        self.id = source.queueId
+        self.queueId = source.queueId
+        self.spanId = source.spanId
+        self.interactionId = source.interactionId
+        self.contactName = source.contactName
+        self.eventDate = source.eventDate
+        self.transcriptSegment = source.transcriptSegment
+        self.projectId = source.projectId
+        self.confidence = source.confidence
+        self.candidates = source.candidates
+        self.reasonCodes = source.reasonCodes
+        self.evidenceAnchors = source.evidenceAnchors
+        self.keywords = source.keywords
     }
 }
