@@ -113,18 +113,6 @@ mkdir -p "${SYNTH_OUT_DIR}" "${POLL_OUT_DIR}"
 
 RUN_TS="$(date +%s)"
 
-scenario_id_to_interaction_id() {
-  local scenario_id="$1"
-  local normalized
-  normalized="$(
-    echo "${scenario_id}" \
-      | tr '[:lower:]' '[:upper:]' \
-      | tr -cd 'A-Z0-9_' \
-      | cut -c 1-20
-  )"
-  echo "cll_SYNTH_${normalized}_${RUN_TS}"
-}
-
 scenario_ids=()
 while IFS= read -r sid; do
   [[ -z "${sid}" ]] && continue
@@ -145,17 +133,30 @@ echo "SYNTHETICS_SCENARIO_COUNT=${#scenario_ids[@]}"
 printf "scenario_id,interaction_id,exit_code\n" > "${SYNTH_OUT_DIR}/scenario_results.csv"
 
 for sid in "${scenario_ids[@]}"; do
-  iid="$(scenario_id_to_interaction_id "${sid}")"
-  interaction_ids+=("${iid}")
   out_file="${SYNTH_OUT_DIR}/${sid}.log"
 
-  echo "[e2e] run_synthetics scenario=${sid} interaction_id=${iid}"
+  echo "[e2e] run_synthetics scenario=${sid}"
   set +e
-  bash "${SYNTHETICS_SCRIPT}" --scenario "${sid}" --timestamp "${RUN_TS}" > "${out_file}" 2>&1
-  rc=$?
-  set -e
+  # Use a temporary file to capture output reliably across pipes
+  tmp_out=$(mktemp)
+  bash "${SYNTHETICS_SCRIPT}" --scenario "${sid}" --timestamp "${RUN_TS}" 2>&1 | tee "${tmp_out}"
+  rc=${PIPESTATUS[0]}
+  cat "${tmp_out}" >> "${out_file}"
+  
+  # Capture INTERACTION_IDS from output
+  # Format: INTERACTION_IDS=id1,id2,...
+  captured_ids=$(grep "^INTERACTION_IDS=" "${tmp_out}" | cut -d'=' -f2-)
+  rm -f "${tmp_out}"
 
-  printf "%s,%s,%s\n" "${sid}" "${iid}" "${rc}" >> "${SYNTH_OUT_DIR}/scenario_results.csv"
+  if [[ -n "$captured_ids" ]]; then
+    IFS=',' read -r -a captured_array <<< "$captured_ids"
+    # Safe array append
+    for cid in "${captured_array[@]}"; do
+      interaction_ids+=("${cid}")
+    done
+  fi
+
+  printf "%s,capture_count=%s,%s\n" "${sid}" "${#captured_array[@]:-0}" "${rc}" >> "${SYNTH_OUT_DIR}/scenario_results.csv"
   if [[ ${rc} -ne 0 ]]; then
     synthetics_fail_count=$((synthetics_fail_count + 1))
   fi
@@ -246,7 +247,12 @@ while :; do
     fi
   done
 
-  pending_ids=("${next_pending[@]}")
+  if [[ ${#next_pending[@]} -gt 0 ]]; then
+    pending_ids=("${next_pending[@]}")
+  else
+    pending_ids=()
+  fi
+
   if [[ ${#pending_ids[@]} -eq 0 ]]; then
     break
   fi
