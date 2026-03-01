@@ -1,11 +1,15 @@
 /**
- * zapier-call-ingest Edge Function v1.8.1
+ * zapier-call-ingest Edge Function v1.9.0
  *
  * Auth model (consolidated):
  * - Canonical: X-Edge-Secret === EDGE_SHARED_SECRET
  * - Transitional legacy fallback: X-Secret === ZAPIER_INGEST_SECRET|ZAPIER_SECRET
  *
  * Forward: Calls process-call internally using SUPABASE_SERVICE_ROLE_KEY + X-Edge-Secret.
+ *
+ * v1.9.0: Fix Go-style timestamp parsing from Beside. Beside sends timestamps like
+ * "2026-02-27 18:54:37.777013 +0000 UTC" which Postgres can't parse (trailing " UTC").
+ * Added normalizeTimestamp() to strip timezone name suffix and fix offset format.
  *
  * v1.8.1: Remove Beside auth bypass (Beside payloads must authenticate).
  *
@@ -16,13 +20,13 @@
  * v1.7.1: Fix beside auth bypass — move body parse + beside detection BEFORE auth gate.
  * v1.7.0: Recovered BESIDE_RAW_PASSTHROUGH from lost v1.6.0 deploy (Charter §10).
  *
- * @version 1.8.1
- * @date 2026-02-28
+ * @version 1.9.0
+ * @date 2026-03-01
  */
 import "jsr:@supabase/functions-js/edge-runtime.d.ts";
 import { createClient } from "jsr:@supabase/supabase-js@2";
 
-const VERSION = "v1.8.1";
+const VERSION = "v1.9.0";
 
 function constantTimeEqual(a: string, b: string): boolean {
   if (a.length !== b.length) return false;
@@ -59,6 +63,20 @@ function isBesidePayload(p: any): boolean {
   return !!(p && (p.fromPhoneNumber || p.toPhoneNumber || p.noteUrl));
 }
 
+/**
+ * Normalize timestamps from Beside (Go-style) into Postgres-safe format.
+ * Handles: "2026-02-27 18:54:37.777013 +0000 UTC" → "2026-02-27 18:54:37.777013 +00:00"
+ * Also handles: already-valid ISO 8601, Z-suffix, space-separated no TZ.
+ */
+function normalizeTimestamp(ts: string | null | undefined): string | null {
+  if (!ts) return null;
+  // Strip Go-style trailing timezone name (UTC, EST, PST, etc.)
+  let normalized = ts.replace(/\s+[A-Z]{2,5}$/, '');
+  // Ensure offset format: +0000 → +00:00
+  normalized = normalized.replace(/(\+|-)(\d{2})(\d{2})$/, '$1$2:$3');
+  return normalized;
+}
+
 /** Normalize a Beside-format payload into a calls_raw insert row. */
 function besideToCallsRaw(p: any, zapierMeta: any): Record<string, any> {
   const interactionId = p.id || p.interaction_id || `beside_${Date.now()}`;
@@ -73,7 +91,7 @@ function besideToCallsRaw(p: any, zapierMeta: any): Record<string, any> {
     other_party_phone: isOutbound ? (p.toPhoneNumber || null) : (p.fromPhoneNumber || null),
     owner_name: isOutbound ? (p.fromName || null) : (p.toName || null),
     owner_phone: isOutbound ? (p.fromPhoneNumber || null) : (p.toPhoneNumber || null),
-    event_at_utc: p.createdAt || p.finishedAt || new Date().toISOString(),
+    event_at_utc: normalizeTimestamp(p.createdAt) || normalizeTimestamp(p.finishedAt) || new Date().toISOString(),
     summary: p.summary || p.title || null,
     transcript: p.transcript || null,
     recording_url: p.recordingUrl || null,
@@ -223,6 +241,12 @@ Deno.serve(async (req: Request) => {
     // Best-effort forward to process-call for full pipeline normalization
     // (interactions row, contact link, AI attribution). Upsert already
     // succeeded so Zapier gets 200 regardless of forward outcome.
+    // Enrich payload with normalized event_at_utc so process-call can use it.
+    const forwardPayload = {
+      ...payload,
+      event_at_utc: row.event_at_utc,
+      interaction_id: row.interaction_id,
+    };
     let forwardStatus: number | null = null;
     let forwardError: string | null = null;
     try {
@@ -235,7 +259,7 @@ Deno.serve(async (req: Request) => {
           "Authorization": `Bearer ${serviceRoleKey}`,
           "X-Edge-Secret": edgeSecret,
         },
-        body: JSON.stringify(payload),
+        body: JSON.stringify(forwardPayload),
       });
       forwardStatus = pcResp.status;
       if (!pcResp.ok) {
