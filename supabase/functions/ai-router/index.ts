@@ -184,7 +184,7 @@ let THRESHOLD_WEAK_REVIEW_CONFIDENCE = 0.30;
 let THRESHOLD_WEAK_REVIEW_CROSSREF = 0.20;
 let _thresholdsLoaded = false;
 
-async function loadThresholdsFromConfig(): Promise<void> {
+async function _loadThresholdsFromConfig(): Promise<void> {
   if (_thresholdsLoaded) return;
   try {
     const url = Deno.env.get("SUPABASE_URL");
