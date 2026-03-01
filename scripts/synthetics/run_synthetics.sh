@@ -87,8 +87,7 @@ fi
 SCENARIO_COUNT=${#SCENARIO_IDS[@]}
 log "Processing $SCENARIO_COUNT scenario(s)."
 
-# Use a RUN_UUID to avoid duplicates
-RUN_UUID=$(date +%s)
+CREATED_INTERACTION_IDS=()
 
 for SCENARIO_ID in "${SCENARIO_IDS[@]}"; do
   log "Processing scenario: $SCENARIO_ID"
@@ -108,6 +107,7 @@ for SCENARIO_ID in "${SCENARIO_IDS[@]}"; do
   NORMALIZED_SID=$(echo "${SCENARIO_ID}" | tr '[:lower:]' '[:upper:]' | tr -cd 'A-Z0-9_' | cut -c 1-20)
   # Interaction ID MUST start with cll_SYNTH_ for the gate script's grep/logic
   SYNTH_ID="cll_SYNTH_${NORMALIZED_SID}_${RUN_UUID}"
+  CREATED_INTERACTION_IDS+=("$SYNTH_ID")
 
   # Provide a timestamp
   if [[ -n "$SCENARIO_EVENT_AT" ]]; then
@@ -157,4 +157,4 @@ done
 
 log "Synthetic interaction generation complete."
 # Output the interaction IDs created so the gate script can find them
-echo "INTERACTION_IDS=$(IFS=,; echo "${SCENARIO_IDS[*]}")"
+echo "INTERACTION_IDS=$(IFS=,; echo "${CREATED_INTERACTION_IDS[*]}")"
