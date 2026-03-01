@@ -349,6 +349,7 @@ Deno.serve(async (req: Request) => {
 
     const runnerUrl = `${Deno.env.get("SUPABASE_URL")}/functions/v1/review-swarm-runner`;
     const edgeSecret = Deno.env.get("EDGE_SHARED_SECRET") || "";
+    const authHeader = req.headers.get("Authorization") || "";
 
     const runnerBody: JsonRecord = {
       mode: "label_only",
@@ -375,6 +376,7 @@ Deno.serve(async (req: Request) => {
         method: "POST",
         headers: {
           "Content-Type": "application/json",
+          "Authorization": authHeader,
           "X-Edge-Secret": edgeSecret,
           "X-Source": "review-swarm-scheduler",
         },
