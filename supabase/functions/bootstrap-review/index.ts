@@ -200,6 +200,7 @@ async function handleProjects(db: any, t0: number): Promise<Response> {
 async function handleQueue(
   db: any,
   limit: number,
+  maxAgeDays: number,
   t0: number,
 ): Promise<Response> {
   // Fetch pending span-based review rows directly so filtering happens
@@ -338,6 +339,18 @@ async function handleQueue(
     return String(b.id || "").localeCompare(String(a.id || ""));
   });
 
+  // Enforce freshness SLA on app-facing queue output.
+  // Uses the same effective timestamp the feed sorts by:
+  // event_at (if present) falling back to queue row created_at.
+  const maxAgeMs = Math.max(1, maxAgeDays) * 24 * 60 * 60 * 1000;
+  const cutoffTsMs = Date.now() - maxAgeMs;
+  const preFilterCount = items.length;
+  items = items.filter((item: any) => {
+    const ts = Date.parse(item.event_at || item.created_at || "") || 0;
+    return ts >= cutoffTsMs;
+  });
+  const filteredOutCount = Math.max(0, preFilterCount - items.length);
+
   // Get total pending count
   const totalPending = await countPendingQueueItemsForIOS(db);
 
@@ -349,6 +362,9 @@ async function handleQueue(
     items,
     projects,
     total_pending: totalPending || 0,
+    freshness_sla_days: maxAgeDays,
+    freshness_cutoff_utc: new Date(cutoffTsMs).toISOString(),
+    freshness_filtered_out: filteredOutCount,
     function_version: FUNCTION_VERSION,
     ms: Date.now() - t0,
   });
@@ -1695,7 +1711,12 @@ Deno.serve(async (req: Request) => {
         Math.max(isNaN(rawLimit) ? 30 : rawLimit, 1),
         100,
       );
-      return await handleQueue(db, limit, t0);
+      const rawMaxAgeDays = parseInt(url.searchParams.get("max_age_days") || "21", 10);
+      const maxAgeDays = Math.min(
+        Math.max(isNaN(rawMaxAgeDays) ? 21 : rawMaxAgeDays, 1),
+        365,
+      );
+      return await handleQueue(db, limit, maxAgeDays, t0);
     }
     if (action === "projects") {
       return await handleProjects(db, t0);
