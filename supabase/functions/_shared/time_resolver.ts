@@ -125,13 +125,22 @@ function resolveTimezone(timeHint: string, options: ResolveTimeOptions): string 
   return options.user_timezone || DEFAULT_USER_TZ;
 }
 
+const IANA_PREFIXES = new Set([
+  "Africa", "America", "Antarctica", "Arctic", "Asia", "Atlantic",
+  "Australia", "Europe", "Indian", "Pacific", "Etc", "US",
+]);
+
 function detectExplicitTimezone(timeHint: string): string | null {
   const normalized = ` ${timeHint.toUpperCase()} `;
   for (const [abbr, zone] of Object.entries(TZ_ALIASES)) {
     if (normalized.includes(` ${abbr} `)) return zone;
   }
   const iana = timeHint.match(/\b[A-Za-z_]+\/[A-Za-z_]+(?:\/[A-Za-z_]+)?\b/);
-  return iana?.[0] || null;
+  if (iana) {
+    const prefix = iana[0].split("/")[0];
+    if (IANA_PREFIXES.has(prefix)) return iana[0];
+  }
+  return null;
 }
 
 function extractWeekday(timeHintLower: string): string | null {
