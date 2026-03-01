@@ -81,7 +81,9 @@ fi
 
 if [[ -f "${ROOT_DIR}/scripts/load-env.sh" ]]; then
   # shellcheck disable=SC1091
+  set +u
   source "${ROOT_DIR}/scripts/load-env.sh" >/dev/null 2>&1 || true
+  set -u
 fi
 
 for var in SUPABASE_URL SUPABASE_SERVICE_ROLE_KEY EDGE_SHARED_SECRET; do
