@@ -207,7 +207,7 @@ async function handleQueue(
   // and filters by COALESCE(event_at_utc, created_at) >= now() - N days.
   // This prevents LIMIT from clipping fresh items behind a wall of stale ones.
   const cutoffDate = new Date(Date.now() - maxAgeDays * 24 * 60 * 60 * 1000);
-  const cutoffIso = cutoffDate.toISOString();
+  const _cutoffIso = cutoffDate.toISOString();
 
   let rqData: any[] | null = null;
   let rqErr: any = null;
