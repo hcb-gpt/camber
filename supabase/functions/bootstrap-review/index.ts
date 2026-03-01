@@ -207,7 +207,7 @@ async function handleQueue(
   // and filters by COALESCE(event_at_utc, created_at) >= now() - N days.
   // This prevents LIMIT from clipping fresh items behind a wall of stale ones.
   const cutoffDate = new Date(Date.now() - maxAgeDays * 24 * 60 * 60 * 1000);
-  const _cutoffIso = cutoffDate.toISOString();
+  const cutoffIso = cutoffDate.toISOString();
 
   let rqData: any[] | null = null;
   let rqErr: any = null;
@@ -239,12 +239,20 @@ async function handleQueue(
   }
 
   if (!rqData || rqData.length === 0) {
+    // Distinguish "no pending items at all" from "all pending items are stale"
+    const totalPending = await countPendingQueueItemsForIOS(db);
     const projects = await fetchReviewProjects(db);
     return json({
       ok: true,
       items: [],
       projects,
-      total_pending: 0,
+      total_pending: totalPending || 0,
+      freshness_sla_days: maxAgeDays,
+      freshness_cutoff_utc: cutoffIso,
+      freshness_filtered_out: totalPending || 0,
+      meta: {
+        reason: (totalPending || 0) > 0 ? "no_cards_within_freshness_window" : "no_pending_items",
+      },
       function_version: FUNCTION_VERSION,
       ms: Date.now() - t0,
     });
