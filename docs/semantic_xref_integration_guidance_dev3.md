@@ -4,7 +4,7 @@ Scope: integrate semantic claim crossref into `edge.context-assembly` without re
 
 ## Preconditions
 
-1. Merge PR [#45](https://github.com/hcb-gpt/camber-calls/pull/45) (vector backfill worker + xref RPC phone filter fix).
+1. Merge PR [#45](https://github.com/hcb-gpt/camber/pull/45) (vector backfill worker + xref RPC phone filter fix).
 2. Apply migration `supabase/migrations/20260215154500_fix_xref_search_journal_claims_scope_phone_columns.sql`.
 3. Run non-dry backfill via `journal-embed-backfill` until `embedded_active > 0`.
 

@@ -4,7 +4,7 @@
   "first_contact_id": "c9b2d3e4-f5a6-7890-bcde-f01234567890",
   "redline_thread_meta": {
     "created_at": 1772022550234,
-    "entrypoint_path": "file:///home/runner/work/camber-calls/camber-calls/supabase/functions/redline-thread/index.ts",
+    "entrypoint_path": "file:///home/runner/work/camber/camber/supabase/functions/redline-thread/index.ts",
     "ezbr_sha256": "04f7cda02a8f2369aff130d89206f5f72cd0d8ee12a51e3ee3ec52e1e87087cf",
     "id": "f38c3c2a-cedc-4d9b-8565-7d359d94b426",
     "import_map": false,

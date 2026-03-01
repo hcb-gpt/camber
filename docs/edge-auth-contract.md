@@ -125,7 +125,7 @@ All Edge Functions use these environment variables (set in Supabase Dashboard):
 After deploying ANY Edge Function, run:
 
 ```bash
-# From camber-calls repo root:
+# From camber repo root:
 ./scripts/edge-smoke-test.sh [function-name]
 
 # Or test all pipeline functions:

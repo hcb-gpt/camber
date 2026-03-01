@@ -179,10 +179,10 @@ Note: Estimates assume no overlap between fixes. Actual impact may differ if som
 
 After each fix batch, run GT eval:
 ```bash
-python3 /Users/chadbarlow/gh/hcb-gpt/camber-calls/scripts/gt_batch_runner.py \
-  --input /Users/chadbarlow/gh/hcb-gpt/camber-calls/artifacts/gt/batches/gt_batch_v1_full.csv \
+python3 /Users/chadbarlow/gh/hcb-gpt/camber/scripts/gt_batch_runner.py \
+  --input /Users/chadbarlow/gh/hcb-gpt/camber/artifacts/gt/batches/gt_batch_v1_full.csv \
   --mode shadow \
-  --baseline /Users/chadbarlow/gh/hcb-gpt/camber-calls/proofs/gt/runs/<baseline_run>/results.csv
+  --baseline /Users/chadbarlow/gh/hcb-gpt/camber/proofs/gt/runs/<baseline_run>/results.csv
 ```
 
 Report both:

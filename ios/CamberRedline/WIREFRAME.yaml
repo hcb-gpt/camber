@@ -1,6 +1,6 @@
 # CamberRedline iOS App — Machine-Readable Wireframe
 # Generated: 2026-02-25
-# Source of truth: /Users/chadbarlow/gh/hcb-gpt/camber-calls/ios/CamberRedline/CamberRedline/
+# Source of truth: /Users/chadbarlow/gh/hcb-gpt/camber/ios/CamberRedline/CamberRedline/
 
 app:
   name: CamberRedline
@@ -85,7 +85,7 @@ data_sources:
 screens:
   contact_list:
     file: ContactListView.swift
-    path: /Users/chadbarlow/gh/hcb-gpt/camber-calls/ios/CamberRedline/CamberRedline/Views/ContactListView.swift
+    path: /Users/chadbarlow/gh/hcb-gpt/camber/ios/CamberRedline/CamberRedline/Views/ContactListView.swift
     role: NavigationStack root
     view_model: ContactListViewModel
     layout:
@@ -185,7 +185,7 @@ screens:
 
   thread_view:
     file: ThreadView.swift
-    path: /Users/chadbarlow/gh/hcb-gpt/camber-calls/ios/CamberRedline/CamberRedline/Views/ThreadView.swift
+    path: /Users/chadbarlow/gh/hcb-gpt/camber/ios/CamberRedline/CamberRedline/Views/ThreadView.swift
     role: pushed from contact_list via NavigationLink
     view_model: ThreadViewModel
     nav_title: "contact.name"
@@ -254,7 +254,7 @@ screens:
 
   call_summary_card:
     file: CallSummaryCard.swift
-    path: /Users/chadbarlow/gh/hcb-gpt/camber-calls/ios/CamberRedline/CamberRedline/Views/CallSummaryCard.swift
+    path: /Users/chadbarlow/gh/hcb-gpt/camber/ios/CamberRedline/CamberRedline/Views/CallSummaryCard.swift
     role: card within thread_view LazyVStack
     container:
       component: VStack(alignment: .leading, spacing: 10)
@@ -351,7 +351,7 @@ screens:
 
   claim_row:
     file: ClaimRow.swift
-    path: /Users/chadbarlow/gh/hcb-gpt/camber-calls/ios/CamberRedline/CamberRedline/Views/ClaimRow.swift
+    path: /Users/chadbarlow/gh/hcb-gpt/camber/ios/CamberRedline/CamberRedline/Views/ClaimRow.swift
     role: individual claim within CallSummaryCard
     layout:
       component: HStack(alignment: .top, spacing: 8)
@@ -429,7 +429,7 @@ screens:
 
   grade_indicator:
     file: GradeIndicator.swift
-    path: /Users/chadbarlow/gh/hcb-gpt/camber-calls/ios/CamberRedline/CamberRedline/Views/GradeIndicator.swift
+    path: /Users/chadbarlow/gh/hcb-gpt/camber/ios/CamberRedline/CamberRedline/Views/GradeIndicator.swift
     role: SF Symbol icon showing current grade state
     size: 16pt
     states:
@@ -451,7 +451,7 @@ screens:
 
   sms_bubble:
     file: SMSBubble.swift
-    path: /Users/chadbarlow/gh/hcb-gpt/camber-calls/ios/CamberRedline/CamberRedline/Views/SMSBubble.swift
+    path: /Users/chadbarlow/gh/hcb-gpt/camber/ios/CamberRedline/CamberRedline/Views/SMSBubble.swift
     role: chat bubble within thread_view LazyVStack
     layout:
       component: HStack
@@ -495,7 +495,7 @@ screens:
 
   correction_sheet:
     file: CorrectionSheet.swift
-    path: /Users/chadbarlow/gh/hcb-gpt/camber-calls/ios/CamberRedline/CamberRedline/Views/CorrectionSheet.swift
+    path: /Users/chadbarlow/gh/hcb-gpt/camber/ios/CamberRedline/CamberRedline/Views/CorrectionSheet.swift
     role: modal sheet for entering correction text
     presentation:
       style: .sheet
@@ -540,7 +540,7 @@ screens:
 view_models:
   ContactListViewModel:
     file: ThreadViewModel.swift  # defined in same file as ThreadViewModel
-    path: /Users/chadbarlow/gh/hcb-gpt/camber-calls/ios/CamberRedline/CamberRedline/ViewModels/ThreadViewModel.swift
+    path: /Users/chadbarlow/gh/hcb-gpt/camber/ios/CamberRedline/CamberRedline/ViewModels/ThreadViewModel.swift
     annotations: ["@MainActor", "@Observable"]
     state:
       - name: contacts
@@ -580,7 +580,7 @@ view_models:
 
   ThreadViewModel:
     file: ThreadViewModel.swift
-    path: /Users/chadbarlow/gh/hcb-gpt/camber-calls/ios/CamberRedline/CamberRedline/ViewModels/ThreadViewModel.swift
+    path: /Users/chadbarlow/gh/hcb-gpt/camber/ios/CamberRedline/CamberRedline/ViewModels/ThreadViewModel.swift
     annotations: ["@MainActor", "@Observable"]
     state:
       - name: currentContact
@@ -643,7 +643,7 @@ view_models:
 models:
   Contact:
     file: Contact.swift
-    path: /Users/chadbarlow/gh/hcb-gpt/camber-calls/ios/CamberRedline/CamberRedline/Models/Contact.swift
+    path: /Users/chadbarlow/gh/hcb-gpt/camber/ios/CamberRedline/CamberRedline/Models/Contact.swift
     protocols: [Codable, Identifiable, Hashable]
     id_property: "contactId (UUID)"
     fields:
@@ -687,7 +687,7 @@ models:
 
   ThreadItem:
     file: ThreadItem.swift
-    path: /Users/chadbarlow/gh/hcb-gpt/camber-calls/ios/CamberRedline/CamberRedline/Models/ThreadItem.swift
+    path: /Users/chadbarlow/gh/hcb-gpt/camber/ios/CamberRedline/CamberRedline/Models/ThreadItem.swift
     type: enum
     protocols: [Identifiable]
     variants:
@@ -784,7 +784,7 @@ models:
 
   GradeType:
     file: ClaimGrade.swift
-    path: /Users/chadbarlow/gh/hcb-gpt/camber-calls/ios/CamberRedline/CamberRedline/Models/ClaimGrade.swift
+    path: /Users/chadbarlow/gh/hcb-gpt/camber/ios/CamberRedline/CamberRedline/Models/ClaimGrade.swift
     type: enum
     raw_type: String
     protocols: [CaseIterable]
@@ -898,7 +898,7 @@ models:
 services:
   SupabaseService:
     file: SupabaseService.swift
-    path: /Users/chadbarlow/gh/hcb-gpt/camber-calls/ios/CamberRedline/CamberRedline/Services/SupabaseService.swift
+    path: /Users/chadbarlow/gh/hcb-gpt/camber/ios/CamberRedline/CamberRedline/Services/SupabaseService.swift
     annotations: ["@MainActor"]
     pattern: "singleton (SupabaseService.shared)"
     properties:

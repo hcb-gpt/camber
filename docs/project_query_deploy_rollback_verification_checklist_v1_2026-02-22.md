@@ -7,7 +7,7 @@
 - This checklist is read-only process guidance; no schema or runtime code changes required.
 
 ## 2) Required context and env
-- Repo: `camber-calls`
+- Repo: `camber`
 - Project ref: `rjhdwidddtfetbwqolof`
 - Required env:
   - `SUPABASE_URL`

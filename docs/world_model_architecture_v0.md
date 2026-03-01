@@ -5,7 +5,7 @@
 **Date:** 2026-02-16  
 **Scope:** Design only (no migrations applied in this doc)
 
-This spec defines the minimum viable “world model” substrate in `camber-calls` using the existing tables:
+This spec defines the minimum viable “world model” substrate in `camber` using the existing tables:
 - `public.evidence_events` (immutable-ish evidence ledger)
 - `public.project_facts` (time-aware, provenance-backed facts keyed by `project_id`)
 

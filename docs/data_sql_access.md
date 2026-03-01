@@ -11,7 +11,7 @@ If `execute_sql` is unavailable in-session:
 Local fallback (read-only checks only, not canonical):
 
 ```bash
-cd /Users/chadbarlow/gh/hcb-gpt/camber-calls
+cd /Users/chadbarlow/gh/hcb-gpt/camber
 scripts/query.sh "select now();"
 ```
 

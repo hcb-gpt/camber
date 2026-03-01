@@ -65,7 +65,7 @@ Example:
 
 `COMPASSION_CHECKIN: Paired with data-2 to remove ambiguity on source-vs-view deltas.`
 
-`GIFT_ARTIFACT: /Users/chadbarlow/gh/hcb-gpt/camber-calls/docs/ops/accountability_relay_pack_2026-02-22.md`
+`GIFT_ARTIFACT: /Users/chadbarlow/gh/hcb-gpt/camber/docs/ops/accountability_relay_pack_2026-02-22.md`
 
 `OWNER=dev-2 STATUS=ACTIVE ETA_MIN=0 BLOCKER=none NEXT_RECEIPT=completion__dev_service_gift_pack_for_data_lanes__20260222_0722z`
 
