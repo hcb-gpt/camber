@@ -1,3 +1,0 @@
-[{"span_id":"c3316010-fe5b-4b03-8218-e101e3caab4a","project_id":"47cb7720-9495-4187-8220-a8100c3b67aa","applied_project_id":null,"needs_review":false,"decision":"review","confidence":0.750,"attributed_at":"2026-01-31T20:17:28.137+00:00"}, 
- {"span_id":"d1f8a85c-c047-422c-9951-09f4564a6a3d","project_id":null,"applied_project_id":null,"needs_review":true,"decision":"review","confidence":0.570,"attributed_at":"2026-01-31T20:17:04.482+00:00"}, 
- {"span_id":"0e755a04-8235-45ef-a6a2-11f3aa22ece8","project_id":null,"applied_project_id":null,"needs_review":true,"decision":"review","confidence":0.500,"attributed_at":"2026-01-31T20:16:59.091+00:00"}]
