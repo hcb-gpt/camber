@@ -5,6 +5,7 @@ private enum TriageSmokeAutomation {
     static let launchFlag = "--smoke-drive"
     static let syntheticIdsFlag = "--smoke-synthetic-ids"
     static let triageNotification = Notification.Name("camber.smoke.runTriage")
+    static let triageDoneNotification = Notification.Name("camber.smoke.triageDone")
     static let logger = Logger(subsystem: "CamberRedline", category: "smoke")
 
     static var isEnabled: Bool {
@@ -302,12 +303,21 @@ struct AttributionTriageCardsView: View {
     }
 
     private func runSmokeSwipes() async {
-        if viewModel.queue.isEmpty {
-            await viewModel.loadQueue()
+        // Retry queue loading to handle race with .task loadQueue
+        var retries = 0
+        while viewModel.queue.isEmpty && retries < 5 {
+            if !viewModel.isLoading {
+                await viewModel.loadQueue()
+            }
+            if viewModel.queue.isEmpty {
+                try? await Task.sleep(for: .seconds(1))
+                retries += 1
+            }
         }
 
         guard !viewModel.queue.isEmpty else {
-            TriageSmokeAutomation.logger.log("SMOKE_EVENT TRIAGE_EMPTY")
+            TriageSmokeAutomation.logger.log("SMOKE_EVENT TRIAGE_EMPTY retries=\(retries, privacy: .public)")
+            NotificationCenter.default.post(name: TriageSmokeAutomation.triageDoneNotification, object: nil)
             return
         }
 
@@ -411,6 +421,7 @@ struct AttributionTriageCardsView: View {
         }
 
         TriageSmokeAutomation.logger.log("SMOKE_EVENT TRIAGE_DONE remaining=\(viewModel.queue.count, privacy: .public)")
+        NotificationCenter.default.post(name: TriageSmokeAutomation.triageDoneNotification, object: nil)
     }
 
     private enum PickerMode {
