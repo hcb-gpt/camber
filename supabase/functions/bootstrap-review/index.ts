@@ -239,12 +239,22 @@ async function handleQueue(
   }
 
   if (!rqData || rqData.length === 0) {
+    // Distinguish "no pending items at all" from "all pending items are stale"
+    const totalPending = await countPendingQueueItemsForIOS(db);
     const projects = await fetchReviewProjects(db);
     return json({
       ok: true,
       items: [],
       projects,
-      total_pending: 0,
+      total_pending: totalPending || 0,
+      freshness_sla_days: maxAgeDays,
+      freshness_cutoff_utc: cutoffIso,
+      freshness_filtered_out: totalPending || 0,
+      meta: {
+        reason: (totalPending || 0) > 0
+          ? "no_cards_within_freshness_window"
+          : "no_pending_items",
+      },
       function_version: FUNCTION_VERSION,
       ms: Date.now() - t0,
     });

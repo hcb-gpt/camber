@@ -20,9 +20,12 @@ struct CardItem: Identifiable {
     let contactName: String
     let eventDate: Date?
     let transcriptSegment: String
+    let fullTranscript: String?
     let projectId: String?  // ai_guess_project_id
     let confidence: Double
     let candidates: [Candidate]
+    let reasonCodes: [String]
+    let anchors: [Anchor]
 
     init(from item: ReviewItem) {
         id = item.id
@@ -34,9 +37,12 @@ struct CardItem: Identifiable {
         transcriptSegment = item.transcriptSegment.isEmpty
             ? (item.humanSummary ?? "No transcript available")
             : item.transcriptSegment
+        fullTranscript = item.fullTranscript
         projectId = item.aiGuessProjectId
         confidence = item.confidence ?? 0
         candidates = item.contextPayload?.candidates ?? []
+        reasonCodes = item.reasonCodes ?? []
+        anchors = item.contextPayload?.anchors ?? []
     }
 }
 
@@ -48,6 +54,7 @@ final class CardTriageViewModel {
     var error: String?
     var lastAction: TriageAction?
     var resolvedCount: Int = 0
+    var startTime: Date = Date()
 
     private let service = BootstrapService.shared
     private var projectNameById: [String: String] = [:]
@@ -72,6 +79,16 @@ final class CardTriageViewModel {
         let total = resolvedCount + queue.count
         guard total > 0 else { return 0 }
         return Double(resolvedCount) / Double(total)
+    }
+
+    var timeSpent: TimeInterval {
+        Date().timeIntervalSince(startTime)
+    }
+
+    var resolvedPerMinute: Double {
+        let mins = timeSpent / 60.0
+        guard mins > 0.1 else { return 0 }
+        return Double(resolvedCount) / mins
     }
 
     // MARK: - Load
@@ -127,9 +144,12 @@ final class CardTriageViewModel {
                                   contactName: card.contactName,
                                   eventDate: card.eventDate,
                                   transcriptSegment: card.transcriptSegment,
+                                  fullTranscript: card.fullTranscript,
                                   projectId: card.projectId,
                                   confidence: card.confidence,
-                                  candidates: card.candidates),
+                                  candidates: card.candidates,
+                                  reasonCodes: card.reasonCodes,
+                                  anchors: card.anchors),
                          at: min(idx, queue.count))
             resolvedCount = max(0, resolvedCount - 1)
         }
@@ -172,9 +192,12 @@ final class CardTriageViewModel {
                     contactName: card.contactName,
                     eventDate: card.eventDate,
                     transcriptSegment: card.transcriptSegment,
+                    fullTranscript: card.fullTranscript,
                     projectId: card.projectId,
                     confidence: card.confidence,
-                    candidates: card.candidates
+                    candidates: card.candidates,
+                    reasonCodes: card.reasonCodes,
+                    anchors: card.anchors
                 ),
                 at: min(idx, queue.count)
             )
@@ -188,6 +211,12 @@ final class CardTriageViewModel {
 
     func dismissUndecided(_ card: CardItem, notes: String? = nil) async {
         await dismiss(card, reason: "undecided", notes: notes)
+    }
+
+    func skip(_ card: CardItem) {
+        guard let idx = queue.firstIndex(where: { $0.id == card.id }) else { return }
+        let item = queue.remove(at: idx)
+        queue.append(item)
     }
 
     func undo() async {
@@ -272,7 +301,8 @@ final class CardTriageViewModel {
 private extension CardItem {
     init(queueId: String, spanId: String, interactionId: String,
          contactName: String, eventDate: Date?, transcriptSegment: String,
-         projectId: String?, confidence: Double, candidates: [Candidate]) {
+         fullTranscript: String?, projectId: String?, confidence: Double,
+         candidates: [Candidate], reasonCodes: [String], anchors: [Anchor]) {
         self.id = queueId
         self.queueId = queueId
         self.spanId = spanId
@@ -280,8 +310,11 @@ private extension CardItem {
         self.contactName = contactName
         self.eventDate = eventDate
         self.transcriptSegment = transcriptSegment
+        self.fullTranscript = fullTranscript
         self.projectId = projectId
         self.confidence = confidence
         self.candidates = candidates
+        self.reasonCodes = reasonCodes
+        self.anchors = anchors
     }
 }

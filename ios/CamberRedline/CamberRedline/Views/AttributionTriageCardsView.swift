@@ -28,6 +28,7 @@ private enum TriageSmokeAutomation {
 private extension Color {
     static let cardsBg = Color.black
     static let cardFace = Color(red: 0.082, green: 0.082, blue: 0.09)     // #151517
+    static let surface = Color(red: 0.05, green: 0.05, blue: 0.06)
     static let cardStroke = Color(red: 0.165, green: 0.165, blue: 0.18)    // #2A2A2E
     static let chipBg = Color(red: 0.145, green: 0.145, blue: 0.157)      // #252528
     static let yesGreen = Color(red: 0.188, green: 0.82, blue: 0.345)     // #30D158
@@ -45,6 +46,8 @@ struct AttributionTriageCardsView: View {
     @State private var showCommentComposer = false
     @State private var commentCard: CardItem?
     @State private var didRunSmokeTriage = false
+    @State private var showAnalysis = false
+    @State private var analysisCard: CardItem?
 
     var body: some View {
         NavigationStack {
@@ -58,14 +61,50 @@ struct AttributionTriageCardsView: View {
                 } else if viewModel.queue.isEmpty {
                     emptyState
                 } else {
-                    VStack(spacing: 0) {
-                        progressBar
-                        cardStack
-                        actionHints
-                    }
-                }
-
-                if viewModel.lastAction != nil, viewModel.canUndo {
+                                            VStack(spacing: 0) {
+                                                progressBar
+                                                cardStack
+                                                actionHints
+                                                activityRail
+                                            }
+                                        }
+                    ...
+                        // MARK: - Activity Rail
+                    
+                        private var activityRail: some View {
+                            HStack(spacing: 20) {
+                                activityItem(label: "USER", value: "ios-user", icon: "person.circle")
+                                Divider().frame(height: 12).background(Color.cardStroke)
+                                activityItem(label: "RATE", value: String(format: "%.1f/m", viewModel.resolvedPerMinute), icon: "gauge.medium")
+                                Divider().frame(height: 12).background(Color.cardStroke)
+                                activityItem(label: "HEALTH", value: "\(Int(viewModel.progressFraction * 100))%", icon: "heart.fill")
+                                Spacer()
+                                Text("v1.0.0-W1")
+                                    .font(.system(size: 8, weight: .bold, design: .monospaced))
+                                    .foregroundStyle(.secondary.opacity(0.5))
+                            }
+                            .padding(.horizontal, 20)
+                            .padding(.vertical, 10)
+                            .background(Color.surface, in: RoundedRectangle(cornerRadius: 0))
+                            .border(Color.cardStroke, width: 0.5)
+                        }
+                    
+                        private func activityItem(label: String, value: String, icon: String) -> some View {
+                            HStack(spacing: 6) {
+                                Image(systemName: icon)
+                                    .font(.system(size: 10))
+                                    .foregroundStyle(.secondary)
+                                VStack(alignment: .leading, spacing: 0) {
+                                    Text(label)
+                                        .font(.system(size: 7, weight: .bold))
+                                        .foregroundStyle(.secondary.opacity(0.7))
+                                    Text(value)
+                                        .font(.system(size: 10, weight: .semibold, design: .monospaced))
+                                        .foregroundStyle(.white)
+                                }
+                            }
+                        }
+                                    if viewModel.lastAction != nil, viewModel.canUndo {
                     undoBanner(viewModel.lastAction!)
                         .transition(.move(edge: .bottom).combined(with: .opacity))
                 }
@@ -117,13 +156,17 @@ struct AttributionTriageCardsView: View {
                     TriageCommentSheet(
                         card: card,
                         suggestedProjectName: viewModel.projectName(for: card.projectId),
+                        isEscalation: pickerMode == .escalate,
                         onCancel: {
                             commentCard = nil
                         },
                         onSubmit: { note in
                             let trimmed = note.trimmingCharacters(in: .whitespacesAndNewlines)
                             let finalNote = trimmed.isEmpty ? nil : trimmed
-                            if let projectId = card.projectId {
+                            
+                            if pickerMode == .escalate {
+                                Task { await viewModel.dismissUndecided(card, notes: finalNote) }
+                            } else if let projectId = card.projectId {
                                 Task { await viewModel.resolve(card, to: projectId, notes: finalNote) }
                             } else {
                                 pendingResolveNote = finalNote
@@ -134,6 +177,11 @@ struct AttributionTriageCardsView: View {
                             commentCard = nil
                         }
                     )
+                }
+            }
+            .sheet(isPresented: $showAnalysis) {
+                if let card = analysisCard {
+                    AnalysisDrawerView(card: card, projectName: viewModel.projectName(for: card.projectId))
                 }
             }
         }
@@ -197,11 +245,16 @@ struct AttributionTriageCardsView: View {
                         showProjectPicker = true
                     },
                     onSwipeUp: {
-                        Task { await viewModel.dismissUndecided(card) }
+                        commentCard = card
+                        pickerMode = .escalate
+                        showCommentComposer = true
                     },
                     onSwipeDown: {
-                        commentCard = card
-                        showCommentComposer = true
+                        viewModel.skip(card)
+                    },
+                    onTapAnalysis: {
+                        analysisCard = card
+                        showAnalysis = true
                     }
                 )
                 .zIndex(isTop ? 1 : 0)
@@ -416,6 +469,7 @@ struct AttributionTriageCardsView: View {
     private enum PickerMode {
         case project
         case commentOnly
+        case escalate
     }
 }
 
@@ -429,6 +483,7 @@ private struct SwipeableTriageCard: View {
     let onSwipeLeft: () -> Void
     let onSwipeUp: () -> Void
     let onSwipeDown: () -> Void
+    let onTapAnalysis: () -> Void
 
     @State private var offset: CGSize = .zero
     @State private var rotation: Double = 0
@@ -451,58 +506,106 @@ private struct SwipeableTriageCard: View {
                     }
                 }
                 Spacer()
+                
+                Button {
+                    onTapAnalysis()
+                } label: {
+                    Image(systemName: "chart.bar.doc.horizontal")
+                        .font(.system(size: 14))
+                        .foregroundStyle(.white.opacity(0.6))
+                        .padding(8)
+                        .background(Color.chipBg, in: Circle())
+                }
+                
                 confidenceBadge
             }
 
-            // Transcript
-            Text(card.transcriptSegment)
-                .font(.subheadline)
-                .foregroundStyle(.white.opacity(0.85))
-                .lineLimit(6)
-                .frame(maxWidth: .infinity, alignment: .leading)
+            // Transcript and Evidence
+            VStack(alignment: .leading, spacing: 10) {
+                Text(card.transcriptSegment)
+                    .font(.subheadline)
+                    .foregroundStyle(.white.opacity(0.85))
+                    .lineLimit(4)
+                    .frame(maxWidth: .infinity, alignment: .leading)
 
-            Divider().background(Color.cardStroke)
-
-            // AI guess
-            if let name = projectName {
-                HStack(spacing: 8) {
-                    Image(systemName: "cpu")
-                        .font(.caption)
-                        .foregroundStyle(Color.yesGreen.opacity(0.7))
-                    Text(name)
-                        .font(.subheadline)
-                        .fontWeight(.medium)
-                        .foregroundStyle(.white)
-                    Spacer()
-                    Text("Swipe \(Image(systemName: "arrow.right")) to confirm")
-                        .font(.caption2)
-                        .foregroundStyle(.secondary)
-                }
-            } else {
-                HStack(spacing: 8) {
-                    Image(systemName: "questionmark.circle")
-                        .font(.caption)
-                        .foregroundStyle(Color.undoAmber.opacity(0.7))
-                    Text("No AI guess")
-                        .font(.subheadline)
-                        .foregroundStyle(.secondary)
-                    Spacer()
-                    Text("Swipe to pick project")
-                        .font(.caption2)
-                        .foregroundStyle(.secondary)
+                if !card.anchors.isEmpty {
+                    VStack(alignment: .leading, spacing: 6) {
+                        ForEach(card.anchors.prefix(3), id: \.quote) { anchor in
+                            if let quote = anchor.quote {
+                                HStack(alignment: .top, spacing: 6) {
+                                    Image(systemName: "quote.opening")
+                                        .font(.system(size: 8))
+                                        .foregroundStyle(Color.yesGreen.opacity(0.6))
+                                    Text(quote)
+                                        .font(.caption)
+                                        .italic()
+                                        .foregroundStyle(.secondary)
+                                        .lineLimit(2)
+                                }
+                                .padding(.leading, 4)
+                            }
+                        }
+                    }
                 }
             }
 
-            // Candidate chips
-            if !card.candidates.isEmpty {
-                HStack(spacing: 6) {
-                    ForEach(card.candidates.prefix(3), id: \.projectId) { candidate in
-                        Text(candidate.name)
-                            .font(.caption2)
-                            .foregroundStyle(.white.opacity(0.7))
-                            .padding(.horizontal, 8)
-                            .padding(.vertical, 4)
-                            .background(Color.chipBg, in: Capsule())
+            Divider().background(Color.cardStroke)
+
+            // AI guess and Reasons
+            VStack(alignment: .leading, spacing: 10) {
+                if let name = projectName {
+                    HStack(spacing: 8) {
+                        Image(systemName: "cpu")
+                            .font(.caption)
+                            .foregroundStyle(Color.yesGreen.opacity(0.7))
+                        Text(name)
+                            .font(.subheadline)
+                            .fontWeight(.medium)
+                            .foregroundStyle(.white)
+                        Spacer()
+                        Text("RIGHT to confirm")
+                            .font(.system(size: 10))
+                            .foregroundStyle(.secondary)
+                    }
+                }
+
+                if !card.reasonCodes.isEmpty {
+                    ScrollView(.horizontal, showsIndicators: false) {
+                        HStack(spacing: 6) {
+                            ForEach(card.reasonCodes, id: \.self) { code in
+                                Text(code)
+                                    .font(.system(size: 10, weight: .bold, design: .monospaced))
+                                    .foregroundStyle(.orange)
+                                    .padding(.horizontal, 6)
+                                    .padding(.vertical, 2)
+                                    .background(Color.undoAmber.opacity(0.1), in: RoundedRectangle(cornerRadius: 4))
+                            }
+                        }
+                    }
+                }
+            }
+
+            // Alternatives (Collapsed)
+            if card.candidates.count > 1 {
+                let alternatives = card.candidates.filter { $0.projectId != card.projectId }
+                if !alternatives.isEmpty {
+                    HStack(spacing: 6) {
+                        Text("ALT:")
+                            .font(.system(size: 10, weight: .bold))
+                            .foregroundStyle(.secondary)
+                        ForEach(alternatives.prefix(2), id: \.projectId) { alt in
+                            Text(alt.name)
+                                .font(.system(size: 10))
+                                .foregroundStyle(.white.opacity(0.6))
+                                .padding(.horizontal, 6)
+                                .padding(.vertical, 2)
+                                .background(Color.chipBg, in: Capsule())
+                        }
+                        if alternatives.count > 2 {
+                            Text("+\(alternatives.count - 2)")
+                                .font(.system(size: 10))
+                                .foregroundStyle(.secondary)
+                        }
                     }
                 }
             }
@@ -529,14 +632,14 @@ private struct SwipeableTriageCard: View {
         }
         .overlay(alignment: .top) {
             if offset.height < -40 {
-                swipeLabel("LATER", icon: "arrow.up", color: .undoAmber)
+                swipeLabel("ESCALATE", icon: "arrow.up.circle.fill", color: .noRed)
                     .padding(.top, 16)
                     .opacity(min(1, Double(-offset.height - 40) / 60))
             }
         }
         .overlay(alignment: .bottom) {
             if offset.height > 40 {
-                swipeLabel("NOTE", icon: "text.bubble", color: .commentBlue)
+                swipeLabel("SKIP", icon: "arrow.forward.circle.fill", color: .chipBg)
                     .padding(.bottom, 16)
                     .opacity(min(1, Double(offset.height - 40) / 60))
             }
@@ -563,9 +666,7 @@ private struct SwipeableTriageCard: View {
                         swipeAway(direction: .up)
                     } else if value.translation.height > verticalSwipeThreshold,
                               abs(value.translation.height) > abs(value.translation.width) {
-                        // DOWN: card stays in queue — snap back then open comment sheet
-                        snapBack()
-                        onSwipeDown()
+                        swipeAway(direction: .down)
                     } else {
                         snapBack()
                     }
@@ -620,6 +721,9 @@ private struct SwipeableTriageCard: View {
         case .up:
             offscreenX = 0
             offscreenY = -700
+        case .down:
+            offscreenX = 0
+            offscreenY = 700
         }
         withAnimation(.easeIn(duration: 0.25)) {
             offset = CGSize(width: offscreenX, height: offscreenY)
@@ -628,7 +732,7 @@ private struct SwipeableTriageCard: View {
                 rotation = 15
             case .left:
                 rotation = -15
-            case .up:
+            case .up, .down:
                 rotation = 0
             }
         }
@@ -639,6 +743,7 @@ private struct SwipeableTriageCard: View {
             case .right: onSwipeRight()
             case .left: onSwipeLeft()
             case .up: onSwipeUp()
+            case .down: onSwipeDown()
             }
         }
     }
@@ -650,7 +755,7 @@ private struct SwipeableTriageCard: View {
         }
     }
 
-    private enum SwipeDirection { case left, right, up }
+    private enum SwipeDirection { case left, right, up, down }
 }
 
 private struct TriageCommentSheet: View {
@@ -658,6 +763,7 @@ private struct TriageCommentSheet: View {
 
     let card: CardItem
     let suggestedProjectName: String?
+    var isEscalation: Bool = false
     let onCancel: () -> Void
     let onSubmit: (String) -> Void
 
@@ -666,7 +772,13 @@ private struct TriageCommentSheet: View {
     var body: some View {
         NavigationStack {
             Form {
-                if let suggestedProjectName {
+                if isEscalation {
+                    Section("Escalation Reason") {
+                        Text("This item will be moved to the manual review queue for further investigation.")
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                    }
+                } else if let suggestedProjectName {
                     Section("Resolve Target") {
                         Text(suggestedProjectName)
                             .foregroundStyle(.white)
@@ -677,12 +789,12 @@ private struct TriageCommentSheet: View {
                             .foregroundStyle(.secondary)
                     }
                 }
-                Section("Comment") {
-                    TextField("Add context for this resolution", text: $note, axis: .vertical)
+                Section(isEscalation ? "Reason *" : "Comment") {
+                    TextField(isEscalation ? "Why does this need escalation?" : "Add context for this resolution", text: $note, axis: .vertical)
                         .lineLimit(3...6)
                 }
             }
-            .navigationTitle("Comment")
+            .navigationTitle(isEscalation ? "Escalate" : "Comment")
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
                 ToolbarItem(placement: .cancellationAction) {
@@ -692,14 +804,132 @@ private struct TriageCommentSheet: View {
                     }
                 }
                 ToolbarItem(placement: .confirmationAction) {
-                    Button("Resolve") {
+                    Button(isEscalation ? "Escalate" : "Resolve") {
                         dismiss()
                         onSubmit(note)
                     }
+                    .disabled(isEscalation && note.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
                 }
             }
         }
-        .presentationDetents([.medium])
         .preferredColorScheme(.dark)
+    }
+}
+
+// MARK: - Analysis Drawer
+
+private struct AnalysisDrawerView: View {
+    @Environment(\.dismiss) private var dismiss
+    let card: CardItem
+    let projectName: String?
+
+    var body: some View {
+        NavigationStack {
+            ScrollView {
+                VStack(alignment: .leading, spacing: 20) {
+                    // Summary Section
+                    SectionHeader(title: "Verdict Analysis")
+                    
+                    VStack(alignment: .leading, spacing: 8) {
+                        HStack {
+                            Text("Proposed Project")
+                                .font(.subheadline)
+                                .foregroundStyle(.secondary)
+                            Spacer()
+                            Text(projectName ?? "None")
+                                .font(.subheadline)
+                                .fontWeight(.bold)
+                                .foregroundStyle(.white)
+                        }
+                        
+                        HStack {
+                            Text("Confidence Score")
+                                .font(.subheadline)
+                                .foregroundStyle(.secondary)
+                            Spacer()
+                            Text("\(Int(card.confidence * 100))%")
+                                .font(.subheadline)
+                                .fontWeight(.bold)
+                                .foregroundStyle(card.confidence >= 0.7 ? .green : .orange)
+                        }
+                    }
+                    .padding()
+                    .background(Color.cardFace, in: RoundedRectangle(cornerRadius: 12))
+
+                    // Evidence Matrix (Anchors)
+                    if !card.anchors.isEmpty {
+                        SectionHeader(title: "Evidence Matrix")
+                        VStack(alignment: .leading, spacing: 12) {
+                            ForEach(card.anchors, id: \.quote) { anchor in
+                                VStack(alignment: .leading, spacing: 6) {
+                                    HStack {
+                                        Text(anchor.matchType?.uppercased() ?? "MATCH")
+                                            .font(.system(size: 10, weight: .bold, design: .monospaced))
+                                            .padding(.horizontal, 6)
+                                            .padding(.vertical, 2)
+                                            .background(Color.chipBg, in: RoundedRectangle(cornerRadius: 4))
+                                            .foregroundStyle(.green)
+                                        Spacer()
+                                    }
+                                    
+                                    Text(anchor.quote ?? "")
+                                        .font(.subheadline)
+                                        .italic()
+                                        .foregroundStyle(.white.opacity(0.9))
+                                    
+                                    if let context = anchor.text {
+                                        Text(context)
+                                            .font(.caption)
+                                            .foregroundStyle(.secondary)
+                                    }
+                                }
+                                .padding()
+                                .background(Color.cardFace, in: RoundedRectangle(cornerRadius: 12))
+                                .overlay(
+                                    RoundedRectangle(cornerRadius: 12)
+                                        .stroke(Color.cardStroke, lineWidth: 1)
+                                )
+                            }
+                        }
+                    }
+
+                    // Surrounding Context (Full Transcript)
+                    if let fullTranscript = card.fullTranscript {
+                        SectionHeader(title: "Surrounding Context")
+                        Text(fullTranscript)
+                            .font(.system(size: 13, design: .monospaced))
+                            .foregroundStyle(.secondary)
+                            .padding()
+                            .background(Color.black, in: RoundedRectangle(cornerRadius: 12))
+                            .overlay(
+                                RoundedRectangle(cornerRadius: 12)
+                                    .stroke(Color.cardStroke, lineWidth: 1)
+                            )
+                    }
+                }
+                .padding()
+            }
+            .navigationTitle("Analysis")
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                ToolbarItem(placement: .confirmationAction) {
+                    Button("Done") { dismiss() }
+                }
+            }
+            .background(Color.cardsBg)
+        }
+        .preferredColorScheme(.dark)
+    }
+}
+
+private struct SectionHeader: View {
+    let title: String
+    var body: some View {
+        Text(title)
+            .font(.caption)
+            .fontWeight(.bold)
+            .foregroundStyle(.secondary)
+            .textCase(.uppercase)
+            .tracking(1)
     }
 }

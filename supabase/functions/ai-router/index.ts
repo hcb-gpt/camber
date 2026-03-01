@@ -184,42 +184,6 @@ let THRESHOLD_WEAK_REVIEW_CONFIDENCE = 0.30;
 let THRESHOLD_WEAK_REVIEW_CROSSREF = 0.20;
 let _thresholdsLoaded = false;
 
-async function loadThresholdsFromConfig(): Promise<void> {
-  if (_thresholdsLoaded) return;
-  try {
-    const url = Deno.env.get("SUPABASE_URL");
-    const key = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY");
-    if (!url || !key) return;
-    const db = createClient(url, key);
-    const { data, error } = await db
-      .from("inference_config")
-      .select("config_key, config_value")
-      .like("config_key", "router_%");
-    if (error || !data) {
-      console.warn(`[ai-router] inference_config load failed: ${error?.message || "no data"}`);
-      return;
-    }
-    const map: Record<string, number> = {};
-    for (const row of data) {
-      const val = typeof row.config_value === "string"
-        ? parseFloat(row.config_value)
-        : typeof row.config_value === "number"
-        ? row.config_value
-        : parseFloat(JSON.stringify(row.config_value));
-      if (!isNaN(val)) map[row.config_key] = val;
-    }
-    if (map.router_auto_assign_threshold !== undefined) THRESHOLD_AUTO_ASSIGN = map.router_auto_assign_threshold;
-    if (map.router_review_threshold !== undefined) THRESHOLD_REVIEW = map.router_review_threshold;
-    if (map.router_safe_low_assign_threshold !== undefined) THRESHOLD_SAFE_LOW_ASSIGN = map.router_safe_low_assign_threshold;
-    if (map.router_high_confidence_gap_assign !== undefined) THRESHOLD_HIGH_CONFIDENCE_GAP_ASSIGN = map.router_high_confidence_gap_assign;
-    if (map.router_weak_review_confidence !== undefined) THRESHOLD_WEAK_REVIEW_CONFIDENCE = map.router_weak_review_confidence;
-    if (map.router_weak_review_crossref !== undefined) THRESHOLD_WEAK_REVIEW_CROSSREF = map.router_weak_review_crossref;
-    _thresholdsLoaded = true;
-  } catch (e) {
-    console.warn(`[ai-router] inference_config load error: ${(e as Error)?.message || e}`);
-  }
-}
-
 // Defense-in-depth: closed-project hard filter (mirrors context-assembly VALID_PROJECT_STATUSES)
 const ATTRIBUTION_ELIGIBLE_STATUSES = new Set(["active", "warranty", "estimating"]);
 
