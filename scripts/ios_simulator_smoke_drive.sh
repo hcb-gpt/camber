@@ -8,6 +8,38 @@ STAMP="$(date -u +%Y%m%dT%H%M%SZ)"
 OUT_DIR="${ROOT_DIR}/artifacts/ios_simulator_smoke/${STAMP}"
 DERIVED_DIR="${OUT_DIR}/DerivedData"
 SCREEN_DIR="${OUT_DIR}/screens"
+SYNTHETIC_IDS="${SYNTHETIC_IDS:-}"
+SCREEN_STEPS=7
+SCREEN_INTERVAL_SECONDS=4
+
+usage() {
+  cat <<'EOF'
+Usage: scripts/ios_simulator_smoke_drive.sh [options]
+
+Options:
+  --synthetic-ids <csv>   Comma-separated interaction IDs to target in triage smoke.
+  --help, -h              Show this help.
+EOF
+}
+
+while [[ $# -gt 0 ]]; do
+  case "$1" in
+    --synthetic-ids)
+      SYNTHETIC_IDS="${2:-}"
+      shift 2
+      ;;
+    --help|-h)
+      usage
+      exit 0
+      ;;
+    *)
+      echo "ERROR: unknown argument: $1" >&2
+      usage >&2
+      exit 2
+      ;;
+  esac
+done
+
 mkdir -p "${SCREEN_DIR}"
 
 # In sandboxed sessions, toolchains cannot always write under ~/Library.
@@ -98,11 +130,16 @@ cleanup() {
 trap cleanup EXIT
 
 echo "[smoke] launching app with automation flag"
-simctl launch "${DEVICE_UDID}" "${BUNDLE_ID}" --smoke-drive > "${OUT_DIR}/launch.txt" 2>&1
+LAUNCH_ARGS=(--smoke-drive)
+if [[ -n "${SYNTHETIC_IDS}" ]]; then
+  LAUNCH_ARGS+=(--smoke-synthetic-ids "${SYNTHETIC_IDS}")
+fi
+simctl launch "${DEVICE_UDID}" "${BUNDLE_ID}" "${LAUNCH_ARGS[@]}" > "${OUT_DIR}/launch.txt" 2>&1
 
-for step in 01 02 03 04 05 06 07; do
-  sleep 4
-  simctl io "${DEVICE_UDID}" screenshot "${SCREEN_DIR}/shot_${step}.png" >/dev/null
+for step in $(seq 1 "${SCREEN_STEPS}"); do
+  sleep "${SCREEN_INTERVAL_SECONDS}"
+  step_label=$(printf "%02d" "${step}")
+  simctl io "${DEVICE_UDID}" screenshot "${SCREEN_DIR}/shot_${step_label}.png" >/dev/null
 done
 
 sleep 2
@@ -121,6 +158,8 @@ video=${OUT_DIR}/session.mp4
 build_log=${OUT_DIR}/build.log
 app_log=${OUT_DIR}/app.log
 smoke_markers=${SMOKE_MARKERS}
+synthetic_ids=${SYNTHETIC_IDS}
+launch_args=${LAUNCH_ARGS[*]}
 EOF
 
 echo "[smoke] done"
