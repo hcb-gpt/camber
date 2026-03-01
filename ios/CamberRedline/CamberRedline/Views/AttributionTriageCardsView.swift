@@ -146,13 +146,10 @@ struct AttributionTriageCardsView: View {
     private var progressBar: some View {
         VStack(spacing: 6) {
             HStack {
-                Text("\(viewModel.resolvedCount) done")
+                Text("\(viewModel.resolvedCount) done, \(viewModel.queue.count) remaining of \(viewModel.resolvedCount + viewModel.queue.count) today")
                     .font(.caption2)
                     .foregroundStyle(.secondary)
                 Spacer()
-                Text("\(viewModel.queue.count) remaining")
-                    .font(.caption2)
-                    .foregroundStyle(.secondary)
             }
 
             GeometryReader { geo in
