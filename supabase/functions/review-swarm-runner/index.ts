@@ -79,6 +79,8 @@ interface ReviewResult {
   reviewer_error: string | null;
   written: boolean;
   write_error: string | null;
+  queue_updated: boolean;
+  queue_error: string | null;
 }
 
 function mapVerdict(
@@ -344,6 +346,7 @@ Deno.serve(async (req: Request) => {
     let reviewerVerdict = "INSUFFICIENT";
     let reviewerNotes = "";
     let reviewerError: string | null = null;
+    let reviewerOutput: JsonRecord = {};
 
     try {
       const evidenceEvents = evidenceMap.get(span.interaction_id) || [];
@@ -402,7 +405,7 @@ Deno.serve(async (req: Request) => {
       }
 
       const reviewerResp = asRecord(await resp.json());
-      const reviewerOutput = asRecord(reviewerResp.reviewer_output);
+      reviewerOutput = asRecord(reviewerResp.reviewer_output);
       reviewerVerdict = asString(reviewerOutput.verdict) || "INSUFFICIENT";
       reviewerNotes = asString(reviewerOutput.notes);
     } catch (e: unknown) {
@@ -412,9 +415,12 @@ Deno.serve(async (req: Request) => {
     const mappedVerdict = mapVerdict(reviewerVerdict);
     let written = false;
     let writeError: string | null = null;
+    let queueUpdated = false;
+    let queueError: string | null = null;
 
     if (mode === "label_only" && !reviewerError) {
       try {
+        // 1. Write feedback
         const { error: insertErr } = await db
           .from("attribution_validation_feedback")
           .insert({
@@ -440,6 +446,60 @@ Deno.serve(async (req: Request) => {
         } else {
           written = true;
         }
+
+        // 2. Sync to review_queue to unblock auto-resolver
+        if (written || writeError === "duplicate_skipped") {
+          // Map to context_payload fields expected by auto-review-resolver
+          let candidateProjectId: string | null = null;
+          let candidateConfidence = 0.0;
+
+          if (reviewerVerdict === "MATCH") {
+            candidateProjectId = span.project_id;
+            candidateConfidence = 0.96; // High but distinct from 1.0
+          } else if (reviewerVerdict === "MISMATCH") {
+            const candidates = Array.isArray(reviewerOutput.top_candidates) ? reviewerOutput.top_candidates : [];
+            const top = asRecord(candidates[0]);
+            candidateProjectId = asString(top.project_id) || null;
+            candidateConfidence = asNumber(top.confidence) ?? 0.0;
+          } else {
+            // INSUFFICIENT or other: low confidence triggers auto-dismiss in resolver
+            candidateProjectId = span.project_id;
+            candidateConfidence = 0.10;
+          }
+
+          // Fetch the current review_queue item for this span
+          const { data: queueItem } = await db
+            .from("review_queue")
+            .select("id, context_payload")
+            .eq("span_id", span.span_id)
+            .eq("status", "pending")
+            .maybeSingle();
+
+          if (queueItem) {
+            const currentPayload = asRecord(queueItem.context_payload);
+            const nextPayload = {
+              ...currentPayload,
+              candidate_project_id: candidateProjectId,
+              candidate_confidence: candidateConfidence,
+              ai_verdict: reviewerVerdict,
+              swarm_batch_id: batchId,
+              reviewed_at: new Date().toISOString(),
+            };
+
+            const { error: updateErr } = await db
+              .from("review_queue")
+              .update({ context_payload: nextPayload })
+              .eq("id", queueItem.id);
+
+            if (updateErr) {
+              queueError = updateErr.message;
+            } else {
+              queueUpdated = true;
+            }
+          } else {
+            queueError = "no_pending_queue_item_found";
+          }
+        }
       } catch (e: unknown) {
         writeError = e instanceof Error ? e.message : String(e || "unknown");
       }
@@ -456,12 +516,15 @@ Deno.serve(async (req: Request) => {
       reviewer_error: reviewerError,
       written,
       write_error: writeError,
+      queue_updated: queueUpdated,
+      queue_error: queueError,
     });
   }
 
   // --- Summary ---
   const totalReviewed = results.length;
   const totalWritten = results.filter((r) => r.written).length;
+  const totalUpdated = results.filter((r) => r.queue_updated).length;
   const totalErrors = results.filter((r) => r.reviewer_error).length;
   const totalDupes = results.filter((r) => r.write_error === "duplicate_skipped").length;
   const verdictCounts: Record<string, number> = {};
@@ -485,6 +548,7 @@ Deno.serve(async (req: Request) => {
       sampled: sampled.length,
       reviewed: totalReviewed,
       written: totalWritten,
+      updated_queue: totalUpdated,
       errors: totalErrors,
       duplicates_skipped: totalDupes,
       verdict_counts: verdictCounts,
