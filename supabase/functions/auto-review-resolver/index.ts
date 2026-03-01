@@ -1,5 +1,5 @@
 /**
- * auto-review-resolver Edge Function v1.1.1
+ * auto-review-resolver Edge Function v1.2.0
  * Inline auto-review resolver (no SQL migration dependency).
  *
  * Behavior:
@@ -16,7 +16,7 @@ import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
 import { authErrorResponse, requireEdgeSecret } from "../_shared/auth.ts";
 import { emitLineage } from "../_shared/lineage.ts";
 
-const VERSION = "auto-review-resolver_v1.1.1";
+const VERSION = "auto-review-resolver_v1.2.0";
 const DEFAULT_HIGH_CONF = 0.85;
 const DEFAULT_LOW_CONF = 0.20;
 const DEFAULT_LIMIT = 500;
@@ -127,18 +127,81 @@ Deno.serve(async (req: Request) => {
     }, 500);
   }
 
-  const candidates = ((rows ?? []) as ReviewQueueRow[]).map(normalizeCandidate);
-  const withConfidenceCount = candidates.filter((c) => c.candidate_confidence !== null).length;
-  const missingConfidenceCount = Math.max(candidates.length - withConfidenceCount, 0);
-  const highCandidates = candidates.filter((c) =>
-    c.candidate_confidence !== null &&
-    c.candidate_confidence >= high &&
-    c.candidate_confidence <= 1
+  const allCandidates = ((rows ?? []) as ReviewQueueRow[]).map(
+    normalizeCandidate,
   );
-  const lowCandidates = candidates.filter((c) =>
-    c.candidate_confidence !== null &&
-    c.candidate_confidence >= 0 &&
-    c.candidate_confidence < low
+
+  // ========================================
+  // SYNTHETIC INTERACTION GUARD (CLOSED-LOOP SAFETY)
+  // Synthetic interactions must NEVER mutate production priors.
+  // Resolving a synthetic interaction would write fake relationships
+  // into the affinity_ledger via upsert_affinity_feedback, corrupting
+  // the world model. Filter them out BEFORE any writes.
+  // ========================================
+  const interactionIds = [
+    ...new Set(
+      allCandidates
+        .map((c) => c.interaction_id)
+        .filter(
+          (id): id is string => typeof id === "string" && id.length > 0,
+        ),
+    ),
+  ];
+
+  const syntheticInteractionIds = new Set<string>();
+  if (interactionIds.length > 0) {
+    // Batch lookup in chunks of 200 to stay within query limits
+    for (let i = 0; i < interactionIds.length; i += 200) {
+      const chunk = interactionIds.slice(i, i + 200);
+      const { data: syntheticRows } = await db
+        .from("interactions")
+        .select("interaction_id")
+        .in("interaction_id", chunk)
+        .eq("is_synthetic", true);
+
+      if (syntheticRows) {
+        for (const row of syntheticRows) {
+          syntheticInteractionIds.add(row.interaction_id);
+        }
+      }
+    }
+  }
+
+  const syntheticSkipped = allCandidates.filter(
+    (c) =>
+      c.interaction_id && syntheticInteractionIds.has(c.interaction_id),
+  ).length;
+
+  if (syntheticSkipped > 0) {
+    console.warn(
+      `[auto-review-resolver] BLOCKED ${syntheticSkipped} synthetic interaction(s) from prior mutation`,
+    );
+  }
+
+  const candidates = allCandidates.filter(
+    (c) =>
+      !c.interaction_id ||
+      !syntheticInteractionIds.has(c.interaction_id),
+  );
+
+  const withConfidenceCount = candidates.filter(
+    (c) => c.candidate_confidence !== null,
+  ).length;
+  const missingConfidenceCount = Math.max(
+    candidates.length - withConfidenceCount,
+    0,
+  );
+  const highCandidates = candidates.filter(
+    (c) =>
+      c.candidate_confidence !== null &&
+      c.candidate_confidence >= high &&
+      c.candidate_confidence <= 1,
+  );
+  const lowCandidates = candidates.filter(
+    (c) =>
+      c.candidate_confidence !== null &&
+      c.candidate_confidence >= 0 &&
+      c.candidate_confidence < low,
   );
   const middleCandidates = Math.max(
     candidates.length - highCandidates.length - lowCandidates.length,
@@ -155,6 +218,7 @@ Deno.serve(async (req: Request) => {
         ok: true,
         dry_run: true,
         scanned: candidates.length,
+        synthetic_skipped: syntheticSkipped,
         bands: {
           high_auto_resolve_candidates: highCandidates.length,
           low_auto_dismiss_candidates: lowCandidates.length,
@@ -206,6 +270,7 @@ Deno.serve(async (req: Request) => {
       params: { dry_run: dryRun, high, low, limit, actor },
       result: {
         scanned: candidates.length,
+        synthetic_skipped: syntheticSkipped,
         bands: {
           high_auto_resolve_candidates: highCandidates.length,
           low_auto_dismiss_candidates: lowCandidates.length,
@@ -247,6 +312,7 @@ Deno.serve(async (req: Request) => {
       ok: true,
       dry_run: false,
       scanned: candidates.length,
+      synthetic_skipped: syntheticSkipped,
       bands: {
         high_auto_resolve_candidates: highCandidates.length,
         low_auto_dismiss_candidates: lowCandidates.length,

@@ -1,10 +1,16 @@
 /**
- * process-call Edge Function v4.3.12
+ * process-call Edge Function v4.3.13
  * Full v3.6 pipeline in Supabase - Ported from v4.0.22 context_assembly
  *
- * @version 4.3.12
- * @date 2026-02-27
+ * @version 4.3.13
+ * @date 2026-02-28
  * @port context_assembly v4.0.22 - 6-source ranking, word boundaries, speaker stripping
+ *
+ * v4.3.13 CHANGES (synthetic guard):
+ * - Derive is_synthetic flag from payload is_synthetic, cll_SYNTH_ prefix, or source="test".
+ * - Persist is_synthetic on interactions upsert and raw_snapshot_json.
+ * - Surface is_synthetic in evidence_events metadata and response body.
+ * - Guards downstream priors from synthetic data mutation.
  *
  * v4.3.12 CHANGES (transcript rescue):
  * - Add payload_text as transcript fallback in m1() normalization.
@@ -82,7 +88,7 @@ import { fireAndForget } from "../_shared/lineage.ts";
 import { normalizePhoneForLookup } from "./phone_lookup.ts";
 import { resolveCallPartyPhones } from "./phone_direction.ts";
 
-const PROCESS_CALL_VERSION = "v4.3.12"; // adds payload_text transcript fallback + misattribution guards
+const PROCESS_CALL_VERSION = "v4.3.13"; // adds is_synthetic guard on interactions
 const GATE = { PASS: "PASS", SKIP: "SKIP", NEEDS_REVIEW: "NEEDS_REVIEW" };
 const ID_PATTERN = /^cll_[a-zA-Z0-9_]+$/;
 // 6s timeout balances segment-llm LLM latency (~2-4s p95) with Supabase 30s gateway limit
@@ -457,6 +463,7 @@ Deno.serve(async (req: Request) => {
   const iid = raw.interaction_id || raw.call_id || `unknown_${run_id}`;
   const id_gen = !raw.interaction_id && !raw.call_id;
   const is_shadow = raw.is_shadow === true || iid.startsWith("cll_SHADOW_") || provenance_source === "shadow";
+  const is_synthetic = raw.is_synthetic === true || iid.startsWith("cll_SYNTH_") || provenance_source === "test";
 
   let audit_id: number | null = null, cr_uuid: string | null = null;
   let contact_id: string | null = null, contact_name: string | null = null;
@@ -1017,6 +1024,7 @@ Deno.serve(async (req: Request) => {
         v: PROCESS_CALL_VERSION,
         source: provenance_source,
         is_shadow,
+        is_synthetic,
         gate: g.decision,
         contact_id,
         // PR-12: Store candidate info but DO NOT assign to interactions.project_id
@@ -1076,6 +1084,7 @@ Deno.serve(async (req: Request) => {
         project_attribution_confidence: project_confidence,
         transcript_chars: n.transcript?.length || 0,
         is_shadow,
+        is_synthetic,
       }, { onConflict: "interaction_id" });
 
       // Stopline 3: Fail closed on required writes — interactions row is a
@@ -1156,6 +1165,7 @@ Deno.serve(async (req: Request) => {
               candidate_project_id: project_id || null,
               candidate_count: rankedCandidates.length,
               is_shadow,
+              is_synthetic,
               created_by: "process-call",
             },
           },
@@ -1379,6 +1389,7 @@ Deno.serve(async (req: Request) => {
           reason_codes: junkFilter.reasonCodes,
           signal_summary: junkFilter.signalSummary,
         },
+        is_synthetic,
         sources_used,
         warnings,
         audit_id,
