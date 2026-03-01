@@ -288,9 +288,18 @@ for i in $(seq 0 $((SCENARIO_COUNT - 1))); do
   TRANSCRIPT=$(echo "$SCENARIO" | jq -r '.transcript')
   EXPECTED_DECISION=$(echo "$SCENARIO" | jq -r '.expected.decision')
   RESULT_FILE="$RESULTS_DIR/${SCENARIO_ID}_result.json"
+  SCENARIO_EVENT_AT=$(echo "$SCENARIO" | jq -r '.event_at_utc // empty')
 
   # Generate a synthetic interaction_id
   SYNTH_ID="cll_SYNTH_$(echo "$SCENARIO_ID" | tr '[:lower:]' '[:upper:]' | tr -cd 'A-Z0-9_' | head -c 30)"
+
+  # process-call v4.3.x gates PASS on event_at_utc/call_start_utc presence.
+  # Provide a timestamp by default so segment-call can be chained in CI.
+  if [[ -n "$SCENARIO_EVENT_AT" ]]; then
+    EVENT_AT_UTC="$SCENARIO_EVENT_AT"
+  else
+    EVENT_AT_UTC="$(date -u +"%Y-%m-%dT%H:%M:%SZ")"
+  fi
 
   echo "  Invoking process-call with interaction_id=$SYNTH_ID ..."
 
@@ -307,11 +316,14 @@ for i in $(seq 0 $((SCENARIO_COUNT - 1))); do
       --arg transcript "$TRANSCRIPT" \
       --arg contact_name "$CONTACT_NAME" \
       --arg contact_phone "$CONTACT_PHONE" \
+      --arg event_at_utc "$EVENT_AT_UTC" \
       '{
         interaction_id: $iid,
         transcript: $transcript,
         contact_name: $contact_name,
         otherPartyPhone: $contact_phone,
+        event_at_utc: $event_at_utc,
+        call_start_utc: $event_at_utc,
         source: "test",
         dry_run: false
       }')" \
