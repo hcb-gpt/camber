@@ -15,10 +15,10 @@ import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
 import { authErrorResponse, requireEdgeSecret } from "../_shared/auth.ts";
 
 const FUNCTION_SLUG = "review-swarm-runner";
-const FUNCTION_VERSION = "v0.1.0";
+const FUNCTION_VERSION = "v0.1.1";
 const JSON_HEADERS = { "Content-Type": "application/json" };
-const DEFAULT_LIMIT = 50;
-const MAX_LIMIT = 200;
+const DEFAULT_LIMIT = 5;
+const MAX_LIMIT = 5;
 const REVIEWER_TIMEOUT_MS = 30000;
 const BACKLOG_RATIO = 0.5;
 
@@ -537,6 +537,29 @@ Deno.serve(async (req: Request) => {
     calibration: results.filter((r) => r.pool === "calibration").length,
   };
 
+  // --- Emit per-run instrumentation into evidence_events ---
+  const runMs = Date.now() - t0;
+  await db.from("evidence_events").insert({
+    source_type: "runner",
+    source_id: batchId,
+    transcript_variant: null,
+    metadata: {
+      runner_version: FUNCTION_VERSION,
+      mode,
+      batch_id: batchId,
+      reviewer_model: reviewerModel || null,
+      sampled: sampled.length,
+      reviewed: totalReviewed,
+      written: totalWritten,
+      updated_queue: totalUpdated,
+      errors: totalErrors,
+      duplicates_skipped: totalDupes,
+      verdict_counts: verdictCounts,
+      pool_counts: poolCounts,
+      ms: runMs,
+    },
+  }).then(() => {}, () => {}); // fire-and-forget
+
   return new Response(
     JSON.stringify({
       ok: true,
@@ -554,7 +577,7 @@ Deno.serve(async (req: Request) => {
       verdict_counts: verdictCounts,
       pool_counts: poolCounts,
       results,
-      ms: Date.now() - t0,
+      ms: runMs,
     }),
     { status: 200, headers: JSON_HEADERS },
   );
