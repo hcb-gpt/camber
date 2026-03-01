@@ -293,7 +293,7 @@ interaction_id,span_index,expected_project,expected_decision,anchor_quote,bucket
 **Step 1: Capture baseline snapshot**
 
 ```bash
-cd /Users/chadbarlow/gh/hcb-gpt/camber-calls
+cd /Users/chadbarlow/gh/hcb-gpt/camber
 
 # Run the eval harness with --skip-reseed to capture current state
 python3 scripts/gt_evalharness_self_score_v1.py \

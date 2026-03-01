@@ -1,4 +1,4 @@
-# MANIFEST — camber-calls repo
+# MANIFEST — camber repo
 
 > **Authoritative file placement guide.** Every agent MUST consult this before
 > creating files. If your file doesn't fit a slot below, ask STRAT.
@@ -6,7 +6,7 @@
 ## Directory Index
 
 ```
-camber-calls/
+camber/
 ├── supabase/
 │   ├── functions/            # Edge Functions (the pipeline)
 │   │   ├── _shared/          #   shared utilities across functions

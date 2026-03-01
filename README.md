@@ -54,7 +54,7 @@ supabase functions deploy process-call --no-verify-jwt
 One-command simulator build guard (useful for `ship/latest` sanity checks):
 
 ```bash
-cd camber-calls-ship
+cd camber-ship
 ./scripts/xcodebuild_camberredline_guard.sh
 ```
 
@@ -65,7 +65,7 @@ The guard writes a scrubbed build log under `artifacts/xcodebuild_guard/<UTC_STA
 For DATA/DEV sessions, use:
 
 ```bash
-cd /Users/chadbarlow/gh/hcb-gpt/camber-calls
+cd /Users/chadbarlow/gh/hcb-gpt/camber
 scripts/query.sh "select now();"
 ```
 
@@ -76,7 +76,7 @@ Details: `docs/data_sql_access.md`
 For a fast join-integrity check of `project_timeline_events` (without `psql`):
 
 ```bash
-cd /Users/chadbarlow/gh/hcb-gpt/camber-calls
+cd /Users/chadbarlow/gh/hcb-gpt/camber
 scripts/timeline_quality_audit.sh --days 7 --out .temp/timeline_audit.json
 ```
 
@@ -86,7 +86,7 @@ then prints a JSON report with counts plus sample suspect rows.
 To enforce thresholds in CI or cron checks:
 
 ```bash
-cd /Users/chadbarlow/gh/hcb-gpt/camber-calls
+cd /Users/chadbarlow/gh/hcb-gpt/camber
 scripts/timeline_quality_gate.sh --days 7
 ```
 
@@ -103,7 +103,7 @@ GitHub Actions workflow: `.github/workflows/timeline-quality-gate.yml` (daily + 
 To catch duplicate migration version prefixes before `supabase db push --include-all`:
 
 ```bash
-cd /Users/chadbarlow/gh/hcb-gpt/camber-calls
+cd /Users/chadbarlow/gh/hcb-gpt/camber
 scripts/check_migration_version_collisions.sh
 ```
 
@@ -116,7 +116,7 @@ For fast troubleshooting when consolidation appears to run but `module_*` tables
 show no movement:
 
 ```bash
-cd /Users/chadbarlow/gh/hcb-gpt/camber-calls
+cd /Users/chadbarlow/gh/hcb-gpt/camber
 ./scripts/consolidation_delta_probe.sh --run-id <journal_run_uuid>
 ```
 
@@ -137,7 +137,7 @@ For fast DATA/DEV co-review of embed freshness acceptance (with a built-in
 PASS/FAIL verdict):
 
 ```bash
-cd /Users/chadbarlow/gh/hcb-gpt/camber-calls
+cd /Users/chadbarlow/gh/hcb-gpt/camber
 scripts/embed_acceptance_watch.sh --write-baseline
 scripts/embed_acceptance_watch.sh --compare
 ```
@@ -153,7 +153,7 @@ Useful flags:
 For stage-by-stage validation of `zapier-call-ingest -> process-call`:
 
 ```bash
-cd /Users/chadbarlow/gh/hcb-gpt/camber-calls
+cd /Users/chadbarlow/gh/hcb-gpt/camber
 ./scripts/sms_ingestion_restore_probe.sh --mode canonical
 ```
 

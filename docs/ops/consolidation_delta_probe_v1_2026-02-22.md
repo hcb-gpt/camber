@@ -13,7 +13,7 @@ remain unchanged.
 ## Usage
 
 ```bash
-cd /Users/chadbarlow/gh/hcb-gpt/camber-calls
+cd /Users/chadbarlow/gh/hcb-gpt/camber
 ./scripts/consolidation_delta_probe.sh --run-id <journal_run_uuid>
 ```
 

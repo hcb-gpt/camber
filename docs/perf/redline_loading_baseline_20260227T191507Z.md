@@ -16,7 +16,7 @@
 {
   "name": "redline-thread",
   "version": 31,
-  "entrypoint_path": "file:///home/runner/work/camber-calls/camber-calls/supabase/functions/redline-thread/index.ts",
+  "entrypoint_path": "file:///home/runner/work/camber/camber/supabase/functions/redline-thread/index.ts",
   "verify_jwt": false,
   "updated_at": 1772217559251
 }

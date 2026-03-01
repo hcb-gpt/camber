@@ -5,6 +5,8 @@
  * (review_queue pending) and triggers review-swarm-runner when
  * thresholds are met.
  *
+ * v1.2.1: Fix timeout accounting (no longer masks AbortError as accepted);
+ *          use service_role_key for Authorization to prevent empty-header 401s.
  * v1.2.0: Align thresholds to 2h SLA; log all skip types to evidence_events.
  * v1.1.1: Fix runner fetch timeout (fire-and-forget pattern).
  * v1.1.0: Aligned to SSOT (review_queue), skip observability.
@@ -25,14 +27,14 @@ import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
 import { authErrorResponse, requireEdgeSecret } from "../_shared/auth.ts";
 
 const FUNCTION_SLUG = "review-swarm-scheduler";
-const FUNCTION_VERSION = "v1.2.0";
+const FUNCTION_VERSION = "v1.3.1";
 const JSON_HEADERS = { "Content-Type": "application/json" };
 
 const TRIGGER_OPEN_COUNT = 150;
 const TRIGGER_OLDEST_AGE_H = 2;
 const COOLDOWN_MINUTES = 10;
 const MAX_RUNS_PER_HOUR = 6;
-const BATCH_LIMIT = 100;
+const BATCH_LIMIT = 5;
 const HIGH_VOLUME_THRESHOLD = 500;
 const RUNNER_FETCH_TIMEOUT_MS = 10_000;
 
@@ -350,6 +352,14 @@ Deno.serve(async (req: Request) => {
     const runnerUrl = `${Deno.env.get("SUPABASE_URL")}/functions/v1/review-swarm-runner`;
     const edgeSecret = Deno.env.get("EDGE_SHARED_SECRET") || "";
 
+    // Use service role key for Authorization — never forward an empty/missing
+    // cron Authorization header, which sends `Authorization: ""` through the
+    // Supabase gateway and triggers a 401 before the function runs.
+    const serviceRoleKey = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY") || "";
+    const authHeader = serviceRoleKey
+      ? `Bearer ${serviceRoleKey}`
+      : (req.headers.get("Authorization") || "");
+
     const runnerBody: JsonRecord = {
       mode: "label_only",
       limit: BATCH_LIMIT,
@@ -371,13 +381,18 @@ Deno.serve(async (req: Request) => {
       const controller = new AbortController();
       const timeoutId = setTimeout(() => controller.abort(), RUNNER_FETCH_TIMEOUT_MS);
 
+      const runnerHeaders: Record<string, string> = {
+        "Content-Type": "application/json",
+        "X-Edge-Secret": edgeSecret,
+        "X-Source": "review-swarm-scheduler",
+      };
+      if (authHeader) {
+        runnerHeaders["Authorization"] = authHeader;
+      }
+
       const resp = await fetch(runnerUrl, {
         method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-          "X-Edge-Secret": edgeSecret,
-          "X-Source": "review-swarm-scheduler",
-        },
+        headers: runnerHeaders,
         body: JSON.stringify(runnerBody),
         signal: controller.signal,
       });
@@ -403,10 +418,11 @@ Deno.serve(async (req: Request) => {
       // If runner responded OK, don't block reading the full body — it may be large.
     } catch (e: unknown) {
       if (e instanceof DOMException && e.name === "AbortError") {
-        // Timeout is OK — runner is still processing in the background.
-        runnerAccepted = true;
-        runnerError = null;
-        runnerHttpStatus = 202; // Treat as accepted
+        // Timeout — runner did NOT confirm acceptance. Track as error so the
+        // scheduler retry logic can re-trigger on next cron tick.
+        runnerAccepted = false;
+        runnerError = "runner_timeout";
+        runnerHttpStatus = 0;
       } else {
         runnerError = e instanceof Error ? e.message : String(e || "unknown");
       }

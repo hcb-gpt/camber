@@ -2,7 +2,7 @@
 
 Location:
 
-- `/Users/chadbarlow/gh/hcb-gpt/camber-calls-ship/scripts/redline-assistant-winship-harness.sh`
+- `/Users/chadbarlow/gh/hcb-gpt/camber-ship/scripts/redline-assistant-winship-harness.sh`
 
 Purpose:
 
@@ -17,7 +17,7 @@ Purpose:
 Usage:
 
 ```bash
-cd /Users/chadbarlow/gh/hcb-gpt/camber-calls-ship
+cd /Users/chadbarlow/gh/hcb-gpt/camber-ship
 ./scripts/redline-assistant-winship-harness.sh
 ```
 

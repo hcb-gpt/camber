@@ -1,8 +1,6 @@
 name: iOS Synthetics E2E Gate
 
 on:
-  schedule:
-    - cron: "0 * * * *"
   push:
     branches:
       - master
