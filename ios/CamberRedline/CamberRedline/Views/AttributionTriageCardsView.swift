@@ -443,6 +443,7 @@ private struct SwipeableTriageCard: View {
 
     @State private var offset: CGSize = .zero
     @State private var rotation: Double = 0
+    @State private var transcriptExpanded = false
 
     private let horizontalSwipeThreshold: CGFloat = 100
     private let verticalSwipeThreshold: CGFloat = 90
@@ -465,12 +466,15 @@ private struct SwipeableTriageCard: View {
                 confidenceBadge
             }
 
-            // Transcript
+            // Transcript (tap to expand/collapse)
             Text(card.transcriptSegment)
                 .font(.subheadline)
                 .foregroundStyle(.white.opacity(0.85))
-                .lineLimit(6)
+                .lineLimit(transcriptExpanded ? nil : 6)
                 .frame(maxWidth: .infinity, alignment: .leading)
+                .contentShape(Rectangle())
+                .onTapGesture { transcriptExpanded.toggle() }
+                .animation(.easeInOut(duration: 0.2), value: transcriptExpanded)
 
             Divider().background(Color.cardStroke)
 
