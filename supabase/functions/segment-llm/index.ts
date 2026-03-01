@@ -6,7 +6,8 @@
  * @date 2026-01-31
  * @purpose Segment transcripts into N spans for multi-project attribution
  *
- * Auth: X-Edge-Secret == EDGE_SHARED_SECRET (verify_jwt: false)
+ * Auth: verify_jwt=false is set in config.toml; runtime auth requires
+ *       X-Edge-Secret to match EDGE_SHARED_SECRET in the request handler.
  * Called from: segment-call only
  *
  * STOPLINES (from CLAUDE.md):
@@ -23,6 +24,11 @@ const SEGMENT_LLM_VERSION = "segment-llm_v1.5.1";
 const DEFAULT_MODEL_ID = "gpt-4o-mini";
 const DEFAULT_MAX_TOKENS = 1024;
 const DEFAULT_TEMPERATURE = 0;
+
+// Boundary search: how far (in chars) from the target offset to look for a clean split point
+const BOUNDARY_SEARCH_RADIUS = 280;
+// Quote context: chars before/after a boundary index to extract as boundary_quote
+const QUOTE_CONTEXT_CHARS = 40;
 
 // ============================================================
 // STRUCTURED LOGGING (per GPT-DEV-6 spec)
@@ -921,8 +927,8 @@ function findNaturalSplitPoint(
   const maxSplit = Math.min(maxSplitByRemaining, maxSplitBySize);
   if (minSplit >= maxSplit) return null;
 
-  const searchMin = Math.max(minSplit, target - 280);
-  const searchMax = Math.min(maxSplit, target + 280);
+  const searchMin = Math.max(minSplit, target - BOUNDARY_SEARCH_RADIUS);
+  const searchMax = Math.min(maxSplit, target + BOUNDARY_SEARCH_RADIUS);
 
   // Prefer clear conversational boundaries near the target.
   for (let i = searchMin; i <= searchMax; i++) {
@@ -963,8 +969,8 @@ function collectAnchorPositions(transcript: string, start: number, end: number):
 }
 
 function quoteAroundIndex(transcript: string, index: number): string | null {
-  const lo = Math.max(0, index - 40);
-  const hi = Math.min(transcript.length, index + 40);
+  const lo = Math.max(0, index - QUOTE_CONTEXT_CHARS);
+  const hi = Math.min(transcript.length, index + QUOTE_CONTEXT_CHARS);
   const snippet = transcript.slice(lo, hi).replace(/\s+/g, " ").trim();
   return snippet.length > 0 ? snippet.slice(0, 50) : null;
 }

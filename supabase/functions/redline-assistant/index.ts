@@ -255,6 +255,10 @@ async function fetchProjectsFallback(
       };
     }
 
+    if (projectRows.length === 0) {
+      return { payload: null, source: "projects_fallback", error: `rpc: ${rpcError}; fallback: projects_table_empty` };
+    }
+
     return {
       payload: {
         packet_version: "projects_fallback_v1",
@@ -376,7 +380,13 @@ async function fetchDirectHighlights(
     }
   } catch (err: unknown) {
     console.warn(
-      `[redline-assistant] direct highlights query failed: ${err instanceof Error ? err.message : "unknown"}`,
+      "[redline-assistant] fetchDirectHighlights failed",
+      {
+        fn: "fetchDirectHighlights",
+        projectId,
+        error: err instanceof Error ? err.message : "unknown",
+        stack: err instanceof Error ? err.stack : undefined,
+      },
     );
   }
 

@@ -1,5 +1,5 @@
 /**
- * segment-call Edge Function v2.6.3
+ * segment-call Edge Function v2.9.2
  * Multi-span producer: calls segment-llm, writes N conversation_spans, then chains each span to
  * context-assembly → ai-router.
  *
@@ -18,7 +18,7 @@
  * - Adds transcript_source to response JSON and segment_metadata.
  *
  * v2.6.1:
- * - Stopline R1 guardrail: after span generation + chain attempts, enforce coverage invariant:
+ * - Stopline R1 guardrail: after span generation + chain attempts, enforce coverage invariant —
  *   every active span must have span_attributions OR pending review_queue.
  * - Auto-backfills uncovered spans into review_queue with module='attribution' and reason_codes=['coverage_gap'].
  * - Fails closed with error_code='coverage_invariant_failed' if uncovered spans remain after backfill.
@@ -30,8 +30,7 @@
  * v2.6.3:
  * - Adds per-request run_id correlation to stopline/failure diagnostics.
  * - Stopline evidence pointer guard: before span writes, ensure source_type='call' evidence_events row
- *   exists for interaction_id with payload_ref + integrity_hash.
- * - Fails closed with error_code='call_evidence_write_failed' if evidence upsert cannot be completed.
+ *   exists. If missing, log warning but do not block (evidence can lag ingestion).
  *
  * v2.7.0:
  * - Per-span chain processing with bounded parallelism (SPAN_PARALLEL_CONCURRENCY env var, default 1).
@@ -618,6 +617,11 @@ Deno.serve(async (req: Request) => {
     }
 
     if (!hasValidEdgeSecret && !hasValidJwt) {
+      console.error(
+        `[segment-call] AUTH_FAILED run_id=${run_id} edge_secret_present=${
+          Boolean(edgeSecretHeader)
+        } auth_header_present=${Boolean(authHeader)}`,
+      );
       await logDiagnostic("AUTH_FAILED", {
         reason: "edge_secret_or_allowed_jwt_required",
         edge_secret_present: Boolean(edgeSecretHeader),
@@ -985,20 +989,21 @@ Deno.serve(async (req: Request) => {
     const supersedeActionId = crypto.randomUUID();
     let nextGeneration = 1;
 
-    if (existingSpans && existingSpans.length > 0) {
-      // Query max generation for this interaction
-      const { data: genRow } = await db
-        .from("conversation_spans")
-        .select("segment_generation")
-        .eq("interaction_id", interaction_id)
-        .order("segment_generation", { ascending: false })
-        .limit(1)
-        .maybeSingle();
+    // Query max generation for this interaction (across active + superseded)
+    // so reruns always advance generation monotonically.
+    const { data: genRow } = await db
+      .from("conversation_spans")
+      .select("segment_generation")
+      .eq("interaction_id", interaction_id)
+      .order("segment_generation", { ascending: false })
+      .limit(1)
+      .maybeSingle();
 
-      const priorMax = genRow?.segment_generation ?? 0;
-      nextGeneration = priorMax + 1;
+    const priorMax = genRow?.segment_generation ?? 0;
+    nextGeneration = priorMax + 1;
 
-      // Soft-supersede: mark active spans with timestamp + action_id for audit trail.
+    if (priorMax > 0) {
+      // Soft-supersede: mark currently active spans with timestamp + action_id for audit trail.
       const { error: supersedeErr } = await db
         .from("conversation_spans")
         .update({

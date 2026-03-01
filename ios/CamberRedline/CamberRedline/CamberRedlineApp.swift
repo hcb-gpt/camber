@@ -6,6 +6,7 @@ private enum AppSmokeAutomation {
     static let launchFlag = "--smoke-drive"
     static let triageNotification = Notification.Name("camber.smoke.runTriage")
     static let assistantNotification = Notification.Name("camber.smoke.runAssistant")
+    static let triageDoneNotification = Notification.Name("camber.smoke.triageDone")
     static let logger = Logger(subsystem: "CamberRedline", category: "smoke")
 
     static var isEnabled: Bool {
@@ -66,14 +67,20 @@ struct CamberRedlineApp: App {
                 UITabBar.appearance().scrollEdgeAppearance = appearance
             }
             .task {
-                await requestBadgePermission()
-                await contactListViewModel.loadContacts()
-                threadViewModel.updateContactSequence(contactListViewModel.contacts)
-                await threadViewModel.warmProjectPickerCache()
-                updateBadge()
-                await contactListViewModel.subscribeToNewInteractions()
-                contactListViewModel.startLiveRefresh()
-                await runSmokeDriveIfEnabled()
+                if AppSmokeAutomation.isEnabled {
+                    // Smoke mode: skip Redline bootstrapping to reach triage faster.
+                    // Contact list, cache warming, and subscriptions are not needed
+                    // for smoke drive and add 3-8s of blocking network time.
+                    await runSmokeDriveIfEnabled()
+                } else {
+                    await requestBadgePermission()
+                    await contactListViewModel.loadContacts()
+                    threadViewModel.updateContactSequence(contactListViewModel.contacts)
+                    await threadViewModel.warmProjectPickerCache()
+                    updateBadge()
+                    await contactListViewModel.subscribeToNewInteractions()
+                    contactListViewModel.startLiveRefresh()
+                }
             }
             .onChange(of: scenePhase) { _, newPhase in
                 if newPhase == .active {
@@ -114,24 +121,46 @@ struct CamberRedlineApp: App {
 
         AppSmokeAutomation.logger.log("SMOKE_EVENT START")
 
-        try? await Task.sleep(for: .seconds(2))
+        // Short settle delay for initial render
+        try? await Task.sleep(for: .seconds(1))
+
+        // --- Triage phase ---
         selectedTab = 1
         AppSmokeAutomation.logger.log("SMOKE_EVENT OPEN_TRIAGE")
-        try? await Task.sleep(for: .milliseconds(1200))
+        // Give the triage view time to mount and start its queue load
+        try? await Task.sleep(for: .milliseconds(800))
         NotificationCenter.default.post(name: AppSmokeAutomation.triageNotification, object: nil)
 
-        try? await Task.sleep(for: .seconds(8))
+        // Wait for triage to signal completion (up to 30s timeout)
+        await waitForNotification(AppSmokeAutomation.triageDoneNotification, timeout: 30)
+        AppSmokeAutomation.logger.log("SMOKE_EVENT TRIAGE_PHASE_COMPLETE")
+        try? await Task.sleep(for: .milliseconds(500))
+
+        // --- Assistant phase ---
         selectedTab = 2
         AppSmokeAutomation.logger.log("SMOKE_EVENT OPEN_ASSISTANT")
-        try? await Task.sleep(for: .milliseconds(1200))
+        try? await Task.sleep(for: .milliseconds(800))
         NotificationCenter.default.post(name: AppSmokeAutomation.assistantNotification, object: nil)
 
-        // Keep the assistant tab visible long enough for:
-        // - assistant-context fetch
-        // - 3 smoke prompts
-        // - screenshots from the simulator harness
+        // Keep assistant visible for prompts + screenshots
         try? await Task.sleep(for: .seconds(18))
         selectedTab = 0
         AppSmokeAutomation.logger.log("SMOKE_EVENT END")
+    }
+
+    @MainActor
+    private func waitForNotification(_ name: Notification.Name, timeout: TimeInterval) async {
+        await withTaskGroup(of: Void.self) { group in
+            group.addTask {
+                for await _ in NotificationCenter.default.notifications(named: name) {
+                    return
+                }
+            }
+            group.addTask {
+                try? await Task.sleep(for: .seconds(timeout))
+            }
+            await group.next()
+            group.cancelAll()
+        }
     }
 }

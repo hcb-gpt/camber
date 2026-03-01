@@ -9,6 +9,27 @@
 #   ./scripts/score_module.sh attribution cll_06DSX0CVZHZK72VCVW54EH9G3C
 #   ./scripts/score_module.sh project 7db5e186-7dda-4c2c-b85e-7235b67e06d8
 
+print_help() {
+  cat <<'EOF'
+Usage: ./scripts/score_module.sh <module> <entity_id> [--help|-h]
+
+Score any module/entity combination via Supabase RPC.
+Examples:
+  ./scripts/score_module.sh attribution cll_06DSX0CVZHZK72VCVW54EH9G3C
+  ./scripts/score_module.sh project 7db5e186-7dda-4c2c-b85e-7235b67e06d8
+EOF
+}
+
+if [[ "${1:-}" == "--help" || "${1:-}" == "-h" ]]; then
+  print_help
+  exit 0
+fi
+
+if [[ $# -lt 2 ]]; then
+  print_help >&2
+  exit 2
+fi
+
 set -euo pipefail
 
 # Load credentials from canonical source
@@ -34,8 +55,8 @@ for var in SUPABASE_URL SUPABASE_SERVICE_ROLE_KEY; do
   fi
 done
 
-MODULE="${1:?Usage: score_module.sh <module> <entity_id>}"
-ENTITY_ID="${2:?Usage: score_module.sh <module> <entity_id>}"
+MODULE="$1"
+ENTITY_ID="$2"
 
 # Route to appropriate RPC based on module
 case "$MODULE" in

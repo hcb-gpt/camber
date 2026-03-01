@@ -348,7 +348,7 @@ Deno.serve(async (req: Request) => {
         const { error: updateErr } = await db
           .from("journal_open_loops")
           .update({
-            status: "done",
+            status: "closed",
             closed_at: new Date().toISOString(),
             closed_by_call_id: interaction_id,
             closure_evidence: match.evidence,

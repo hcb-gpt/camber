@@ -80,8 +80,9 @@ if [[ -f "${HOME}/.camber/credentials.env" ]]; then
 fi
 
 if [[ -f "${ROOT_DIR}/scripts/load-env.sh" ]]; then
-  # shellcheck disable=SC1091
+  # Source with nounset disabled because load-env.sh uses unguarded vars.
   set +u
+  # shellcheck disable=SC1091
   source "${ROOT_DIR}/scripts/load-env.sh" >/dev/null 2>&1 || true
   set -u
 fi
@@ -110,6 +111,8 @@ fi
 
 mkdir -p "${SYNTH_OUT_DIR}" "${POLL_OUT_DIR}"
 
+RUN_TS="$(date +%s)"
+
 scenario_id_to_interaction_id() {
   local scenario_id="$1"
   local normalized
@@ -117,9 +120,9 @@ scenario_id_to_interaction_id() {
     echo "${scenario_id}" \
       | tr '[:lower:]' '[:upper:]' \
       | tr -cd 'A-Z0-9_' \
-      | cut -c 1-30
+      | cut -c 1-20
   )"
-  echo "cll_SYNTH_${normalized}"
+  echo "cll_SYNTH_${normalized}_${RUN_TS}"
 }
 
 scenario_ids=()
@@ -148,7 +151,7 @@ for sid in "${scenario_ids[@]}"; do
 
   echo "[e2e] run_synthetics scenario=${sid} interaction_id=${iid}"
   set +e
-  bash "${SYNTHETICS_SCRIPT}" --scenario "${sid}" > "${out_file}" 2>&1
+  bash "${SYNTHETICS_SCRIPT}" --scenario "${sid}" --timestamp "${RUN_TS}" > "${out_file}" 2>&1
   rc=$?
   set -e
 
