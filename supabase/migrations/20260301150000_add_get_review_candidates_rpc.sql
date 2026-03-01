@@ -1,5 +1,7 @@
 -- Fix: Add get_review_candidates RPC to filter out superseded spans from review swarm.
 -- This ensures the runner only processes active spans, matching the SLA monitor.
+-- v2: Fixed sa.created_at → sa.attributed_at (span_attributions has no created_at column).
+--     Added confidence::float8 cast for numeric→float8 return type match.
 
 BEGIN;
 
@@ -22,14 +24,14 @@ BEGIN
   IF p_pool = 'backlog' THEN
     RETURN QUERY
     SELECT
-      sa.id, 
-      sa.span_id, 
-      sa.project_id, 
-      sa.applied_project_id, 
+      sa.id,
+      sa.span_id,
+      sa.project_id,
+      sa.applied_project_id,
       sa.decision,
-      sa.confidence, 
-      sa.evidence_tier, 
-      sa.attribution_source, 
+      sa.confidence::float8,
+      sa.evidence_tier,
+      sa.attribution_source,
       sa.needs_review,
       jsonb_build_object(
         'id', cs.id,
@@ -43,19 +45,19 @@ BEGIN
     JOIN public.conversation_spans cs ON cs.id = sa.span_id
     WHERE sa.needs_review = true
       AND cs.is_superseded = false
-    ORDER BY sa.created_at DESC -- Prioritize newest backlog
+    ORDER BY sa.attributed_at DESC NULLS LAST
     LIMIT p_limit;
   ELSIF p_pool = 'calibration' THEN
     RETURN QUERY
     SELECT
-      sa.id, 
-      sa.span_id, 
-      sa.project_id, 
-      sa.applied_project_id, 
+      sa.id,
+      sa.span_id,
+      sa.project_id,
+      sa.applied_project_id,
       sa.decision,
-      sa.confidence, 
-      sa.evidence_tier, 
-      sa.attribution_source, 
+      sa.confidence::float8,
+      sa.evidence_tier,
+      sa.attribution_source,
       sa.needs_review,
       jsonb_build_object(
         'id', cs.id,
@@ -71,7 +73,7 @@ BEGIN
       AND sa.confidence >= 0.55
       AND sa.confidence <= 0.85
       AND cs.is_superseded = false
-    ORDER BY sa.created_at DESC
+    ORDER BY sa.attributed_at DESC NULLS LAST
     LIMIT p_limit;
   END IF;
 END;
