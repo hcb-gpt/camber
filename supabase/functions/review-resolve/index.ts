@@ -139,8 +139,7 @@ Deno.serve(async (req: Request) => {
         );
         return jsonResponse(
           {
-            error:
-              "ABORT: Cannot mutate priors from synthetic interaction",
+            error: "ABORT: Cannot mutate priors from synthetic interaction",
             interaction_id: queueRow.interaction_id,
             is_synthetic: true,
             review_queue_id,

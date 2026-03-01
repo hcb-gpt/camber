@@ -174,8 +174,7 @@ function scoreEntry(
 
   // Check for failed_to_split:
   // Expected NEEDS_SPLIT with expected_span_count > 1, but pipeline made <= 1 span
-  const failedToSplit =
-    gt.expected_taxonomy_state === "NEEDS_SPLIT" &&
+  const failedToSplit = gt.expected_taxonomy_state === "NEEDS_SPLIT" &&
     (gt.expected_span_count ?? 0) > 1 &&
     spans.length <= 1;
 
@@ -338,7 +337,9 @@ Deno.serve(async (req: Request) => {
     // ========================================
     let gtQuery = db
       .from("synthetic_ground_truth")
-      .select("id, interaction_id, run_id, expected_taxonomy_state, expected_project_ids, expected_span_count, difficulty, scenario_type")
+      .select(
+        "id, interaction_id, run_id, expected_taxonomy_state, expected_project_ids, expected_span_count, difficulty, scenario_type",
+      )
       .order("created_at", { ascending: true })
       .limit(limit);
 
@@ -523,7 +524,10 @@ Deno.serve(async (req: Request) => {
         f1_score: metrics.f1_score,
         mean_confidence: meanConfidence,
         mean_epistemic_entropy: null,
-        notes: `Scored ${processedInteractions.size} interactions, ${allDetails.length} span-level verdicts. run_id filter: ${run_id ?? "none"}`,
+        notes:
+          `Scored ${processedInteractions.size} interactions, ${allDetails.length} span-level verdicts. run_id filter: ${
+            run_id ?? "none"
+          }`,
       })
       .select("id")
       .single();
@@ -560,7 +564,9 @@ Deno.serve(async (req: Request) => {
         .insert(chunk);
 
       if (detailErr) {
-        throw new Error(`db_insert_loop_run_details (batch ${Math.floor(i / DETAIL_CHUNK_SIZE)}): ${detailErr.message}`);
+        throw new Error(
+          `db_insert_loop_run_details (batch ${Math.floor(i / DETAIL_CHUNK_SIZE)}): ${detailErr.message}`,
+        );
       }
       detailsInserted += chunk.length;
     }

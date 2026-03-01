@@ -168,8 +168,7 @@ Deno.serve(async (req: Request) => {
   }
 
   const syntheticSkipped = allCandidates.filter(
-    (c) =>
-      c.interaction_id && syntheticInteractionIds.has(c.interaction_id),
+    (c) => c.interaction_id && syntheticInteractionIds.has(c.interaction_id),
   ).length;
 
   if (syntheticSkipped > 0) {
