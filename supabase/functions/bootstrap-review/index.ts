@@ -251,9 +251,7 @@ async function handleQueue(
       freshness_cutoff_utc: cutoffIso,
       freshness_filtered_out: totalPending || 0,
       meta: {
-        reason: (totalPending || 0) > 0
-          ? "no_cards_within_freshness_window"
-          : "no_pending_items",
+        reason: (totalPending || 0) > 0 ? "no_cards_within_freshness_window" : "no_pending_items",
       },
       function_version: FUNCTION_VERSION,
       ms: Date.now() - t0,
