@@ -344,7 +344,7 @@ Deno.serve(async (req: Request) => {
       zapier_meta: zapierMeta,
       auth_mode: canonicalValid ? "canonical_x_edge_secret" : "legacy_x_secret",
       process_call_status: processCallResponse.status,
-      warnings: ingestWarnings,
+      warnings: ingestWarnings, debug_anon_len: Deno.env.get("SUPABASE_ANON_KEY")?.length || 0,
       ms: Date.now() - t0,
     },
   };
