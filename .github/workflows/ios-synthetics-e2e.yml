@@ -5,6 +5,7 @@ on:
     - cron: "0 * * * *"
   push:
     branches:
+      - master
       - main
     paths:
       - "scripts/ios_synthetics_e2e_gate.sh"
