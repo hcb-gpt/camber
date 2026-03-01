@@ -1833,7 +1833,11 @@ Deno.serve(async (req: Request) => {
       : [];
     world_model_references = WORLD_MODEL_FACTS_ENABLED ? parseWorldModelReferences(parsed.world_model_references) : [];
 
-    let decision = parsed.decision as "assign" | "review" | "none";
+    const rawDecision = String(parsed.decision || "").trim().toLowerCase();
+    let decision: "assign" | "review" | "none" = "review";
+    if (rawDecision === "assign") decision = "assign";
+    if (rawDecision === "none") decision = "none";
+
     let reasoning = parsed.reasoning || "No reasoning provided";
     const spanTranscript = inferenceResult.transcriptText;
     const { valid: hasValidAnchor, validatedAnchors, rejectedStaffAnchors } = validateAnchorQuotes(
