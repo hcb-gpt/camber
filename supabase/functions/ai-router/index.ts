@@ -210,9 +210,15 @@ async function loadThresholdsFromConfig(): Promise<void> {
     }
     if (map.router_auto_assign_threshold !== undefined) THRESHOLD_AUTO_ASSIGN = map.router_auto_assign_threshold;
     if (map.router_review_threshold !== undefined) THRESHOLD_REVIEW = map.router_review_threshold;
-    if (map.router_safe_low_assign_threshold !== undefined) THRESHOLD_SAFE_LOW_ASSIGN = map.router_safe_low_assign_threshold;
-    if (map.router_high_confidence_gap_assign !== undefined) THRESHOLD_HIGH_CONFIDENCE_GAP_ASSIGN = map.router_high_confidence_gap_assign;
-    if (map.router_weak_review_confidence !== undefined) THRESHOLD_WEAK_REVIEW_CONFIDENCE = map.router_weak_review_confidence;
+    if (map.router_safe_low_assign_threshold !== undefined) {
+      THRESHOLD_SAFE_LOW_ASSIGN = map.router_safe_low_assign_threshold;
+    }
+    if (map.router_high_confidence_gap_assign !== undefined) {
+      THRESHOLD_HIGH_CONFIDENCE_GAP_ASSIGN = map.router_high_confidence_gap_assign;
+    }
+    if (map.router_weak_review_confidence !== undefined) {
+      THRESHOLD_WEAK_REVIEW_CONFIDENCE = map.router_weak_review_confidence;
+    }
     if (map.router_weak_review_crossref !== undefined) THRESHOLD_WEAK_REVIEW_CROSSREF = map.router_weak_review_crossref;
     _thresholdsLoaded = true;
   } catch (e) {
