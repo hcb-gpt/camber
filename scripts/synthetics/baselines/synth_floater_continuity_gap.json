@@ -1,0 +1,16 @@
+{
+  "scenario_id": "synth_floater_continuity_gap",
+  "expected_decision": "review",
+  "expected_must_not_be": ["none"],
+  "expected_guardrails": [],
+  "baseline_snapshot": {
+    "decision": "review",
+    "confidence_range": [0.0, 0.80],
+    "candidates_snapshot_min_length": 2,
+    "guardrail_flags": {
+      "floater_continuity_tier": "TIER_3",
+      "gap_minutes_above": 240,
+      "floater_requires_tier1": true
+    }
+  }
+}

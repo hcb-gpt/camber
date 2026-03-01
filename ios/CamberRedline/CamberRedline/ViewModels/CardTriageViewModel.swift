@@ -1,5 +1,15 @@
 import Foundation
 import Observation
+import os
+
+private enum CardTriageSmokeAutomation {
+    static let launchFlag = "--smoke-drive"
+    static let logger = Logger(subsystem: "CamberRedline", category: "smoke")
+
+    static var isEnabled: Bool {
+        ProcessInfo.processInfo.arguments.contains(launchFlag)
+    }
+}
 
 /// A single triage card: one review_queue item enriched with display metadata.
 struct CardItem: Identifiable {
@@ -102,7 +112,13 @@ final class CardTriageViewModel {
         startUndoTimer()
 
         do {
-            _ = try await service.resolve(queueId: card.queueId, projectId: projectId, notes: notes)
+            let response = try await service.resolve(queueId: card.queueId, projectId: projectId, notes: notes)
+            if CardTriageSmokeAutomation.isEnabled {
+                let requestId = response.requestId ?? "missing"
+                CardTriageSmokeAutomation.logger.log(
+                    "SMOKE_EVENT TRIAGE_ACTION kind=resolve queue=\(card.queueId, privacy: .public) interaction=\(card.interactionId, privacy: .public) request_id=\(requestId, privacy: .public)"
+                )
+            }
         } catch {
             self.error = error.localizedDescription
             // Re-insert card on failure
@@ -139,7 +155,13 @@ final class CardTriageViewModel {
         startUndoTimer()
 
         do {
-            try await service.dismiss(queueId: card.queueId, reason: reason, notes: notes)
+            let response = try await service.dismiss(queueId: card.queueId, reason: reason, notes: notes)
+            if CardTriageSmokeAutomation.isEnabled {
+                let requestId = response.requestId ?? "missing"
+                CardTriageSmokeAutomation.logger.log(
+                    "SMOKE_EVENT TRIAGE_ACTION kind=dismiss queue=\(card.queueId, privacy: .public) interaction=\(card.interactionId, privacy: .public) request_id=\(requestId, privacy: .public)"
+                )
+            }
         } catch {
             self.error = error.localizedDescription
             queue.insert(

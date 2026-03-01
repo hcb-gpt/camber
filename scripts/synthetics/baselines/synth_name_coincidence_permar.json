@@ -1,0 +1,18 @@
+{
+  "scenario_id": "synth_name_coincidence_permar",
+  "expected_decision": "review",
+  "expected_must_not_be": ["assign"],
+  "expected_guardrails": ["name_content_guardrail"],
+  "baseline_snapshot": {
+    "decision": "review",
+    "confidence_range": [0.0, 0.70],
+    "project_id_must_not_be": "00000000-0000-0000-0000-000000000201",
+    "candidates_snapshot_min_length": 2,
+    "guardrail_flags": {
+      "name_content_guardrail_applied": true,
+      "chosen_crossref_below": 0.10,
+      "rival_crossref_above": 0.30,
+      "rival_project_id": "00000000-0000-0000-0000-000000000202"
+    }
+  }
+}
