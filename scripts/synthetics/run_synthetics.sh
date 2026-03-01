@@ -24,6 +24,8 @@ RESULTS_DIR="$SCRIPT_DIR/results"
 DRY_RUN=false
 SINGLE_SCENARIO=""
 VERBOSE=false
+RUN_TAG="${SYNTH_RUN_TAG:-$(date -u +%Y%m%dT%H%M%S)_$RANDOM}"
+RUN_TAG="$(echo "$RUN_TAG" | tr '[:lower:]' '[:upper:]' | tr -cd 'A-Z0-9')"
 
 # ── Parse args ─────────────────────────────────────────────────
 while [[ $# -gt 0 ]]; do
@@ -82,6 +84,7 @@ echo "╔═══════════════════════�
 echo "║  CAMBER Synthetic Test Pack                                 ║"
 echo "║  Scenarios: $SCENARIO_COUNT                                            ║"
 echo "║  Mode: $(if $DRY_RUN; then echo "DRY-RUN (validation only)    "; else echo "LIVE (pipeline invocation)   "; fi)             ║"
+echo "║  Run tag: $RUN_TAG                                      ║"
 echo "╚══════════════════════════════════════════════════════════════╝"
 echo ""
 
@@ -289,14 +292,18 @@ for i in $(seq 0 $((SCENARIO_COUNT - 1))); do
   EXPECTED_DECISION=$(echo "$SCENARIO" | jq -r '.expected.decision')
   RESULT_FILE="$RESULTS_DIR/${SCENARIO_ID}_result.json"
 
-  # Generate a synthetic interaction_id
-  SYNTH_ID="cll_SYNTH_$(echo "$SCENARIO_ID" | tr '[:lower:]' '[:upper:]' | tr -cd 'A-Z0-9_' | head -c 30)"
+  # Generate a synthetic interaction_id unique to this run.
+  # Fixed IDs trigger process-call duplicate short-circuit ("decision=SKIP reason=duplicate"),
+  # which prevents segment-call and yields null attribution proofs.
+  SYNTH_ID_BASE="$(echo "$SCENARIO_ID" | tr '[:lower:]' '[:upper:]' | tr -cd 'A-Z0-9_' | head -c 18)"
+  SYNTH_ID="cll_SYNTH_${RUN_TAG}_${SYNTH_ID_BASE}"
 
   echo "  Invoking process-call with interaction_id=$SYNTH_ID ..."
 
   # Call process-call with synthetic payload
   CONTACT_NAME=$(echo "$SCENARIO" | jq -r '.contact.contact_name // "Synthetic Caller"')
   CONTACT_PHONE=$(echo "$SCENARIO" | jq -r '.contact.phone // "+15555550000"')
+  EVENT_AT_UTC="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
 
   HTTP_CODE=$(curl -s -o "$RESULT_FILE.raw" -w "%{http_code}" \
     -X POST "${BASE_URL}/process-call" \
@@ -307,9 +314,15 @@ for i in $(seq 0 $((SCENARIO_COUNT - 1))); do
       --arg transcript "$TRANSCRIPT" \
       --arg contact_name "$CONTACT_NAME" \
       --arg contact_phone "$CONTACT_PHONE" \
+      --arg event_at_utc "$EVENT_AT_UTC" \
       '{
         interaction_id: $iid,
         transcript: $transcript,
+        event_at_utc: $event_at_utc,
+        eventAtUtc: $event_at_utc,
+        direction: "inbound",
+        ownerPhone: "+17065550000",
+        ownerName: "Synthetic Owner",
         contact_name: $contact_name,
         otherPartyPhone: $contact_phone,
         source: "test",

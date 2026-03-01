@@ -985,20 +985,21 @@ Deno.serve(async (req: Request) => {
     const supersedeActionId = crypto.randomUUID();
     let nextGeneration = 1;
 
-    if (existingSpans && existingSpans.length > 0) {
-      // Query max generation for this interaction
-      const { data: genRow } = await db
-        .from("conversation_spans")
-        .select("segment_generation")
-        .eq("interaction_id", interaction_id)
-        .order("segment_generation", { ascending: false })
-        .limit(1)
-        .maybeSingle();
+    // Query max generation for this interaction (across active + superseded)
+    // so reruns always advance generation monotonically.
+    const { data: genRow } = await db
+      .from("conversation_spans")
+      .select("segment_generation")
+      .eq("interaction_id", interaction_id)
+      .order("segment_generation", { ascending: false })
+      .limit(1)
+      .maybeSingle();
 
-      const priorMax = genRow?.segment_generation ?? 0;
-      nextGeneration = priorMax + 1;
+    const priorMax = genRow?.segment_generation ?? 0;
+    nextGeneration = priorMax + 1;
 
-      // Soft-supersede: mark active spans with timestamp + action_id for audit trail.
+    if (priorMax > 0) {
+      // Soft-supersede: mark currently active spans with timestamp + action_id for audit trail.
       const { error: supersedeErr } = await db
         .from("conversation_spans")
         .update({
