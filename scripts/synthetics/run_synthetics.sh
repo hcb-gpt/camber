@@ -205,6 +205,120 @@ snapshot_diff() {
   return 0
 }
 
+# ── Helper: write_ground_truth ────────────────────────────────
+# Upserts expected outcomes to synthetic_ground_truth via Supabase REST.
+# Called BEFORE pipeline invocation so ground truth exists even if the
+# pipeline call fails (ground truth = expected, not actual).
+write_ground_truth() {
+  local synth_id="$1"
+  local scenario_json="$2"
+
+  local scenario_id expected_decision confidence_max confidence_min
+  local must_not_be_json invariants_json guardrails_json
+  local assigned_project_id contact_id project_ids_json
+  local difficulty scenario_type notes
+
+  scenario_id=$(echo "$scenario_json" | jq -r '.scenario_id')
+  expected_decision=$(echo "$scenario_json" | jq -r '.expected.decision // empty')
+  confidence_max=$(echo "$scenario_json" | jq -r '.expected.confidence_max // empty')
+  confidence_min=$(echo "$scenario_json" | jq -r '.expected.confidence_min // empty')
+  assigned_project_id=$(echo "$scenario_json" | jq -r '.expected.assigned_project_id // empty')
+  contact_id=$(echo "$scenario_json" | jq -r '.contact.contact_id // empty')
+  notes=$(echo "$scenario_json" | jq -r '.expected.notes // empty')
+
+  # Build text[] arrays as Postgres array literals
+  must_not_be_json=$(echo "$scenario_json" | jq -c '.expected.must_not_be // []')
+  invariants_json=$(echo "$scenario_json" | jq -c '.expected.invariants // []')
+  guardrails_json=$(echo "$scenario_json" | jq -c '.expected.guardrails_that_should_fire // []')
+  project_ids_json=$(echo "$scenario_json" | jq -c '[.candidates[].project_id] // []')
+
+  # Classify difficulty from scenario structure
+  local candidate_count guardrail_count
+  candidate_count=$(echo "$scenario_json" | jq '.candidates | length')
+  guardrail_count=$(echo "$scenario_json" | jq '.expected.guardrails_that_should_fire | length')
+  if [[ "$expected_decision" == "assign" && "$guardrail_count" -eq 0 ]]; then
+    difficulty="easy"
+  elif [[ "$guardrail_count" -gt 0 && "$candidate_count" -gt 1 ]]; then
+    difficulty="hard"
+  else
+    difficulty="medium"
+  fi
+
+  # Classify scenario_type from invariants
+  if echo "$invariants_json" | grep -q "stopline"; then
+    scenario_type="guardrail_stopline"
+  elif echo "$invariants_json" | grep -q "name_content"; then
+    scenario_type="guardrail_name_coincidence"
+  elif echo "$invariants_json" | grep -q "common_alias"; then
+    scenario_type="guardrail_alias"
+  elif echo "$invariants_json" | grep -q "homeowner"; then
+    scenario_type="deterministic_homeowner"
+  elif echo "$invariants_json" | grep -q "floater\|continuity"; then
+    scenario_type="continuity_evidence"
+  else
+    scenario_type="unknown"
+  fi
+
+  # Build the payload — Supabase REST upsert
+  local payload
+  payload=$(jq -n \
+    --arg interaction_id "$synth_id" \
+    --arg scenario_id "$scenario_id" \
+    --arg expected_decision "$expected_decision" \
+    --arg expected_taxonomy_state "SINGLE_PROJECT" \
+    --arg difficulty "$difficulty" \
+    --arg scenario_type "$scenario_type" \
+    --arg notes "$notes" \
+    --argjson must_not_be "$must_not_be_json" \
+    --argjson invariants "$invariants_json" \
+    --argjson guardrails_expected "$guardrails_json" \
+    --argjson expected_project_ids "$project_ids_json" \
+    '{
+      interaction_id: $interaction_id,
+      scenario_id: $scenario_id,
+      expected_decision: $expected_decision,
+      expected_taxonomy_state: $expected_taxonomy_state,
+      must_not_be: $must_not_be,
+      invariants: $invariants,
+      guardrails_expected: $guardrails_expected,
+      expected_project_ids: $expected_project_ids,
+      difficulty: $difficulty,
+      scenario_type: $scenario_type,
+      notes: $notes
+    }')
+
+  # Add optional numeric/uuid fields only if non-empty
+  if [[ -n "$confidence_max" ]]; then
+    payload=$(echo "$payload" | jq --argjson v "$confidence_max" '. + {expected_confidence_max: $v}')
+  fi
+  if [[ -n "$confidence_min" ]]; then
+    payload=$(echo "$payload" | jq --argjson v "$confidence_min" '. + {expected_confidence_min: $v}')
+  fi
+  if [[ -n "$assigned_project_id" ]]; then
+    payload=$(echo "$payload" | jq --arg v "$assigned_project_id" '. + {expected_assigned_project_id: $v}')
+  fi
+  if [[ -n "$contact_id" ]]; then
+    payload=$(echo "$payload" | jq --arg v "$contact_id" '. + {expected_contact_id: $v}')
+  fi
+
+  # Upsert via Supabase REST (on_conflict=interaction_id → no-op on duplicate)
+  local gt_http
+  gt_http=$(curl -s -o /dev/null -w "%{http_code}" \
+    -X POST "${SUPABASE_URL}/rest/v1/synthetic_ground_truth?on_conflict=interaction_id" \
+    -H "apikey: ${SUPABASE_SERVICE_ROLE_KEY}" \
+    -H "Authorization: Bearer ${SUPABASE_SERVICE_ROLE_KEY}" \
+    -H "Content-Type: application/json" \
+    -H "Prefer: resolution=merge-duplicates" \
+    -d "$payload" \
+    2>/dev/null || echo "000")
+
+  if [[ "$gt_http" -ge 200 ]] && [[ "$gt_http" -lt 300 ]]; then
+    echo "  📝 Ground truth recorded (HTTP $gt_http)"
+  else
+    echo "  ⚠️  Ground truth write failed (HTTP $gt_http) — continuing"
+  fi
+}
+
 # ── Main loop ──────────────────────────────────────────────────
 for i in $(seq 0 $((SCENARIO_COUNT - 1))); do
   SCENARIO=$(jq ".[$i]" "$SCENARIOS_FILE")
@@ -304,6 +418,9 @@ for i in $(seq 0 $((SCENARIO_COUNT - 1))); do
   NORMALIZED_SID=$(echo "${SCENARIO_ID}" | tr '[:lower:]' '[:upper:]' | tr -cd 'A-Z0-9_' | cut -c 1-20)
   SYNTH_ID="cll_SYNTH_${NORMALIZED_SID}_${RUN_TAG}"
   RUN_INTERACTION_IDS+=("$SYNTH_ID")
+
+  # Record ground truth BEFORE pipeline invocation
+  write_ground_truth "$SYNTH_ID" "$SCENARIO"
 
   echo "  Invoking process-call with interaction_id=$SYNTH_ID ..."
 
@@ -535,7 +652,11 @@ echo "  RESULTS: $PASS passed, $FAIL failed, $SKIP skipped"
 echo "══════════════════════════════════════════════════════════════"
 
 # Output the interaction IDs created so the gate script can find them
-echo "INTERACTION_IDS=$(IFS=,; echo "${RUN_INTERACTION_IDS[*]}")"
+if [[ ${#RUN_INTERACTION_IDS[@]} -gt 0 ]]; then
+  echo "INTERACTION_IDS=$(IFS=,; echo "${RUN_INTERACTION_IDS[*]}")"
+else
+  echo "INTERACTION_IDS="
+fi
 
 if [[ $FAIL -gt 0 ]]; then
   exit 1
