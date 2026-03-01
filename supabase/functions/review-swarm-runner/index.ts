@@ -193,18 +193,8 @@ Deno.serve(async (req: Request) => {
   const fetchLimit = 1000;
 
   const [backlogResp, calibResp] = await Promise.all([
-    db
-      .from("span_attributions")
-      .select(saSelectCols)
-      .eq("needs_review", true)
-      .limit(fetchLimit),
-    db
-      .from("span_attributions")
-      .select(saSelectCols)
-      .eq("needs_review", false)
-      .gte("confidence", 0.55)
-      .lte("confidence", 0.85)
-      .limit(fetchLimit),
+    db.rpc("get_review_candidates", { p_pool: "backlog", p_limit: fetchLimit }),
+    db.rpc("get_review_candidates", { p_pool: "calibration", p_limit: fetchLimit }),
   ]);
 
   if (backlogResp.error || calibResp.error) {
