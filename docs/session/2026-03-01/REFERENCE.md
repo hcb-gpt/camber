@@ -43,3 +43,7 @@ See `science/targeted_response_to_required_recon_for_gemini31.md`.
 ## Added from Gemini correspondence (Archive.zip)
 
 See `inputs/gemini_downloads_20260301/README_gemini_downloads_20260301.md` for an index of the Gemini correspondence downloads added on 2026-03-01.
+
+## Raw provenance archives
+
+- `inputs/raw/gemini 3.1 research trail.zip` (sha256 `4661d82b452be73f2aae9c77d0c71f3aff09caa829bd8b761ed3a4322d741c16`)
