@@ -73,11 +73,20 @@ if ! wait_for_simctl; then
   exit 1
 fi
 
-DEVICE_UDID="$(simctl list devices | awk -F '[()]' '/Booted/{print $2; exit}')"
+# Prefer a booted iPhone (not iPad/other), else pick a recent iPhone model.
+DEVICE_UDID="$(simctl list devices | awk -F '[()]' '/Booted/ && /iPhone/{print $2; exit}')"
 if [[ -z "${DEVICE_UDID}" ]]; then
-  DEVICE_UDID="$(simctl list devices available | awk -F '[()]' '/iPhone 16/{print $2; exit}')"
+  for model in 17 16 15; do
+    DEVICE_UDID="$(simctl list devices available | awk -F '[()]' "/iPhone ${model}/{print \$2; exit}")"
+    if [[ -n "${DEVICE_UDID}" ]]; then
+      break
+    fi
+  done
   if [[ -z "${DEVICE_UDID}" ]]; then
-    echo "ERROR: no simulator found" >&2
+    DEVICE_UDID="$(simctl list devices available | awk -F '[()]' '/iPhone/{print $2; exit}')"
+  fi
+  if [[ -z "${DEVICE_UDID}" ]]; then
+    echo "ERROR: no iPhone simulator found" >&2
     exit 1
   fi
   simctl boot "${DEVICE_UDID}" || true
