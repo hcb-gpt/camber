@@ -33,7 +33,8 @@ import type { LabelingResult, LabelSource, PassStats } from "./shared/types.ts";
 const args = new Set(Deno.args);
 const batchRunIdFlag = Deno.args.find((a) => a.startsWith("--batch-run-id="));
 const DRY_RUN = args.has("--dry-run");
-const BATCH_RUN_ID = batchRunIdFlag?.split("=")[1] ?? generateBatchRunId();
+const batchRunIdValue = batchRunIdFlag?.split("=")[1]?.trim();
+const BATCH_RUN_ID = batchRunIdValue || generateBatchRunId();
 
 console.log(`[pass0] batch_run_id = ${BATCH_RUN_ID}`);
 console.log(`[pass0] dry_run = ${DRY_RUN}`);
@@ -355,6 +356,7 @@ async function loadUnlabeledSpans(): Promise<
         .from("labeling_results")
         .select("span_id")
         .eq("batch_run_id", BATCH_RUN_ID)
+        .order("span_id")
         .range(p * 1000, (p + 1) * 1000 - 1);
       if (elErr) throw new Error(`loadExistingLabels: ${elErr.message}`);
       if (!batch || batch.length === 0) break;
