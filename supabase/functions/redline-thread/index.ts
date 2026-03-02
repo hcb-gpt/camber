@@ -1,6 +1,7 @@
 import "jsr:@supabase/functions-js/edge-runtime.d.ts";
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
 import { computeTruthGraph, type TruthGraphHydration, type TruthGraphRepairAction } from "./truth_graph.ts";
+import { requireEdgeSecret } from "../_shared/auth.ts";
 
 const FUNCTION_VERSION = "redline-thread_v3.4.0";
 /**
@@ -257,6 +258,10 @@ async function handleTruthGraph(db: any, url: URL, t0: number): Promise<Response
 // Body: { interaction_id, repair_action, idempotency_key, requested_by? }
 // ============================================================
 async function handleRepair(db: any, req: Request, t0: number): Promise<Response> {
+  const authResult = requireEdgeSecret(req, ["redline_ios"]);
+  if (!authResult.ok) {
+    return json({ ok: false, error_code: "unauthorized", error: "Missing or invalid X-Edge-Secret", function_version: FUNCTION_VERSION }, 401);
+  }
   let body: any;
   try {
     body = await req.json();
