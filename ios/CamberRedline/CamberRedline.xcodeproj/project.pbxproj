@@ -315,6 +315,7 @@
 /* Begin XCBuildConfiguration section */
 		07D3F34749C663839BBABE2F /* Debug */ = {
 			isa = XCBuildConfiguration;
+			baseConfigurationReference = E37440026F9FC584FC0CFD20 /* Config.xcconfig */;
 			buildSettings = {
 				ALWAYS_SEARCH_USER_PATHS = NO;
 				CLANG_ANALYZER_NONNULL = YES;
@@ -378,6 +379,7 @@
 		};
 		16F12FB0A2B49E040E594FCE /* Release */ = {
 			isa = XCBuildConfiguration;
+			baseConfigurationReference = E37440026F9FC584FC0CFD20 /* Config.xcconfig */;
 			buildSettings = {
 				ALWAYS_SEARCH_USER_PATHS = NO;
 				CLANG_ANALYZER_NONNULL = YES;
@@ -434,6 +436,7 @@
 		};
 		4D232F895AA52E7247DD376B /* Release */ = {
 			isa = XCBuildConfiguration;
+			baseConfigurationReference = E37440026F9FC584FC0CFD20 /* Config.xcconfig */;
 			buildSettings = {
 				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
 				CODE_SIGN_IDENTITY = "iPhone Developer";
@@ -461,6 +464,7 @@
 		};
 		FD1A407D257817D119105698 /* Debug */ = {
 			isa = XCBuildConfiguration;
+			baseConfigurationReference = E37440026F9FC584FC0CFD20 /* Config.xcconfig */;
 			buildSettings = {
 				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
 				CODE_SIGN_IDENTITY = "iPhone Developer";
