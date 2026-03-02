@@ -2,7 +2,7 @@ import "jsr:@supabase/functions-js/edge-runtime.d.ts";
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
 import { checkTopLevelEdgeSecretOrAnonKey } from "./auth_gate.ts";
 
-const FUNCTION_VERSION = "bootstrap-review_v1.3.1";
+const FUNCTION_VERSION = "bootstrap-review_v1.3.2";
 type ReviewQueueSource = "pipeline" | "redline";
 
 // ─── Helpers ─────────────────────────────────────────────────────────
@@ -314,10 +314,12 @@ async function handleQueue(
     const interaction: any = interactionMap.get(rq.interaction_id) || {};
     const call: any = callMap.get(rq.interaction_id) || {};
     return {
-      id: rq.id,
+      // DB RPC may return `id` (review_queue) or `review_queue_id` (triage view).
+      // iOS expects `id` for ReviewItem decoding.
+      id: rq.id ?? rq.review_queue_id ?? null,
       span_id: rq.span_id,
       interaction_id: rq.interaction_id,
-      created_at: rq.created_at || null,
+      created_at: rq.created_at ?? rq.queued_at ?? null,
       event_at: interaction.event_at_utc || null,
       context_payload: rq.context_payload,
       reasons: rq.reasons,
