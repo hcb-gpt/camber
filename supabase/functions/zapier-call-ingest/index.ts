@@ -7,12 +7,11 @@
  *
  * Forward: Calls process-call internally using SUPABASE_SERVICE_ROLE_KEY + X-Edge-Secret.
  *
+ * v1.8.1: Remove Beside auth bypass (Beside payloads must authenticate).
+ *
  * v1.8.0: Beside passthrough now forwards to process-call after upsert for full
  * pipeline normalization (interactions row, contact link, AI attribution).
  * Forward is best-effort — upsert success = 200 to Zapier regardless.
- *
- * v1.8.1: Fix critical Beside auth bypass — Beside payloads must pass the same
- * auth gate before any calls_raw upsert / process-call forward.
  *
  * v1.7.1: Fix beside auth bypass — move body parse + beside detection BEFORE auth gate.
  * v1.7.0: Recovered BESIDE_RAW_PASSTHROUGH from lost v1.6.0 deploy (Charter §10).
@@ -24,6 +23,15 @@ import "jsr:@supabase/functions-js/edge-runtime.d.ts";
 import { createClient } from "jsr:@supabase/supabase-js@2";
 
 const VERSION = "v1.8.1";
+
+function constantTimeEqual(a: string, b: string): boolean {
+  if (a.length !== b.length) return false;
+  let result = 0;
+  for (let i = 0; i < a.length; i++) {
+    result |= a.charCodeAt(i) ^ b.charCodeAt(i);
+  }
+  return result === 0;
+}
 
 async function logDiagnostic(
   message: string,
@@ -135,10 +143,7 @@ Deno.serve(async (req: Request) => {
   };
   payload._zapier_ingest_meta = zapierMeta;
 
-  const isBeside = isBesidePayload(payload);
-
-  // ---- Auth gate (canonical + transitional legacy fallback) ----
-  // Applies to ALL payloads (including Beside).
+  // ---- Auth materials (canonical + legacy) ----
   const incomingXEdgeSecret = req.headers.get("X-Edge-Secret") || "";
   const incomingXSecret = req.headers.get("X-Secret") || "";
   const expectedEdgeSecret = Deno.env.get("EDGE_SHARED_SECRET") || "";
@@ -154,47 +159,38 @@ Deno.serve(async (req: Request) => {
     );
   }
 
-  const canonicalValid = incomingXEdgeSecret.length > 0 && incomingXEdgeSecret === expectedEdgeSecret;
+  const canonicalValid = incomingXEdgeSecret.length > 0 && constantTimeEqual(incomingXEdgeSecret, expectedEdgeSecret);
   const legacyValid = expectedLegacySecret.length > 0 &&
     incomingXSecret.length > 0 &&
-    incomingXSecret === expectedLegacySecret;
-
-  if (!canonicalValid && !legacyValid) {
-    await logDiagnostic("AUTH_MISMATCH", {
-      incoming: {
-        x_edge_secret_len: incomingXEdgeSecret.length,
-        x_secret_len: incomingXSecret.length,
-      },
-      expected: {
-        edge_shared_secret_set: true,
-        zapier_legacy_secret_set: expectedLegacySecret.length > 0,
-      },
-    });
-
-    return new Response(
-      JSON.stringify({
-        error: "invalid_token",
-        version: VERSION,
-      }),
-      { status: 401, headers: { "Content-Type": "application/json" } },
-    );
-  }
-
-  if (legacyValid && !canonicalValid) {
-    await logDiagnostic("AUTH_LEGACY_SUCCESS", {
-      incoming: { x_secret_len: incomingXSecret.length },
-      expected: { zapier_legacy_secret_set: true },
-      action: "deprecate_x_secret_after_zapier_update",
-    });
-  }
-
-  // ---- Shared runtime state (post-auth only) ----
-  const supabaseUrl = Deno.env.get("SUPABASE_URL")!;
-  const serviceRoleKey = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!;
+    constantTimeEqual(incomingXSecret, expectedLegacySecret);
 
   // ---- BESIDE_RAW_PASSTHROUGH: detect Beside-format and insert directly ----
-  // NOTE: Beside payloads MUST authenticate before any DB upsert / forward.
-  if (isBeside) {
+  // Beside payloads must authenticate (canonical X-Edge-Secret or legacy X-Secret).
+  // Detection is body-based (fromPhoneNumber/toPhoneNumber/noteUrl).
+  if (isBesidePayload(payload)) {
+    if (!canonicalValid && !legacyValid) {
+      await logDiagnostic("BESIDE_AUTH_MISMATCH", {
+        incoming: {
+          x_edge_secret_len: incomingXEdgeSecret.length,
+          x_secret_len: incomingXSecret.length,
+        },
+        expected: {
+          edge_shared_secret_set: true,
+          zapier_legacy_secret_set: expectedLegacySecret.length > 0,
+        },
+      });
+
+      return new Response(
+        JSON.stringify({
+          error: "invalid_token",
+          version: VERSION,
+        }),
+        { status: 401, headers: { "Content-Type": "application/json" } },
+      );
+    }
+
+    const supabaseUrl = Deno.env.get("SUPABASE_URL")!;
+    const serviceRoleKey = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!;
     const sb = createClient(supabaseUrl, serviceRoleKey);
 
     const row = besideToCallsRaw(payload, zapierMeta);
@@ -231,12 +227,13 @@ Deno.serve(async (req: Request) => {
     let forwardError: string | null = null;
     try {
       const pcUrl = `${supabaseUrl}/functions/v1/process-call`;
+      const edgeSecret = expectedEdgeSecret;
       const pcResp = await fetch(pcUrl, {
         method: "POST",
         headers: {
           "Content-Type": "application/json",
           "Authorization": `Bearer ${serviceRoleKey}`,
-          "X-Edge-Secret": expectedEdgeSecret,
+          "X-Edge-Secret": edgeSecret,
         },
         body: JSON.stringify(payload),
       });
@@ -270,7 +267,40 @@ Deno.serve(async (req: Request) => {
     );
   }
 
+  // ---- Auth gate (canonical + transitional legacy fallback) ----
+  // Non-beside payloads must authenticate to reach process-call.
+  if (!canonicalValid && !legacyValid) {
+    await logDiagnostic("AUTH_MISMATCH", {
+      incoming: {
+        x_edge_secret_len: incomingXEdgeSecret.length,
+        x_secret_len: incomingXSecret.length,
+      },
+      expected: {
+        edge_shared_secret_set: true,
+        zapier_legacy_secret_set: expectedLegacySecret.length > 0,
+      },
+    });
+
+    return new Response(
+      JSON.stringify({
+        error: "invalid_token",
+        version: VERSION,
+      }),
+      { status: 401, headers: { "Content-Type": "application/json" } },
+    );
+  }
+
+  if (legacyValid && !canonicalValid) {
+    await logDiagnostic("AUTH_LEGACY_SUCCESS", {
+      incoming: { x_secret_len: incomingXSecret.length },
+      expected: { zapier_legacy_secret_set: true },
+      action: "deprecate_x_secret_after_zapier_update",
+    });
+  }
+
   // ---- Forward to process-call ----
+  const supabaseUrl = Deno.env.get("SUPABASE_URL")!;
+  const serviceRoleKey = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!;
 
   const forwardHeaders: Record<string, string> = {
     "Content-Type": "application/json",
