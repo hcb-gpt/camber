@@ -56,5 +56,5 @@ Deno.test("top-level gate (edge-secret-or-anon) allows Authorization: Bearer <an
 
   assertEquals(resp.status, 200);
   assertEquals(body.ok, true);
-  assertEquals(body.auth, "anon_key");
+  assertEquals(body.auth, "bearer");
 });
