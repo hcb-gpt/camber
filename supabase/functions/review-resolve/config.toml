@@ -1,0 +1,3 @@
+# review-resolve: human reviewer endpoint
+# Requires authenticated bearer JWT at gateway + in-function user verification.
+verify_jwt = true
