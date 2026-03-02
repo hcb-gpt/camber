@@ -387,8 +387,17 @@ Deno.serve(async (req: Request) => {
       runnerAccepted = resp.ok;
 
       if (!resp.ok) {
-        const respBody = await resp.json().catch(() => ({}));
-        const errBody = typeof respBody === "object" && respBody !== null ? respBody as JsonRecord : {};
+        let errBody: JsonRecord = {};
+        try {
+          const respBody = await resp.json();
+          errBody = typeof respBody === "object" && respBody !== null ? respBody as JsonRecord : {};
+        } catch (parseErr: unknown) {
+          console.error(
+            `[review-swarm-scheduler] failed to parse runner error response: ${
+              parseErr instanceof Error ? parseErr.message : "unknown"
+            }`,
+          );
+        }
         runnerError = `runner_http_${resp.status}: ${asString(errBody.error) || "unknown"}`;
       }
       // If runner responded OK, don't block reading the full body — it may be large.

@@ -1,7 +1,7 @@
 import "jsr:@supabase/functions-js/edge-runtime.d.ts";
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
 
-const FUNCTION_VERSION = "bootstrap-review_v1.1.5";
+const FUNCTION_VERSION = "bootstrap-review_v1.2.0";
 type ReviewQueueSource = "pipeline" | "redline";
 
 // ─── Helpers ─────────────────────────────────────────────────────────
@@ -200,34 +200,31 @@ async function handleProjects(db: any, t0: number): Promise<Response> {
 async function handleQueue(
   db: any,
   limit: number,
+  maxAgeDays: number,
   t0: number,
 ): Promise<Response> {
-  // Fetch pending span-based review rows directly so filtering happens
-  // before LIMIT (avoids empty pages with nonzero pending totals).
-  const queueSelect = "id, span_id, interaction_id, context_payload, reasons, reason_codes, module, status, created_at";
+  // DB-side freshness predicate via RPC — joins review_queue with interactions
+  // and filters by COALESCE(event_at_utc, created_at) >= now() - N days.
+  // This prevents LIMIT from clipping fresh items behind a wall of stale ones.
+  const cutoffDate = new Date(Date.now() - maxAgeDays * 24 * 60 * 60 * 1000);
+  const cutoffIso = cutoffDate.toISOString();
 
   let rqData: any[] | null = null;
   let rqErr: any = null;
   {
-    const primary = await db
-      .from("review_queue")
-      .select(queueSelect)
-      .eq("status", "pending")
-      .not("span_id", "is", null)
-      .or("module.eq.attribution,module.is.null")
-      .order("created_at", { ascending: false })
-      .limit(limit);
+    const primary = await db.rpc("fresh_review_queue", {
+      p_max_age_days: maxAgeDays,
+      p_limit: limit,
+    });
     rqData = primary.data;
     rqErr = primary.error;
 
+    // Fallback: if module column doesn't exist, use the no-module variant
     if (rqErr && isMissingColumnError(rqErr.message || "", "module")) {
-      const fallback = await db
-        .from("review_queue")
-        .select(queueSelect)
-        .eq("status", "pending")
-        .not("span_id", "is", null)
-        .order("created_at", { ascending: false })
-        .limit(limit);
+      const fallback = await db.rpc("fresh_review_queue_no_module", {
+        p_max_age_days: maxAgeDays,
+        p_limit: limit,
+      });
       rqData = fallback.data;
       rqErr = fallback.error;
     }
@@ -242,12 +239,20 @@ async function handleQueue(
   }
 
   if (!rqData || rqData.length === 0) {
+    // Distinguish "no pending items at all" from "all pending items are stale"
+    const totalPending = await countPendingQueueItemsForIOS(db);
     const projects = await fetchReviewProjects(db);
     return json({
       ok: true,
       items: [],
       projects,
-      total_pending: 0,
+      total_pending: totalPending || 0,
+      freshness_sla_days: maxAgeDays,
+      freshness_cutoff_utc: cutoffIso,
+      freshness_filtered_out: totalPending || 0,
+      meta: {
+        reason: (totalPending || 0) > 0 ? "no_cards_within_freshness_window" : "no_pending_items",
+      },
       function_version: FUNCTION_VERSION,
       ms: Date.now() - t0,
     });
@@ -338,6 +343,18 @@ async function handleQueue(
     return String(b.id || "").localeCompare(String(a.id || ""));
   });
 
+  // Enforce freshness SLA on app-facing queue output.
+  // Uses the same effective timestamp the feed sorts by:
+  // event_at (if present) falling back to queue row created_at.
+  const maxAgeMs = Math.max(1, maxAgeDays) * 24 * 60 * 60 * 1000;
+  const cutoffTsMs = Date.now() - maxAgeMs;
+  const preFilterCount = items.length;
+  items = items.filter((item: any) => {
+    const ts = Date.parse(item.event_at || item.created_at || "") || 0;
+    return ts >= cutoffTsMs;
+  });
+  const filteredOutCount = Math.max(0, preFilterCount - items.length);
+
   // Get total pending count
   const totalPending = await countPendingQueueItemsForIOS(db);
 
@@ -349,6 +366,9 @@ async function handleQueue(
     items,
     projects,
     total_pending: totalPending || 0,
+    freshness_sla_days: maxAgeDays,
+    freshness_cutoff_utc: new Date(cutoffTsMs).toISOString(),
+    freshness_filtered_out: filteredOutCount,
     function_version: FUNCTION_VERSION,
     ms: Date.now() - t0,
   });
@@ -1695,7 +1715,12 @@ Deno.serve(async (req: Request) => {
         Math.max(isNaN(rawLimit) ? 30 : rawLimit, 1),
         100,
       );
-      return await handleQueue(db, limit, t0);
+      const rawMaxAgeDays = parseInt(url.searchParams.get("max_age_days") || "21", 10);
+      const maxAgeDays = Math.min(
+        Math.max(isNaN(rawMaxAgeDays) ? 21 : rawMaxAgeDays, 1),
+        365,
+      );
+      return await handleQueue(db, limit, maxAgeDays, t0);
     }
     if (action === "projects") {
       return await handleProjects(db, t0);

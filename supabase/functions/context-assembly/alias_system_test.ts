@@ -146,7 +146,13 @@ function findTermInText(textLower: string, termLower: string): number {
     const before = idx === 0 ? " " : textLower[idx - 1];
     const afterIdx = idx + termLower.length;
     const after = afterIdx >= textLower.length ? " " : textLower[afterIdx];
-    if (!isWordChar(before) && !isWordChar(after)) return idx;
+    if (
+      !isWordChar(before) && !isWordChar(after) &&
+      before !== "'" && before !== "\u2019" &&
+      after !== "'" && after !== "\u2019"
+    ) {
+      return idx;
+    }
     if (!isWordChar(before) && (after === "'" || after === "\u2019")) {
       const nextIdx = afterIdx + 1;
       if (

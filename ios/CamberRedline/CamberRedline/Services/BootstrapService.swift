@@ -113,7 +113,7 @@ final class BootstrapService {
         reason: String? = nil,
         notes: String? = nil,
         userId: String = "ios-user"
-    ) async throws {
+    ) async throws -> BootstrapActionResponse {
         let body = DismissRequest(
             reviewQueueId: queueId,
             reason: reason,
@@ -121,7 +121,7 @@ final class BootstrapService {
             userId: userId
         )
         let data = try await post(action: "dismiss", body: body)
-        try decodeOkResponse(data, action: "dismiss")
+        return try decodeOkResponse(data, action: "dismiss")
     }
 
     // MARK: - Undo
@@ -129,7 +129,7 @@ final class BootstrapService {
     func undo(queueId: String) async throws {
         let body = UndoRequest(reviewQueueId: queueId)
         let data = try await post(action: "undo", body: body)
-        try decodeOkResponse(data, action: "undo")
+        _ = try decodeOkResponse(data, action: "undo")
     }
 
     // MARK: - Assistant Context
@@ -316,18 +316,42 @@ final class BootstrapService {
 
         let (data, response) = try await session.data(for: request)
         try validateHTTPResponse(response)
-        return data
+
+        guard let http = response as? HTTPURLResponse else {
+            return data
+        }
+
+        let requestId = http.value(forHTTPHeaderField: "x-request-id")
+            ?? http.value(forHTTPHeaderField: "sb-request-id")
+        guard let requestId, !requestId.isEmpty else {
+            return data
+        }
+
+        guard
+            let object = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+            object["request_id"] == nil
+        else {
+            return data
+        }
+
+        var patchedObject = object
+        patchedObject["request_id"] = requestId
+        guard let patchedData = try? JSONSerialization.data(withJSONObject: patchedObject) else {
+            return data
+        }
+        return patchedData
     }
 
-    private func decodeOkResponse(_ data: Data, action: String) throws {
+    private func decodeOkResponse(_ data: Data, action: String) throws -> BootstrapActionResponse {
         guard let parsed = try? decoder.decode(BootstrapActionResponse.self, from: data) else {
-            return
+            return BootstrapActionResponse(ok: true, error: nil, requestId: nil)
         }
         guard parsed.ok else {
             throw BootstrapServiceError.apiError(
                 parsed.error ?? "Unknown error from \(action)"
             )
         }
+        return parsed
     }
 
     private func validateHTTPResponse(_ response: URLResponse) throws {
@@ -345,6 +369,7 @@ struct ResolveResponse: Decodable {
     let reviewQueueId: String?
     let chosenProjectId: String?
     let wasAlreadyResolved: Bool?
+    let requestId: String?
     let error: String?
 
     enum CodingKeys: String, CodingKey {
@@ -352,13 +377,21 @@ struct ResolveResponse: Decodable {
         case reviewQueueId = "review_queue_id"
         case chosenProjectId = "chosen_project_id"
         case wasAlreadyResolved = "was_already_resolved"
+        case requestId = "request_id"
         case error
     }
 }
 
-private struct BootstrapActionResponse: Decodable {
+struct BootstrapActionResponse: Decodable {
     let ok: Bool
     let error: String?
+    let requestId: String?
+
+    enum CodingKeys: String, CodingKey {
+        case ok
+        case error
+        case requestId = "request_id"
+    }
 }
 
 // MARK: - Request Bodies

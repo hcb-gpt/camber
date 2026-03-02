@@ -24,6 +24,25 @@
 #   PROOF_SQL=scripts/proof_pack.sql (default)
 #   OUT_DIR=artifacts/proof_pack (default)
 
+print_help() {
+  cat <<'EOF'
+Usage: ./scripts/proof_pack.sh [interaction_id] [--help|-h]
+
+Run proof_pack.sql for a single interaction and emit PROOF_PACK_RESULT.
+Defaults:
+  interaction_id=cll_06DSX0CVZHZK72VCVW54EH9G3C
+Env:
+  STRICT_CHUNKING=1
+  PROOF_SQL=scripts/proof_pack.sql
+  OUT_DIR=artifacts/proof_pack
+EOF
+}
+
+if [[ "${1:-}" == "--help" || "${1:-}" == "-h" ]]; then
+  print_help
+  exit 0
+fi
+
 set -euo pipefail
 
 ROOT="$(git rev-parse --show-toplevel)"
