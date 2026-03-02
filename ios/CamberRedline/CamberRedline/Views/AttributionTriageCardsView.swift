@@ -4,12 +4,22 @@ import os
 private enum TriageSmokeAutomation {
     static let launchFlag = "--smoke-drive"
     static let syntheticIdsFlag = "--smoke-synthetic-ids"
+    static let truthSurfaceFlag = "--smoke-truth-surface"
+    static let truthSurfaceLocalFlag = "--smoke-truth-surface-local"
     static let triageNotification = Notification.Name("camber.smoke.runTriage")
     static let triageDoneNotification = Notification.Name("camber.smoke.triageDone")
     static let logger = Logger(subsystem: "CamberRedline", category: "smoke")
 
     static var isEnabled: Bool {
         ProcessInfo.processInfo.arguments.contains(launchFlag)
+    }
+
+    static var truthSurfaceEnabled: Bool {
+        ProcessInfo.processInfo.arguments.contains(truthSurfaceFlag)
+    }
+
+    static var truthSurfaceLocalEnabled: Bool {
+        ProcessInfo.processInfo.arguments.contains(truthSurfaceLocalFlag)
     }
 
     static var targetInteractionIds: Set<String> {
@@ -501,6 +511,10 @@ struct AttributionTriageCardsView: View {
                let matched = viewModel.queue.first(where: { targetIds.contains($0.interactionId) }) {
                 return matched
             }
+            if TriageSmokeAutomation.truthSurfaceEnabled,
+               let withProjectAndEvidence = viewModel.queue.first(where: { $0.projectId != nil && !$0.evidenceAnchors.isEmpty }) {
+                return withProjectAndEvidence
+            }
             if let withProject = viewModel.queue.first(where: { $0.projectId != nil }) {
                 return withProject
             }
@@ -518,16 +532,20 @@ struct AttributionTriageCardsView: View {
             "SMOKE_EVENT TRIAGE_TARGET queue=\(card.queueId, privacy: .public) interaction=\(card.interactionId, privacy: .public) event_at=\(eventAt, privacy: .public)"
         )
 
-        if let projectId = card.projectId, !projectId.isEmpty {
-            TriageSmokeAutomation.logger.log(
-                "SMOKE_EVENT TRIAGE_RESOLVE queue=\(card.queueId, privacy: .public) interaction=\(card.interactionId, privacy: .public) project=\(projectId, privacy: .public)"
-            )
-            await viewModel.resolve(card, to: projectId, notes: "smoke")
+        if TriageSmokeAutomation.truthSurfaceEnabled {
+            await runTruthSurfaceSmoke(card: card)
         } else {
-            TriageSmokeAutomation.logger.log(
-                "SMOKE_EVENT TRIAGE_DISMISS queue=\(card.queueId, privacy: .public) interaction=\(card.interactionId, privacy: .public)"
-            )
-            await viewModel.dismiss(card, reason: "smoke", notes: "smoke")
+            if let projectId = card.projectId, !projectId.isEmpty {
+                TriageSmokeAutomation.logger.log(
+                    "SMOKE_EVENT TRIAGE_RESOLVE queue=\(card.queueId, privacy: .public) interaction=\(card.interactionId, privacy: .public) project=\(projectId, privacy: .public)"
+                )
+                await viewModel.resolve(card, to: projectId, notes: "smoke")
+            } else {
+                TriageSmokeAutomation.logger.log(
+                    "SMOKE_EVENT TRIAGE_DISMISS queue=\(card.queueId, privacy: .public) interaction=\(card.interactionId, privacy: .public)"
+                )
+                await viewModel.dismiss(card, reason: "smoke", notes: "smoke")
+            }
         }
 
         if viewModel.isAttributionWritesLocked, let banner = viewModel.attributionWritesLockedBannerText {
@@ -545,6 +563,76 @@ struct AttributionTriageCardsView: View {
 
         TriageSmokeAutomation.logger.log("SMOKE_EVENT TRIAGE_DONE remaining=\(viewModel.queue.count, privacy: .public)")
         NotificationCenter.default.post(name: TriageSmokeAutomation.triageDoneNotification, object: nil)
+    }
+
+    private func runTruthSurfaceSmoke(card: CardItem) async {
+        let evidenceCount = card.evidenceAnchors.count
+        let hasAiSuggestion = (card.projectId ?? "").isEmpty == false
+        let aiProjectId = card.projectId ?? "missing"
+
+        TriageSmokeAutomation.logger.log(
+            "SMOKE_EVENT TRUTH_SURFACE_START queue=\(card.queueId, privacy: .public) interaction=\(card.interactionId, privacy: .public) ai_suggested=\(hasAiSuggestion ? 1 : 0, privacy: .public) ai_project=\(aiProjectId, privacy: .public) evidence_count=\(evidenceCount, privacy: .public)"
+        )
+
+        let initialSelected = await MainActor.run { selectedProjectIdByCardId[card.id] }
+        TriageSmokeAutomation.logger.log(
+            "SMOKE_EVENT TRUTH_SURFACE_STAGE stage=unpicked selected=\((initialSelected ?? "missing"), privacy: .public)"
+        )
+
+        // Hold on unpicked state so simctl screenshots can capture it.
+        try? await Task.sleep(for: .seconds(4))
+
+        guard !viewModel.isAttributionWritesLocked else {
+            TriageSmokeAutomation.logger.log("SMOKE_EVENT TRUTH_SURFACE_ABORT reason=writes_locked")
+            return
+        }
+
+        if initialSelected != nil {
+            TriageSmokeAutomation.logger.log("SMOKE_EVENT TRUTH_SURFACE_WARN unexpected_preselect=1")
+        }
+
+        let pickedProjectId: String? = {
+            if let pid = card.projectId, !pid.isEmpty { return pid }
+            if let candidate = card.candidates.first?.projectId, !candidate.isEmpty { return candidate }
+            return nil
+        }()
+
+        guard let pickedProjectId else {
+            TriageSmokeAutomation.logger.log("SMOKE_EVENT TRUTH_SURFACE_BLOCKED reason=no_project_to_pick")
+            await viewModel.dismiss(card, reason: "smoke_truth_surface", notes: "no_project_to_pick")
+            return
+        }
+
+        await MainActor.run {
+            selectedProjectIdByCardId[card.id] = pickedProjectId
+        }
+        TriageSmokeAutomation.logger.log(
+            "SMOKE_EVENT TRUTH_SURFACE_STAGE stage=picked project=\(pickedProjectId, privacy: .public) evidence_count=\(evidenceCount, privacy: .public)"
+        )
+
+        // Hold on picked state so simctl screenshots can capture it.
+        try? await Task.sleep(for: .seconds(4))
+
+        guard evidenceCount > 0 else {
+            TriageSmokeAutomation.logger.log("SMOKE_EVENT TRUTH_SURFACE_BLOCKED reason=no_evidence_tokens")
+            await viewModel.dismiss(card, reason: "smoke_truth_surface", notes: "no_evidence_tokens")
+            return
+        }
+
+        if TriageSmokeAutomation.truthSurfaceLocalEnabled {
+            TriageSmokeAutomation.logger.log(
+                "SMOKE_EVENT TRUTH_SURFACE_CONFIRM_LOCAL queue=\(card.queueId, privacy: .public) project=\(pickedProjectId, privacy: .public)"
+            )
+            await MainActor.run {
+                viewModel.queue.removeAll(where: { $0.id == card.id })
+                viewModel.resolvedCount += 1
+            }
+        } else {
+            TriageSmokeAutomation.logger.log(
+                "SMOKE_EVENT TRUTH_SURFACE_CONFIRM queue=\(card.queueId, privacy: .public) project=\(pickedProjectId, privacy: .public)"
+            )
+            await viewModel.resolve(card, to: pickedProjectId, notes: "smoke_truth_surface")
+        }
     }
 
     private enum PickerMode {

@@ -2,6 +2,9 @@
 
 This is a placeholder proof artifact for the WIP PR.
 
+For an automation-backed proof run (screenshots + smoke markers), see:
+- `picker_first_truth_surface_v1_proof.md`
+
 Expected UI deltas on `AttributionTriageCardsView`:
 - No preselect: cards start with `Pick required` even when an AI suggestion exists.
 - Confirm (right-swipe) is disabled until a project is picked and evidence tokens exist.
