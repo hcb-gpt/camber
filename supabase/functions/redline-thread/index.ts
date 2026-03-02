@@ -774,6 +774,14 @@ function parseLimitOffset(
   return { limit, offset, cursor: null };
 }
 
+function safeDecodeURIComponent(raw: string): string {
+  try {
+    return decodeURIComponent(raw);
+  } catch {
+    return raw;
+  }
+}
+
 function parseRedlineApiRoute(url: URL): RedlineApiRoute | null {
   const parts = url.pathname
     .split("/")
@@ -786,8 +794,8 @@ function parseRedlineApiRoute(url: URL): RedlineApiRoute | null {
   const tail = parts.slice(redlineIndex + 1);
   if (tail.length === 0) return { kind: "unknown", path: tail };
   if (tail[0] === "contacts" && tail.length === 1) return { kind: "contacts" };
-  if (tail[0] === "thread" && tail.length >= 2) return { kind: "thread", contactId: decodeURIComponent(tail[1]) };
-  if (tail[0] === "spans" && tail.length >= 2) return { kind: "spans", contactId: decodeURIComponent(tail[1]) };
+  if (tail[0] === "thread" && tail.length >= 2) return { kind: "thread", contactId: safeDecodeURIComponent(tail[1]) };
+  if (tail[0] === "spans" && tail.length >= 2) return { kind: "spans", contactId: safeDecodeURIComponent(tail[1]) };
   if (tail[0] === "verdict" && tail.length === 1) return { kind: "verdict" };
   return { kind: "unknown", path: tail };
 }
