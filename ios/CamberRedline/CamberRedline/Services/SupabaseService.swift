@@ -220,6 +220,14 @@ final class SupabaseService {
 
         let decoded = try JSONDecoder().decode(TruthGraphResponse.self, from: data)
         guard decoded.ok else {
+            if let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any] {
+                let errorCode = json["error_code"] as? String
+                let errorMsg = json["error"] as? String
+                let detail = [errorCode, errorMsg].compactMap { $0 }.joined(separator: ": ")
+                if !detail.isEmpty {
+                    throw ServiceError.apiError("Truth Graph endpoint: \(detail)")
+                }
+            }
             throw ServiceError.apiError("Truth Graph endpoint returned ok=false")
         }
         return decoded
@@ -640,7 +648,7 @@ enum ServiceError: LocalizedError {
 
 // MARK: - Truth Graph Models (read-only)
 
-struct TruthGraphResponse: Codable, Hashable {
+struct TruthGraphResponse: Decodable, Hashable {
     let ok: Bool
     let interactionId: String
     let hydration: TruthGraphHydration
@@ -660,9 +668,45 @@ struct TruthGraphResponse: Codable, Hashable {
         case functionVersion = "function_version"
         case ms
     }
+
+    init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        ok = (try? container.decode(Bool.self, forKey: .ok)) ?? false
+        interactionId = (try? container.decode(String.self, forKey: .interactionId)) ?? ""
+        hydration = (try? container.decode(TruthGraphHydration.self, forKey: .hydration)) ?? .empty
+        lane = (try? container.decode(String.self, forKey: .lane)) ?? "unknown"
+        functionVersion = try container.decodeIfPresent(String.self, forKey: .functionVersion)
+        ms = try container.decodeIfPresent(Int.self, forKey: .ms)
+
+        // Lossy array decode: skip individual malformed repair objects instead of
+        // failing the entire response (truth surface should degrade gracefully).
+        var decodedRepairs: [TruthGraphSuggestedRepair] = []
+        if var repairsContainer = try? container.nestedUnkeyedContainer(forKey: .suggestedRepairs) {
+            while !repairsContainer.isAtEnd {
+                if let repair = try? repairsContainer.decode(TruthGraphSuggestedRepair.self) {
+                    decodedRepairs.append(repair)
+                } else {
+                    _ = try? repairsContainer.decode(AnyCodableSkip.self)
+                }
+            }
+        }
+        suggestedRepairs = decodedRepairs
+
+        var decodedWarnings: [String] = []
+        if var warningsContainer = try? container.nestedUnkeyedContainer(forKey: .warnings) {
+            while !warningsContainer.isAtEnd {
+                if let warning = try? warningsContainer.decode(String.self) {
+                    decodedWarnings.append(warning)
+                } else {
+                    _ = try? warningsContainer.decode(AnyCodableSkip.self)
+                }
+            }
+        }
+        warnings = decodedWarnings
+    }
 }
 
-struct TruthGraphHydration: Codable, Hashable {
+struct TruthGraphHydration: Decodable, Hashable {
     let callsRaw: Bool
     let interactions: Bool
     let conversationSpans: Bool
@@ -680,9 +724,30 @@ struct TruthGraphHydration: Codable, Hashable {
         case journalClaims = "journal_claims"
         case reviewQueue = "review_queue"
     }
+
+    static let empty = TruthGraphHydration(
+        callsRaw: false,
+        interactions: false,
+        conversationSpans: false,
+        evidenceEvents: false,
+        spanAttributions: false,
+        journalClaims: false,
+        reviewQueue: false
+    )
+
+    init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        callsRaw = (try? container.decode(Bool.self, forKey: .callsRaw)) ?? false
+        interactions = (try? container.decode(Bool.self, forKey: .interactions)) ?? false
+        conversationSpans = (try? container.decode(Bool.self, forKey: .conversationSpans)) ?? false
+        evidenceEvents = (try? container.decode(Bool.self, forKey: .evidenceEvents)) ?? false
+        spanAttributions = (try? container.decode(Bool.self, forKey: .spanAttributions)) ?? false
+        journalClaims = (try? container.decode(Bool.self, forKey: .journalClaims)) ?? false
+        reviewQueue = (try? container.decode(Bool.self, forKey: .reviewQueue)) ?? false
+    }
 }
 
-struct TruthGraphSuggestedRepair: Codable, Hashable, Identifiable {
+struct TruthGraphSuggestedRepair: Decodable, Hashable, Identifiable {
     let action: String
     let label: String
     let idempotencyKey: String
