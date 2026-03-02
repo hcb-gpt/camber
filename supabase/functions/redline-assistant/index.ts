@@ -6,10 +6,10 @@ import {
   buildDeterministicFallback,
   buildEvidenceItemsFromHighlights,
   classifyIntent,
-  extractOpenLoopHintsFromEvidence,
-  sanitizeSuperintendentFragment,
   type EvidenceItem,
+  extractOpenLoopHintsFromEvidence,
   type Intent,
+  sanitizeSuperintendentFragment,
 } from "./superintendent_v1.ts";
 
 const FUNCTION_VERSION = "redline-assistant_v0.6.0";
@@ -100,7 +100,10 @@ const BANNED_OUTPUT_PATTERNS: Array<{ re: RegExp; label: string }> = [
   { re: /\b[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\b/i, label: "uuid" },
   { re: /\b\d{4}-\d{2}-\d{2}(?:[T\s]\d{2}:\d{2}(?::\d{2})?)?/i, label: "iso_datetime" },
   { re: /\b\d{1,2}\/\d{1,2}\/\d{2,4}\b/i, label: "slash_date" },
-  { re: /\b(?:jan|feb|mar|apr|may|jun|jul|aug|sep|sept|oct|nov|dec)[a-z]*\s+\d{1,2}(?:,\s*\d{4})?\b/i, label: "month_date" },
+  {
+    re: /\b(?:jan|feb|mar|apr|may|jun|jul|aug|sep|sept|oct|nov|dec)[a-z]*\s+\d{1,2}(?:,\s*\d{4})?\b/i,
+    label: "month_date",
+  },
   { re: /(^|\n)\s*\d+\.\s+/, label: "numbered_log" },
 ];
 
@@ -538,7 +541,9 @@ async function openAiChatCompletionText(
 
   const jsonResp = await resp.json().catch(() => null) as Record<string, unknown> | null;
   const choices = Array.isArray(jsonResp?.choices) ? jsonResp!.choices as Array<Record<string, unknown>> : [];
-  const msg = choices.length > 0 && typeof choices[0].message === "object" ? choices[0].message as Record<string, unknown> : null;
+  const msg = choices.length > 0 && typeof choices[0].message === "object"
+    ? choices[0].message as Record<string, unknown>
+    : null;
   const content = msg && typeof msg.content === "string" ? msg.content : "";
   return { ok: true, status: 200, content: String(content || ""), errorText: null };
 }
@@ -869,7 +874,9 @@ Deno.serve(async (req: Request): Promise<Response> => {
       if (evidence.length === 0 && Array.isArray(groundedPayload?.project_recent_highlights)) {
         const entry = (groundedPayload!.project_recent_highlights as Array<Record<string, unknown>>)
           .find((ph) => String(ph.project_id) === effectiveProjectId);
-        const rpcHighlights = entry && Array.isArray(entry.highlights) ? entry.highlights as Array<Record<string, unknown>> : [];
+        const rpcHighlights = entry && Array.isArray(entry.highlights)
+          ? entry.highlights as Array<Record<string, unknown>>
+          : [];
         if (rpcHighlights.length > 0) {
           const mapped = rpcHighlights.map((h) => ({
             event_at_utc: toStringOrNull(h.event_at_utc),

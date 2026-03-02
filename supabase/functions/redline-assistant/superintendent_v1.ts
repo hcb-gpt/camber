@@ -121,9 +121,7 @@ export function humanTimePhrase(opts: HumanTimeOpts): string {
   const eventAt = opts.event_at_utc ? new Date(opts.event_at_utc) : null;
   if (!eventAt || Number.isNaN(eventAt.getTime())) return "recently";
 
-  const offset = typeof opts.client_utc_offset_minutes === "number"
-    ? opts.client_utc_offset_minutes
-    : 0;
+  const offset = typeof opts.client_utc_offset_minutes === "number" ? opts.client_utc_offset_minutes : 0;
   const nowLocal = toLocalWithOffset(opts.now_utc, offset);
   const eventLocal = toLocalWithOffset(eventAt, offset);
 
@@ -159,7 +157,9 @@ export function extractOpenLoopHintsFromEvidence(excerpts: string[]): string[] {
 
     // Heuristic: messages that contain a request or a pending dependency.
     const looksOpen =
-      /\b(remind|please|need to|can you|could you|bring|call|text|follow up|waiting on|when can|let me know)\b/.test(low);
+      /\b(remind|please|need to|can you|could you|bring|call|text|follow up|waiting on|when can|let me know)\b/.test(
+        low,
+      );
     if (!looksOpen) continue;
 
     const c = clampText(s, 160);

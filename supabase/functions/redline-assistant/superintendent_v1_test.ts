@@ -94,4 +94,3 @@ Deno.test("buildEvidenceItemsFromHighlights sorts, clamps, and sanitizes", () =>
   assert(!/interaction/i.test(items[1].excerpt));
   assert(!/\b2026-03-01\b/.test(items[1].excerpt));
 });
-
