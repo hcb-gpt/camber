@@ -25,7 +25,7 @@
  */
 
 import { getDb, generateBatchRunId } from "./shared/db.ts";
-import type { LabelingResult, LabelSource, PassStats } from "./shared/types.ts";
+import type { LabelingResult, PassStats } from "./shared/types.ts";
 
 // ---------------------------------------------------------------------------
 // CLI args
@@ -423,21 +423,7 @@ function normalizePhone(phone: string | null | undefined): string | null {
   return digits.length > 10 ? digits.slice(-10) : digits;
 }
 
-function phonesMatch(a: string | null, b: string | null): boolean {
-  const na = normalizePhone(a);
-  const nb = normalizePhone(b);
-  if (!na || !nb) return false;
-  return na === nb;
-}
 
-function contactMatchesPhone(
-  contactPhone: string | null,
-  refPhone: string,
-  refSecondary: string | null,
-): boolean {
-  return phonesMatch(contactPhone, refPhone) ||
-    (refSecondary != null && phonesMatch(contactPhone, refSecondary));
-}
 
 // ---------------------------------------------------------------------------
 // Step 4: Apply rules

@@ -21,7 +21,7 @@
 
 import { getDb } from "./shared/db.ts";
 import { writeLabel, getLabeledSpanIds } from "./shared/label_writer.ts";
-import type { UnlabeledSpan, LabelSource, AffinityRow, PassStats } from "./shared/types.ts";
+import type { UnlabeledSpan, AffinityRow, PassStats } from "./shared/types.ts";
 
 // ============================================================
 // CONFIG
