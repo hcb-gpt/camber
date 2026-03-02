@@ -74,14 +74,37 @@ All triage surfaces (inbox + thread) must map each item into exactly one forcing
 These primitives apply across all forcing states (feed + thread):
 - Badges must be **truth-first**: never imply “done” when pipeline is uncertain.
 - Use 3-state chips everywhere: `Pending` (gray), `Ready` (blue), `Blocked` (red).
+- Always show a **forcing-state pill** (top-left, consistent colors):
+  - `PICK_REQUIRED` (neutral/gray) — label must be explicit; no preselect.
+  - `FAST_CONFIRM` (green) — 1-gesture confirm allowed.
+  - `NEEDS_SPLIT` (orange) — hard-block assignment.
+  - `PIPELINE_DEFECT` (red) — hard-block assignment.
+- Show **Reason chips** (deterministic, not “reasoning”) under the title:
+  - Max 2 visible + “+N” overflow.
+  - Example chips: `weak_anchor`, `quote_unverified`, `geo_only`.
+- If we show AI output at all, it must be a **hint**:
+  - Show `Suggested` as a subtle outline chip.
+  - Never preselect it, never put it in the primary button label.
 - When an action is disabled:
   - keep the affordance **visible but locked**
   - tap explains *why* it’s locked (hiding actions creates false mental models)
 
-Empty states (canonical copy):
-- No evidence yet: “Waiting for evidence.” + secondary: “This may take a few minutes.”
+After any write, show a **receipt toast** (trust + throughput):
+- Normal: “Saved” + `Undo`
+- DEBUG builds: include a compact copyable receipt (short `queue_id` and/or `sb-request-id`) + `Copy receipt`
+
+Empty/error states (canonical copy):
+- Empty queue: “No items to review” + `Refresh`
+- Queue load failure (spinner > 10s / error): “Couldn’t load review queue” + `Retry` + (small) “Check connection.”
+- Writes locked / Internal Mode required: “Internal Mode required to label” + CTA: `Settings`
 - Blocked by pipeline defect: “Blocked by pipeline defect.” + CTA: “Repair pipeline”
 - Needs split: “This thread mixes topics.” + CTA: “Split thread”
+
+Gesture/disabled affordances (truth forcing, canonical):
+- `PICK_REQUIRED`: disable commit swipe + disable primary commit button until an explicit pick occurs; show “Pick to enable”.
+- `FAST_CONFIRM`: allow swipe-to-confirm (still show reason chips + small receipt on success).
+- `NEEDS_SPLIT`: disable commit; primary actions are `Mark multi-project` and `Dismiss`.
+- `PIPELINE_DEFECT`: disable commit; primary action `Repair pipeline` (idempotent) with progress state; secondary `Dismiss`.
 
 ## 3) Learning Loop Forcing Functions (Grounded in Current Surfaces)
 This section is the “Gemini 3.1 forcing functions” translated into current repo reality.
@@ -92,6 +115,7 @@ Current reality: the iOS app can already write durable “human lock” decision
 iOS truth-surface requirements:
 - Every resolve must surface **an auditable receipt** (request_id / queue_id) in UI (non-scary, but copyable in DEBUG builds).
 - Every resolve must support *Undo* (already supported) to reduce fear and increase throughput.
+- Every override should preserve the learning delta by sending **AI guessed X vs human chose Y** (v2: punish runner-up).
 
 Decision-linked metric:
 - `undo_rate`: if > 5% daily, UI is too easy to mis-tap or too ambiguous; fix interaction design before adding complexity.
@@ -150,6 +174,44 @@ Implementation idea:
 Decision-linked metric:
 - `qa_fail_rate`: if > 2% on audited auto-assignments, raise the auto-assign threshold or change model features; do not increase automation volume.
 
+### 3.6 Evidence Receipt Confirmation (Train deterministic receipts, v2)
+Goal: don’t just learn “the label,” learn **why** (so we can convert into deterministic heuristics).
+
+UI behavior:
+- Always show which deterministic receipts fired (reason chips + evidence token sheet).
+- On override, optionally prompt: “What text implies the correct project?” and let the user highlight one short token.
+
+Backend landing zone (v2):
+- Store `highlighted_evidence_text` with the override and/or propose a new alias/receipt update.
+
+Decision-linked metric:
+- `override_with_highlight_rate`: if low, the highlight UX is too heavy; keep it optional and optimize defaults first.
+
+### 3.7 Identity Trapdoor (Graph prior accelerator, v2)
+Problem: unrecognized numbers / “floaters” are high-leverage because a single identity resolution can de-noise many spans.
+
+UI behavior:
+- When a thread contains an unrecognized contact (or suspected floater), show an “Identity” prompt at top-of-feed.
+- Block project labeling for that thread until identity is resolved (fast, 1-field form).
+
+Backend landing zone (v2):
+- Write identity into `project_contacts` (or equivalent) so graph propagation can collapse backlog.
+
+Decision-linked metric:
+- `identity_trapdoor_hit_rate`: if > 1/day, prioritize making identity resolution frictionless.
+
+### 3.8 Punish the Runner-Up (Suppress false positives, v2)
+When the AI guessed project A and the human chose B, we must learn “not A” as well as “yes B.”
+
+UI behavior:
+- On override, briefly flash a non-annoying micro-receipt: “Not <AI guess>.”
+
+Backend landing zone (v2):
+- Send `rejected_project_id` (AI guess) along with `selected_project_id` so the ledger can update both directions.
+
+Decision-linked metric:
+- `repeat_false_positive_rate`: if the same rejected guess recurs after overrides, the model update path is broken.
+
 ## 4) iOS UX Plan (Learning Loop = Job 1)
 ### 4.1 What to ship next (based on live numbers)
 Because the queue is currently dominated by weak anchors:
@@ -202,7 +264,7 @@ Every iOS PR that changes the truth surface includes:
 - `USER_BENEFIT:` 1 sentence, user-visible.
 - `REAL_DATA_POINTER:` queue_id / interaction_id / request_id(s) exercised (redacted secrets).
 - `GIT_PROOF:` merge SHA.
-- `SIM_PROOF:` screenshots committed under `camber/artifacts/ios_simulator_smoke/YYYY-MM-DD/...`.
+- `SIM_PROOF:` screenshots committed under `camber/artifacts/ios_simulator_smoke/YYYY-MM-DD/...` (and embedded in PR description if possible).
 
 Open integration: Strat iOS is producing a parallel UI/UX finesse plan; this doc is meant to be updated with their specific interaction design choices once received.
 
@@ -214,3 +276,6 @@ Canonical copy strings (suggested SSOT):
 - “Split thread”
 - “Evidence tokens”
 - “Override (expert)” (gate behind confirmation)
+- Titles: “Pick a project”, “Needs split”, “Pipeline issue”
+- Buttons: “Pick project”, “Confirm”, “Mark multi-project”, “Repair pipeline”, “Dismiss”, “Undo”, “Copy receipt”
+- Errors: “Couldn’t load review queue” / “Try again”
