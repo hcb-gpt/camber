@@ -856,7 +856,7 @@ function deriveContactLastSummary(row: any): string | null {
     return "Phone call";
   }
 
-  if (interactionType === "sms") {
+  if (interactionType === "sms" || interactionType === "sms_thread" || interactionType === "text") {
     if (direction === "inbound") return "Incoming text message";
     if (direction === "outbound") return "Outgoing text message";
     return "Text message";
