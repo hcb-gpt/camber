@@ -820,9 +820,9 @@ export function deterministicUUID(input: string): string {
   return [
     padded.slice(0, 8),
     padded.slice(8, 12),
-    "4" + padded.slice(12, 15),
-    "8" + padded.slice(15, 18),
-    padded.slice(18, 30),
+    "4" + padded.slice(13, 16),
+    "8" + padded.slice(17, 20),
+    padded.slice(20, 32),
   ].join("-");
 }
 
