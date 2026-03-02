@@ -25,7 +25,7 @@
  */
 
 import { getDb, generateBatchRunId } from "./shared/db.ts";
-import type { LabelingResult, LabelSource, PassStats } from "./shared/types.ts";
+import type { LabelingResult, PassStats } from "./shared/types.ts";
 
 // ---------------------------------------------------------------------------
 // CLI args
