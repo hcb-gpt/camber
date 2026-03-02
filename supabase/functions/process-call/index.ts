@@ -386,7 +386,7 @@ Deno.serve(async (req: Request) => {
   const authHeader = req.headers.get("Authorization");
   const edgeSecret = req.headers.get("X-Edge-Secret");
   // Check edge secret first (for pipeline machine-to-machine calls).
-  const expectedSecret = Deno.env.get("EDGE_SHARED_SECRET");
+  const expectedSecret = Deno.env.get("EDGE_SHARED_SECRET")?.trim();
   const hasValidEdgeSecret = expectedSecret &&
     edgeSecret === expectedSecret;
 

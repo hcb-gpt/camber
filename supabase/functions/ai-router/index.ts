@@ -1600,7 +1600,7 @@ Deno.serve(async (req: Request) => {
   }
 
   const edgeSecretHeader = req.headers.get("X-Edge-Secret");
-  const expectedSecret = Deno.env.get("EDGE_SHARED_SECRET");
+  const expectedSecret = Deno.env.get("EDGE_SHARED_SECRET")?.trim();
   if (!expectedSecret || edgeSecretHeader !== expectedSecret) {
     return new Response(
       JSON.stringify({

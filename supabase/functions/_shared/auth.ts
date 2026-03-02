@@ -30,7 +30,7 @@ export function requireEdgeSecret(
 ): AuthResult {
   // 1. Check X-Edge-Secret header
   const edgeSecret = req.headers.get("X-Edge-Secret");
-  const expectedSecret = Deno.env.get("EDGE_SHARED_SECRET");
+  const expectedSecret = Deno.env.get("EDGE_SHARED_SECRET")?.trim();
 
   if (!expectedSecret) {
     console.error("[auth] EDGE_SHARED_SECRET not configured");
@@ -71,7 +71,7 @@ export function requireEdgeSecret(
  */
 export function validateEdgeSecret(req: Request): boolean {
   const edgeSecret = req.headers.get("X-Edge-Secret");
-  const expectedSecret = Deno.env.get("EDGE_SHARED_SECRET");
+  const expectedSecret = Deno.env.get("EDGE_SHARED_SECRET")?.trim();
   if (!expectedSecret || !edgeSecret) return false;
   return constantTimeEqual(edgeSecret, expectedSecret);
 }
