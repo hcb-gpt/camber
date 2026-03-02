@@ -97,6 +97,7 @@ const BANNED_OUTPUT_PATTERNS: Array<{ re: RegExp; label: string }> = [
   { re: /\boutbound\b/i, label: "outbound" },
   { re: /\binteraction(s)?\b/i, label: "interaction" },
   { re: /\bthese interactions show\b/i, label: "these_interactions_show" },
+  { re: /\b[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\b/i, label: "uuid" },
   { re: /\b\d{4}-\d{2}-\d{2}(?:[T\s]\d{2}:\d{2}(?::\d{2})?)?/i, label: "iso_datetime" },
   { re: /\b\d{1,2}\/\d{1,2}\/\d{2,4}\b/i, label: "slash_date" },
   { re: /\b(?:jan|feb|mar|apr|may|jun|jul|aug|sep|sept|oct|nov|dec)[a-z]*\s+\d{1,2}(?:,\s*\d{4})?\b/i, label: "month_date" },
