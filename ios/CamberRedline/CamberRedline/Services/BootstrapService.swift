@@ -150,6 +150,7 @@ final class BootstrapService {
         isWrite: Bool = false
     ) {
         request.setValue("Bearer \(anonKey)", forHTTPHeaderField: "Authorization")
+        request.setValue(anonKey, forHTTPHeaderField: "apikey")
 
         guard isWrite, edgeSecretPolicy == .bootstrapWritesOnly else { return }
 

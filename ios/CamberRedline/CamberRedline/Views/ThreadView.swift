@@ -301,9 +301,11 @@ struct ThreadView: View {
                     let unassignedIds = unassignedInteractions(in: groups)
                     if !unassignedIds.isEmpty {
                         if isTruthGraphStatusCardEnabled {
+                            let probeInteractionId = truthGraphProbeInteractionId(in: groups)
                             TruthGraphStatusCardView(
                                 viewModel: viewModel,
                                 unassignedIds: unassignedIds,
+                                probeInteractionId: probeInteractionId,
                                 reloadThread: {
                                     Task {
                                         await viewModel.loadThread(contactId: contact.contactId)
@@ -904,6 +906,48 @@ struct ThreadView: View {
         return Array(ids).sorted()
     }
 
+    private func truthGraphProbeInteractionId(in groups: [DisplayGroup]) -> String? {
+        for group in groups {
+            switch group {
+            case .callGroup(let header, _):
+                let optimisticResolved = header.spans.filter {
+                    $0.needsAttribution && spanOverrides[$0.spanId] != nil
+                }.count
+                if header.pendingAttributionCount - optimisticResolved > 0 {
+                    return header.interactionId
+                }
+            case .smsGroup(let entries, _):
+                for entry in entries where entry.needsAttribution && smsOverrides[entry.messageId]?.projectId == nil {
+                    if let derived = deriveSmsThreadInteractionId(from: entry) {
+                        return derived
+                    }
+                }
+            case .voicemail, .aiSummary:
+                break
+            }
+        }
+        return nil
+    }
+
+    private func deriveSmsThreadInteractionId(from entry: SMSEntry) -> String? {
+        guard let eventAt = ThreadItem.sms(entry).eventAtDate else { return nil }
+        let sentAtSeconds = Int(eventAt.timeIntervalSince1970)
+        let phoneDigits = normalizePhoneDigits(contact.phone)
+        if !phoneDigits.isEmpty {
+            return "sms_thread_\(phoneDigits)_\(sentAtSeconds)"
+        }
+        return "sms_thread__\(sentAtSeconds)"
+    }
+
+    private func normalizePhoneDigits(_ phone: String?) -> String {
+        let digits = (phone ?? "").filter(\.isNumber)
+        guard !digits.isEmpty else { return "" }
+        if digits.count > 10 {
+            return String(digits.suffix(10))
+        }
+        return digits
+    }
+
     @ViewBuilder
     private func legacyMissingAttributionBanner(missingCount: Int) -> some View {
         HStack(spacing: 8) {
@@ -988,12 +1032,14 @@ struct ThreadView: View {
 struct TruthGraphStatusCardView: View {
     var viewModel: ThreadViewModel
     let unassignedIds: [String]
+    let probeInteractionId: String?
     let reloadThread: () -> Void
 
     private let accent = Color(red: 0.95, green: 0.62, blue: 0.23)
 
     private var primaryInteractionId: String? {
-        unassignedIds.first(where: { $0.hasPrefix("cll_") || $0.hasPrefix("sms_thread_") || $0.hasPrefix("sms_thread__") })
+        probeInteractionId
+            ?? unassignedIds.first(where: { $0.hasPrefix("cll_") || $0.hasPrefix("sms_thread_") || $0.hasPrefix("sms_thread__") })
             ?? unassignedIds.first
     }
 
