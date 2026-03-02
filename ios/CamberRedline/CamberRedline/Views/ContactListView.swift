@@ -5,6 +5,14 @@ fileprivate enum InboxFilter: String, CaseIterable {
     case attribution = "Attribution"
 }
 
+fileprivate enum ThreadSwipeSmokeAutomation {
+    static let launchFlag = "--smoke-thread-swipe"
+
+    static var isEnabled: Bool {
+        ProcessInfo.processInfo.arguments.contains(launchFlag)
+    }
+}
+
 struct ContactListView: View {
     var contactListViewModel: ContactListViewModel
     var threadViewModel: ThreadViewModel
@@ -13,6 +21,8 @@ struct ContactListView: View {
 
     @State private var searchText = ""
     @State private var filter: InboxFilter = .all
+    @State private var navigationPath: [Contact] = []
+    @State private var didAutoNavigateForSmoke = false
 
     private var filteredContactsBySearch: [Contact] {
         let trimmed = searchText.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -50,7 +60,7 @@ struct ContactListView: View {
     }
 
     var body: some View {
-        NavigationStack {
+        NavigationStack(path: $navigationPath) {
             contactListContent
         }
         .preferredColorScheme(.dark)
@@ -88,6 +98,15 @@ struct ContactListView: View {
                 Task {
                     await contactListViewModel.loadContacts()
                 }
+            }
+            .task(id: contactListViewModel.contacts.count) {
+                guard ThreadSwipeSmokeAutomation.isEnabled else { return }
+                guard !didAutoNavigateForSmoke else { return }
+                guard !visibleContacts.isEmpty else { return }
+
+                didAutoNavigateForSmoke = true
+                let candidate = visibleContacts.first(where: { $0.ungradedCount > 0 }) ?? visibleContacts[0]
+                navigationPath = [candidate]
             }
     }
 
