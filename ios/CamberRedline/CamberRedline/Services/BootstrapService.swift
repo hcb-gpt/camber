@@ -202,14 +202,15 @@ final class BootstrapService {
         request.httpMethod = "POST"
         request.setValue("application/json", forHTTPHeaderField: "Content-Type")
 
-        let body: [String: Any] = [
+        let body: [String: Any?] = [
             "message": message,
-            "contact_id": contactId as Any,
-            "project_id": projectId as Any,
+            "contact_id": contactId,
+            "project_id": projectId,
             "history": history.map { ["role": $0.role, "content": $0.content] }
-        ].compactMapValues { $0 }
+        ]
+        let filteredBody = body.compactMapValues { $0 }
 
-        request.httpBody = try JSONSerialization.data(withJSONObject: body)
+        request.httpBody = try JSONSerialization.data(withJSONObject: filteredBody)
         let payloadString = String(data: request.httpBody ?? Data(), encoding: .utf8) ?? "{}"
 
         let (bytes, response) = try await session.bytes(for: request)
