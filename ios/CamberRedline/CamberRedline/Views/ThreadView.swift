@@ -2039,7 +2039,7 @@ private struct SpanBlock: View {
                                 }
                             }
                             actionPill(
-                                "Correct",
+                                "Change Project",
                                 systemImage: "folder",
                                 tint: Color(red: 0.95, green: 0.62, blue: 0.23),
                                 disabled: writesLocked
@@ -2069,7 +2069,7 @@ private struct SpanBlock: View {
                         .padding(.vertical, 2)
                     }
 
-                    Text("Swipe: \u{2192} Confirm  \u{2190} Reject  \u{2191} Correct  \u{2193} Comment")
+                    Text("Swipe: \u{2192} Confirm · \u{2190} Reject · \u{2191} Change Project · \u{2193} Comment")
                         .font(.caption2)
                         .foregroundStyle(Color(.systemGray3))
                 }
