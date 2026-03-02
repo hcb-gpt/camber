@@ -46,14 +46,16 @@ function parseJwtPayload(token: string): Record<string, unknown> | null {
 type CacheEntry = { ok: boolean; expiresAtMs: number };
 const bearerValidationCache = new Map<string, CacheEntry>();
 const BEARER_CACHE_TTL_MS = 5 * 60 * 1000;
+const BEARER_NEGATIVE_CACHE_TTL_MS = 15 * 1000;
 const BEARER_CACHE_MAX_ENTRIES = 64;
+const REST_PROBE_TIMEOUT_MS = 5000;
 
-function cacheSet(token: string, ok: boolean): void {
+function cacheSet(token: string, ok: boolean, ttlMs = BEARER_CACHE_TTL_MS): void {
   if (bearerValidationCache.size >= BEARER_CACHE_MAX_ENTRIES) {
     const first = bearerValidationCache.keys().next().value;
     if (first) bearerValidationCache.delete(first);
   }
-  bearerValidationCache.set(token, { ok, expiresAtMs: Date.now() + BEARER_CACHE_TTL_MS });
+  bearerValidationCache.set(token, { ok, expiresAtMs: Date.now() + ttlMs });
 }
 
 async function validateSupabaseAnonKeyViaRest(
@@ -64,7 +66,7 @@ async function validateSupabaseAnonKeyViaRest(
   if (cached && cached.expiresAtMs > Date.now()) return cached.ok;
 
   const controller = new AbortController();
-  const timeout = setTimeout(() => controller.abort(), 1500);
+  const timeout = setTimeout(() => controller.abort(), REST_PROBE_TIMEOUT_MS);
 
   try {
     const url = `${supabaseUrl.replace(/\/$/, "")}/rest/v1/`;
@@ -76,11 +78,20 @@ async function validateSupabaseAnonKeyViaRest(
       },
       signal: controller.signal,
     });
-    const ok = resp.ok;
-    cacheSet(token, ok);
-    return ok;
+    if (resp.ok) {
+      cacheSet(token, true, BEARER_CACHE_TTL_MS);
+      return true;
+    }
+
+    // Cache explicit auth failures briefly to limit abuse without turning
+    // transient network issues into a 5-minute false-negative.
+    if (resp.status === 401 || resp.status === 403) {
+      cacheSet(token, false, BEARER_NEGATIVE_CACHE_TTL_MS);
+    }
+
+    return false;
   } catch {
-    cacheSet(token, false);
+    // Network/timeout: don't negative-cache (avoid “fail closed” on transient egress slowness).
     return false;
   } finally {
     clearTimeout(timeout);
@@ -211,12 +222,16 @@ export async function checkTopLevelEdgeSecretOrAnonKey(
 export function runTopLevelEdgeSecretProbe(
   req: Request,
   expectedEdgeSecret?: string,
+  functionVersion?: string,
 ): Response {
   const result = checkTopLevelEdgeSecret(req, expectedEdgeSecret);
-  return new Response(JSON.stringify(result), {
-    status: result.status,
-    headers: { "Content-Type": "application/json" },
-  });
+  return new Response(
+    JSON.stringify({ ...result, function_version: functionVersion }),
+    {
+      status: result.status,
+      headers: { "Content-Type": "application/json" },
+    },
+  );
 }
 
 export async function runTopLevelEdgeSecretOrAnonKeyProbe(
@@ -224,10 +239,14 @@ export async function runTopLevelEdgeSecretOrAnonKeyProbe(
   expectedEdgeSecret?: string,
   expectedAnonKey?: string,
   supabaseUrl?: string,
+  functionVersion?: string,
 ): Promise<Response> {
   const result = await checkTopLevelEdgeSecretOrAnonKey(req, expectedEdgeSecret, expectedAnonKey, supabaseUrl);
-  return new Response(JSON.stringify(result), {
-    status: result.status,
-    headers: { "Content-Type": "application/json" },
-  });
+  return new Response(
+    JSON.stringify({ ...result, function_version: functionVersion }),
+    {
+      status: result.status,
+      headers: { "Content-Type": "application/json" },
+    },
+  );
 }
