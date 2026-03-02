@@ -8,6 +8,10 @@ Deno.test("deterministicUUID generates a stable and valid UUID format", () => {
   const uuid1 = deterministicUUID(input1);
   const uuid2 = deterministicUUID(input2);
 
+  // Assert exact outputs to prevent silent churn in synthetic contact IDs (iOS identity/caching).
+  assertEquals(uuid1, "47be4705-47be-4705-87be-470547be4705");
+  assertEquals(uuid2, "61d809d5-61d8-49d5-81d8-09d561d809d5");
+
   // Assert correct UUID format
   const uuidRegex = /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-8[0-9a-f]{3}-[0-9a-f]{12}$/i;
   assertEquals(uuidRegex.test(uuid1), true, "UUID 1 is invalid format");
