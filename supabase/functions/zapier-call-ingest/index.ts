@@ -71,9 +71,9 @@ function isBesidePayload(p: any): boolean {
 function normalizeTimestamp(ts: string | null | undefined): string | null {
   if (!ts) return null;
   // Strip Go-style trailing timezone name (UTC, EST, PST, etc.)
-  let normalized = ts.replace(/\s+[A-Z]{2,5}$/, '');
+  let normalized = ts.replace(/\s+[A-Z]{2,5}$/, "");
   // Ensure offset format: +0000 → +00:00
-  normalized = normalized.replace(/(\+|-)(\d{2})(\d{2})$/, '$1$2:$3');
+  normalized = normalized.replace(/(\+|-)(\d{2})(\d{2})$/, "$1$2:$3");
   return normalized;
 }
 
