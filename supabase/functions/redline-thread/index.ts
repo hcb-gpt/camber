@@ -29,7 +29,7 @@ type RedlineApiRoute =
   | { kind: "thread"; contactId: string }
   | { kind: "spans"; contactId: string }
   | { kind: "verdict" }
-  | { kind: "unknown"; path: string[] };
+  | { kind: "unknown"; base: string; path: string[] };
 
 function corsHeaders(): Record<string, string> {
   return {
@@ -784,12 +784,16 @@ function parseRedlineApiRoute(url: URL): RedlineApiRoute | null {
   if (redlineIndex === -1) return null;
 
   const tail = parts.slice(redlineIndex + 1);
-  if (tail.length === 0) return { kind: "unknown", path: tail };
+  const base = parts[redlineIndex];
+  if (tail.length === 0) {
+    if (base === "redline-thread") return { kind: "contacts" };
+    return { kind: "unknown", base, path: tail };
+  }
   if (tail[0] === "contacts" && tail.length === 1) return { kind: "contacts" };
   if (tail[0] === "thread" && tail.length >= 2) return { kind: "thread", contactId: decodeURIComponent(tail[1]) };
   if (tail[0] === "spans" && tail.length >= 2) return { kind: "spans", contactId: decodeURIComponent(tail[1]) };
   if (tail[0] === "verdict" && tail.length === 1) return { kind: "verdict" };
-  return { kind: "unknown", path: tail };
+  return { kind: "unknown", base, path: tail };
 }
 
 // Parse synthetic SMS-only contact keys like "sms:7065551234" → digits, or null
@@ -3041,7 +3045,7 @@ Deno.serve(async (req: Request) => {
         return json({
           ok: false,
           error_code: "unknown_redline_route",
-          error: `Unsupported redline API path: /redline/${apiRoute.path.join("/")}`,
+          error: `Unsupported redline API path: /${apiRoute.base}/${apiRoute.path.join("/")}`,
           function_version: FUNCTION_VERSION,
         }, 404);
       }
