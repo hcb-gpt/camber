@@ -10,6 +10,8 @@ DERIVED_DIR="${OUT_DIR}/DerivedData"
 SCREEN_DIR="${OUT_DIR}/screens"
 SYNTHETIC_IDS="${SYNTHETIC_IDS:-}"
 DRY_RUN=0
+TRUTH_SURFACE=0
+TRUTH_SURFACE_LOCAL=0
 SCREEN_STEPS=7
 SCREEN_INTERVAL_SECONDS=4
 
@@ -19,6 +21,8 @@ Usage: scripts/ios_simulator_smoke_drive.sh [options]
 
 Options:
   --synthetic-ids <csv>   Comma-separated interaction IDs to target in triage smoke.
+  --truth-surface         Run picker-first truth surface smoke (adds --smoke-truth-surface).
+  --truth-surface-local   Run truth surface smoke with a local synthetic queue (no network).
   --dry-run               Print chosen simulator and exit (no build).
   --help, -h              Show this help.
 EOF
@@ -35,6 +39,15 @@ while [[ $# -gt 0 ]]; do
       SYNTHETIC_IDS="${2}"
       shift 2
       ;;
+    --truth-surface)
+      TRUTH_SURFACE=1
+      shift 1
+      ;;
+    --truth-surface-local)
+      TRUTH_SURFACE=1
+      TRUTH_SURFACE_LOCAL=1
+      shift 1
+      ;;
     --dry-run)
       DRY_RUN=1
       shift
@@ -50,6 +63,12 @@ while [[ $# -gt 0 ]]; do
       ;;
   esac
 done
+
+if [[ "${TRUTH_SURFACE}" -eq 1 ]]; then
+  # Truth-surface proof wants tighter sampling around the triage sheet.
+  SCREEN_STEPS=12
+  SCREEN_INTERVAL_SECONDS=2
+fi
 
 source "${ROOT_DIR}/scripts/ios_simulator_smoke_lib.sh"
 
@@ -132,6 +151,12 @@ trap cleanup EXIT
 
 echo "[smoke] launching app with automation flag"
 LAUNCH_ARGS=(--smoke-drive)
+if [[ "${TRUTH_SURFACE}" -eq 1 ]]; then
+  LAUNCH_ARGS+=(--smoke-truth-surface)
+fi
+if [[ "${TRUTH_SURFACE_LOCAL}" -eq 1 ]]; then
+  LAUNCH_ARGS+=(--smoke-truth-surface-local)
+fi
 if [[ -n "${SYNTHETIC_IDS}" ]]; then
   LAUNCH_ARGS+=(--smoke-synthetic-ids "${SYNTHETIC_IDS}")
 fi

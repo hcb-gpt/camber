@@ -4,10 +4,15 @@ import os
 
 private enum CardTriageSmokeAutomation {
     static let launchFlag = "--smoke-drive"
+    static let truthSurfaceLocalFlag = "--smoke-truth-surface-local"
     static let logger = Logger(subsystem: "CamberRedline", category: "smoke")
 
     static var isEnabled: Bool {
         ProcessInfo.processInfo.arguments.contains(launchFlag)
+    }
+
+    static var truthSurfaceLocalEnabled: Bool {
+        ProcessInfo.processInfo.arguments.contains(truthSurfaceLocalFlag)
     }
 }
 
@@ -26,6 +31,36 @@ struct CardItem: Identifiable {
     let reasonCodes: [String]
     let evidenceAnchors: [Anchor]
     let keywords: [String]
+
+    init(
+        id: String,
+        queueId: String,
+        spanId: String,
+        interactionId: String,
+        contactName: String,
+        eventDate: Date?,
+        transcriptSegment: String,
+        projectId: String?,
+        confidence: Double,
+        candidates: [Candidate],
+        reasonCodes: [String],
+        evidenceAnchors: [Anchor],
+        keywords: [String]
+    ) {
+        self.id = id
+        self.queueId = queueId
+        self.spanId = spanId
+        self.interactionId = interactionId
+        self.contactName = contactName
+        self.eventDate = eventDate
+        self.transcriptSegment = transcriptSegment
+        self.projectId = projectId
+        self.confidence = confidence
+        self.candidates = candidates
+        self.reasonCodes = reasonCodes
+        self.evidenceAnchors = evidenceAnchors
+        self.keywords = keywords
+    }
 
     init(from item: ReviewItem) {
         id = item.id
@@ -124,6 +159,44 @@ final class CardTriageViewModel {
         defer { isLoading = false }
 
         do {
+            if CardTriageSmokeAutomation.isEnabled, CardTriageSmokeAutomation.truthSurfaceLocalEnabled {
+                service.clearWriteLock()
+
+                let projectId = "proj_smoke_truth_surface_v1"
+                projectNameById = [projectId: "Smoke — Truth Surface (v1)"]
+                totalAtLoad = 1
+
+                queue = [
+                    CardItem(
+                        id: "rq_smoke_truth_surface_v1",
+                        queueId: "rq_smoke_truth_surface_v1",
+                        spanId: "spn_smoke_truth_surface_v1",
+                        interactionId: "cll_smoke_truth_surface_v1",
+                        contactName: "Smoke Test",
+                        eventDate: Date().addingTimeInterval(-3600),
+                        transcriptSegment: "I want the Winship hardscape like we discussed last week.",
+                        projectId: projectId,
+                        confidence: 0.83,
+                        candidates: [
+                            Candidate(name: "Smoke — Truth Surface (v1)", projectId: projectId, evidenceTags: ["keyword"])
+                        ],
+                        reasonCodes: ["unknown_project"],
+                        evidenceAnchors: [
+                            Anchor(
+                                text: "Winship hardscape",
+                                quote: "I want the Winship hardscape like we discussed last week.",
+                                matchType: "keyword",
+                                candidateProjectId: projectId
+                            )
+                        ],
+                        keywords: ["winship", "hardscape"]
+                    )
+                ]
+                cardViewStartTime = Date()
+                CardTriageSmokeAutomation.logger.log("SMOKE_EVENT TRIAGE_LOCAL_QUEUE_READY items=1")
+                return
+            }
+
             let response = try await service.fetchQueue(limit: 50)
             projectNameById = Dictionary(
                 uniqueKeysWithValues: response.projects.map { ($0.id, $0.name) }
