@@ -36,7 +36,7 @@ if [ -z "${SUPABASE_URL:-}" ] || [ -z "${SUPABASE_SERVICE_ROLE_KEY:-}" ] || [ -z
       echo ""
       echo "   Setup: ~/.camber/keychain-import.sh (preferred)"
       echo "   Or: cp ~/Desktop/env\ secrets.txt ~/.camber/credentials.env"
-      exit 1
+      return 1 2>/dev/null || exit 1
   fi
 fi
 
@@ -48,7 +48,7 @@ MISSING=""
 
 if [ -n "$MISSING" ]; then
     echo "⚠️  Missing required vars:$MISSING"
-    exit 1
+    return 1 2>/dev/null || exit 1
 fi
 
 # Mark successful load for this shell

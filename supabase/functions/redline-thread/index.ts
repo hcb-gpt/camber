@@ -3025,6 +3025,15 @@ Deno.serve(async (req: Request) => {
       return await handleHealth(db, t0);
     }
 
+    const expectedEdgeSecret = Deno.env.get("EDGE_SHARED_SECRET");
+    if (!expectedEdgeSecret) {
+      return json({ ok: false, error_code: "server_misconfigured", error: "EDGE_SHARED_SECRET not set" }, 500);
+    }
+    const providedSecret = req.headers.get("X-Edge-Secret");
+    if (!providedSecret || providedSecret !== expectedEdgeSecret) {
+      return json({ ok: false, error_code: "missing_auth", error: "Valid X-Edge-Secret required" }, 401);
+    }
+
     const action = url.searchParams.get("action");
 
     const apiRoute = parseRedlineApiRoute(url);
