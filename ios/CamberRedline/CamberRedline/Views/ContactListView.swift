@@ -2,7 +2,7 @@ import SwiftUI
 
 fileprivate enum InboxFilter: String, CaseIterable {
     case all = "All"
-    case unread = "Unread"
+    case attribution = "Attribution"
 }
 
 struct ContactListView: View {
@@ -42,9 +42,9 @@ struct ContactListView: View {
         switch filter {
         case .all:
             return contacts
-        case .unread:
+        case .attribution:
             // Placeholder mapping (until backend provides a true unread metric):
-            // "Unread" == "has ungraded triage pressure"
+            // "Attribution" == "has ungraded triage pressure"
             return contacts.filter { $0.ungradedCount > 0 }
         }
     }
@@ -60,7 +60,9 @@ struct ContactListView: View {
         ContactList(
             contacts: visibleContacts,
             selectedTab: $selectedTab,
-            filter: $filter
+            filter: $filter,
+            triageCount: contactListViewModel.totalUngraded,
+            isTriagePresented: $isTriagePresented
         )
             .searchable(
                 text: $searchText,
@@ -144,6 +146,8 @@ private struct ContactList: View {
     let contacts: [Contact]
     @Binding var selectedTab: RedlineTab
     @Binding var filter: InboxFilter
+    let triageCount: Int
+    @Binding var isTriagePresented: Bool
 
     var body: some View {
         List {
@@ -155,6 +159,7 @@ private struct ContactList: View {
             }
 
             Section {
+                attributionTriageRow
                 askAIRow
                 ForEach(contacts) { contact in
                     NavigationLink(value: contact) {
@@ -174,8 +179,8 @@ private struct ContactList: View {
                 pill(InboxFilter.all.rawValue, isSelected: filter == .all) {
                     filter = .all
                 }
-                pill(InboxFilter.unread.rawValue, isSelected: filter == .unread) {
-                    filter = .unread
+                pill(InboxFilter.attribution.rawValue, isSelected: filter == .attribution) {
+                    filter = .attribution
                 }
                 pill("Ask AI", isSelected: false, icon: "sparkles") {
                     selectedTab = .ai
@@ -183,6 +188,53 @@ private struct ContactList: View {
             }
             .padding(.vertical, 4)
         }
+    }
+
+    private var attributionTriageRow: some View {
+        Button {
+            isTriagePresented = true
+        } label: {
+            HStack(spacing: 12) {
+                Circle()
+                    .fill(Color(red: 0.95, green: 0.62, blue: 0.23))
+                    .frame(width: 34, height: 34)
+                    .overlay(
+                        Image(systemName: "checkmark.circle.fill")
+                            .font(.system(size: 14, weight: .semibold))
+                            .foregroundStyle(.black.opacity(0.85))
+                    )
+
+                VStack(alignment: .leading, spacing: 2) {
+                    Text("Attribution Triage")
+                        .font(.system(size: 16, weight: .semibold))
+                        .foregroundStyle(.white)
+                    Text("Resolve unassigned items")
+                        .font(.system(size: 13))
+                        .foregroundStyle(.secondary)
+                }
+
+                Spacer()
+
+                if triageCount > 0 {
+                    Text("\(triageCount)")
+                        .font(.caption)
+                        .fontWeight(.semibold)
+                        .foregroundStyle(.black)
+                        .padding(.horizontal, 10)
+                        .padding(.vertical, 4)
+                        .background(Color(red: 0.95, green: 0.62, blue: 0.23), in: Capsule())
+                }
+
+                Image(systemName: "chevron.right")
+                    .font(.system(size: 12, weight: .semibold))
+                    .foregroundStyle(Color(white: 0.45))
+            }
+            .padding(.vertical, 6)
+        }
+        .buttonStyle(.plain)
+        .listRowBackground(Color(white: 0.06))
+        .listRowSeparatorTint(Color(white: 0.13))
+        .accessibilityLabel("Open attribution triage")
     }
 
     private var askAIRow: some View {

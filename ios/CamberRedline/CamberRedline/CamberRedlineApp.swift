@@ -14,6 +14,21 @@ private enum AppSmokeAutomation {
     }
 }
 
+private enum TruthGraphDemoAutomation {
+    static let launchFlag = "--truth-graph-demo"
+    static let interactionIdEnv = "TRUTH_GRAPH_DEMO_INTERACTION_ID"
+    static let defaultInteractionId = "cll_missing_2057918239"
+
+    static var isEnabled: Bool {
+        ProcessInfo.processInfo.arguments.contains(launchFlag)
+    }
+
+    static var interactionId: String {
+        let raw = (ProcessInfo.processInfo.environment[interactionIdEnv] ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
+        return raw.isEmpty ? defaultInteractionId : raw
+    }
+}
+
 enum RedlineTab: Hashable {
     case inbox
     case calls
@@ -28,6 +43,7 @@ struct CamberRedlineApp: App {
     @State private var threadViewModel = ThreadViewModel()
     @State private var selectedTab: RedlineTab = .inbox
     @State private var isTriagePresented = false
+    @State private var isTruthGraphDemoPresented = false
     @State private var didRunSmokeDrive = false
     @Environment(\.scenePhase) private var scenePhase
 
@@ -86,8 +102,30 @@ struct CamberRedlineApp: App {
             .sheet(isPresented: $isTriagePresented) {
                 AttributionTriageCardsView()
             }
+            .sheet(isPresented: $isTruthGraphDemoPresented) {
+                VStack(alignment: .leading, spacing: 14) {
+                    Text("Truth Graph Demo (Option B)")
+                        .font(.headline)
+                    Text("Interaction: \(TruthGraphDemoAutomation.interactionId)")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+
+                    TruthGraphStatusCardView(
+                        viewModel: threadViewModel,
+                        unassignedIds: [TruthGraphDemoAutomation.interactionId],
+                        reloadThread: {}
+                    )
+
+                    Spacer()
+                }
+                .padding()
+                .preferredColorScheme(.dark)
+                .presentationDetents([.large])
+            }
             .task {
-                if AppSmokeAutomation.isEnabled {
+                if TruthGraphDemoAutomation.isEnabled {
+                    isTruthGraphDemoPresented = true
+                } else if AppSmokeAutomation.isEnabled {
                     // Smoke mode: skip Redline bootstrapping to reach triage faster.
                     // Contact list, cache warming, and subscriptions are not needed
                     // for smoke drive and add 3-8s of blocking network time.

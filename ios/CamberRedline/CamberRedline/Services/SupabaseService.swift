@@ -10,7 +10,8 @@ final class SupabaseService {
     private enum Config {
         static let supabaseURLKey = "SUPABASE_URL"
         static let supabaseAnonKeyKey = "SUPABASE_ANON_KEY"
-        static let fallbackURL = URL(string: "https://example.invalid")!
+        static let defaultSupabaseURL = URL(string: "https://rjhdwidddtfetbwqolof.supabase.co")!
+        static let defaultAnonKey = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InJqaGR3aWRkZHRmZXRid3FvbG9mIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NjUxMTYwNDQsImV4cCI6MjA4MDY5MjA0NH0.m0BArfDxAMQrX2-50_IgircX_SwWLe5VccxewGmuWio"
     }
 
     private struct ThreadCacheKey: Hashable {
@@ -35,24 +36,32 @@ final class SupabaseService {
     private var threadCache: [ThreadCacheKey: ThreadCacheEntry] = [:]
 
     private init() {
-        let supabaseUrlString = (Bundle.main.object(forInfoDictionaryKey: Config.supabaseURLKey) as? String)?
-            .trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
-        let anonKey = (Bundle.main.object(forInfoDictionaryKey: Config.supabaseAnonKeyKey) as? String)?
-            .trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        let env = ProcessInfo.processInfo.environment
+        let supabaseUrlString = (env[Config.supabaseURLKey]
+            ?? (Bundle.main.object(forInfoDictionaryKey: Config.supabaseURLKey) as? String)
+            ?? "")
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+        let anonKey = (env[Config.supabaseAnonKeyKey]
+            ?? (Bundle.main.object(forInfoDictionaryKey: Config.supabaseAnonKeyKey) as? String)
+            ?? "")
+            .trimmingCharacters(in: .whitespacesAndNewlines)
 
-        let supabaseURL = URL(string: supabaseUrlString) ?? Config.fallbackURL
+        let supabaseURL = URL(string: supabaseUrlString) ?? Config.defaultSupabaseURL
+        let resolvedAnonKey = anonKey.isEmpty ? Config.defaultAnonKey : anonKey
 
-        if supabaseURL == Config.fallbackURL || anonKey.isEmpty {
-            assertionFailure("Missing \(Config.supabaseURLKey) / \(Config.supabaseAnonKeyKey) in Info.plist")
+        if supabaseUrlString.isEmpty || anonKey.isEmpty {
+            #if DEBUG
+            print("[SupabaseService] Missing \(Config.supabaseURLKey) / \(Config.supabaseAnonKeyKey) in Info.plist; using defaults for local dev.")
+            #endif
         }
 
-        self.anonKey = anonKey
+        self.anonKey = resolvedAnonKey
         edgeFunctionBaseURL = supabaseURL.appendingPathComponent("functions/v1/redline-thread")
         reviewResolveURL = supabaseURL.appendingPathComponent("functions/v1/review-resolve")
 
         client = SupabaseClient(
             supabaseURL: supabaseURL,
-            supabaseKey: anonKey
+            supabaseKey: resolvedAnonKey
         )
     }
 
@@ -182,6 +191,37 @@ final class SupabaseService {
             print("[ThreadDecode] Lossy decode dropped \(decoded.droppedCount) malformed thread items")
         }
         threadCache[cacheKey] = ThreadCacheEntry(response: decoded, fetchedAt: Date())
+        return decoded
+    }
+
+    // MARK: - Truth Graph (edge function: GET ?action=truth_graph&interaction_id=X)
+
+    func fetchTruthGraph(interactionId: String) async throws -> TruthGraphResponse {
+        var components = URLComponents(url: edgeFunctionBaseURL, resolvingAgainstBaseURL: false)!
+        components.queryItems = [
+            URLQueryItem(name: "action", value: "truth_graph"),
+            URLQueryItem(name: "interaction_id", value: interactionId),
+            URLQueryItem(name: "refresh", value: "1"),
+            URLQueryItem(name: "_ts", value: String(Int(Date().timeIntervalSince1970))),
+        ]
+
+        guard let url = components.url else {
+            throw ServiceError.apiError("Failed to construct truth_graph URL")
+        }
+
+        var request = URLRequest(url: url)
+        request.cachePolicy = .reloadIgnoringLocalCacheData
+        request.setValue("Bearer \(anonKey)", forHTTPHeaderField: "Authorization")
+        request.setValue("no-cache", forHTTPHeaderField: "Cache-Control")
+        request.setValue("no-cache", forHTTPHeaderField: "Pragma")
+
+        let (data, response) = try await URLSession.shared.data(for: request)
+        try validateHTTPResponse(response)
+
+        let decoded = try JSONDecoder().decode(TruthGraphResponse.self, from: data)
+        guard decoded.ok else {
+            throw ServiceError.apiError("Truth Graph endpoint returned ok=false")
+        }
         return decoded
     }
 
@@ -579,6 +619,7 @@ struct RawThreadItem: Decodable {
 // MARK: - ServiceError
 
 enum ServiceError: LocalizedError {
+    case invalidURL
     case invalidResponse
     case httpError(statusCode: Int)
     case apiError(String)
@@ -594,5 +635,65 @@ enum ServiceError: LocalizedError {
         case .apiError(let message):
             return message
         }
+    }
+}
+
+// MARK: - Truth Graph Models (read-only)
+
+struct TruthGraphResponse: Codable, Hashable {
+    let ok: Bool
+    let interactionId: String
+    let hydration: TruthGraphHydration
+    let lane: String
+    let suggestedRepairs: [TruthGraphSuggestedRepair]
+    let warnings: [String]
+    let functionVersion: String?
+    let ms: Int?
+
+    enum CodingKeys: String, CodingKey {
+        case ok
+        case interactionId = "interaction_id"
+        case hydration
+        case lane
+        case suggestedRepairs = "suggested_repairs"
+        case warnings
+        case functionVersion = "function_version"
+        case ms
+    }
+}
+
+struct TruthGraphHydration: Codable, Hashable {
+    let callsRaw: Bool
+    let interactions: Bool
+    let conversationSpans: Bool
+    let evidenceEvents: Bool
+    let spanAttributions: Bool
+    let journalClaims: Bool
+    let reviewQueue: Bool
+
+    enum CodingKeys: String, CodingKey {
+        case callsRaw = "calls_raw"
+        case interactions
+        case conversationSpans = "conversation_spans"
+        case evidenceEvents = "evidence_events"
+        case spanAttributions = "span_attributions"
+        case journalClaims = "journal_claims"
+        case reviewQueue = "review_queue"
+    }
+}
+
+struct TruthGraphSuggestedRepair: Codable, Hashable, Identifiable {
+    let action: String
+    let label: String
+    let idempotencyKey: String
+
+    var id: String {
+        "\(action):\(idempotencyKey)"
+    }
+
+    enum CodingKeys: String, CodingKey {
+        case action
+        case label
+        case idempotencyKey = "idempotency_key"
     }
 }
