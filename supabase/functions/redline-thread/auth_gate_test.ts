@@ -13,6 +13,19 @@ Deno.test("redline-thread keeps auth gate before non-health service-role client 
   );
 });
 
+Deno.test("redline-thread does not allow anon-key bypass for action routes via contact_id param", () => {
+  const source = Deno.readTextFileSync(new URL("./index.ts", import.meta.url));
+
+  assert(
+    !source.includes("if (contactIdParam) return true;"),
+    "Expected allowAnonKey to NOT whitelist all GETs with contactIdParam (bypass risk)",
+  );
+  assert(
+    source.includes("if (!action && contactIdParam) return true;"),
+    "Expected allowAnonKey to only whitelist contactIdParam when no action is present",
+  );
+});
+
 Deno.test("top-level gate rejects missing X-Edge-Secret", async () => {
   const req = new Request("https://example.test/functions/v1/redline-thread?action=contacts");
   const resp = runTopLevelEdgeSecretProbe(req, "expected-secret");

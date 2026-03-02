@@ -3045,7 +3045,9 @@ Deno.serve(async (req: Request) => {
       // Allow anon-key auth only on iOS-known routes; require X-Edge-Secret everywhere else.
       if (req.method === "GET") {
         if (action === "contacts" || action === "reset_clock") return true;
-        if (contactIdParam) return true;
+        // Only allow query-param thread fetches (iOS) when no action is present.
+        // Prevent `contact_id`/`contact_key` from becoming a blanket bypass for other `action=*` GET routes.
+        if (!action && contactIdParam) return true;
         if (apiRoute && (apiRoute.kind === "contacts" || apiRoute.kind === "thread" || apiRoute.kind === "spans")) {
           return true;
         }
