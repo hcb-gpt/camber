@@ -78,7 +78,12 @@ Deno.test("top-level gate (edge-secret-or-anon) rejects junk Bearer tokens", asy
       Authorization: "Bearer foo",
     },
   });
-  const resp = await runTopLevelEdgeSecretOrAnonKeyProbe(req, "expected-secret", "expected-anon", "https://example.test");
+  const resp = await runTopLevelEdgeSecretOrAnonKeyProbe(
+    req,
+    "expected-secret",
+    "expected-anon",
+    "https://example.test",
+  );
   const body = await resp.json();
 
   assertEquals(resp.status, 403);
