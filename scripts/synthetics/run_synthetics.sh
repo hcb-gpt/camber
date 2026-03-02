@@ -75,6 +75,13 @@ while [[ $# -gt 0 ]]; do
   esac
 done
 
+# Normalize/validate run tag after argument parsing.
+RUN_TAG="$(echo "$RUN_TAG" | tr '[:lower:]' '[:upper:]' | tr -cd 'A-Z0-9')"
+if [[ -z "$RUN_TAG" ]]; then
+  echo "ERROR: run tag is empty after normalization (allowed: A-Z, 0-9)"
+  exit 2
+fi
+
 # ── Validate prerequisites ─────────────────────────────────────
 if ! command -v jq &>/dev/null; then
   echo "ERROR: jq is required. Install with: brew install jq"
