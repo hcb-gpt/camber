@@ -122,16 +122,28 @@ async function loadCredentials(): Promise<void> {
 await loadCredentials();
 
 const SUPABASE_URL = requireEnv("SUPABASE_URL").replace(/\/$/, "");
-const EDGE_SECRET = requireEnv("EDGE_SHARED_SECRET");
+const ANON_KEY = String(Deno.env.get("SUPABASE_ANON_KEY") || "").trim();
+const EDGE_SECRET = String(Deno.env.get("EDGE_SHARED_SECRET") || "").trim();
+
+if (!ANON_KEY && !EDGE_SECRET) {
+  throw new Error("Missing auth: set SUPABASE_ANON_KEY (preferred) or EDGE_SHARED_SECRET.");
+}
 
 // ---------------------------------------------------------------------------
 // HTTP helpers
 // ---------------------------------------------------------------------------
 async function fetchJson<T>(url: string): Promise<T> {
+  const headers: Record<string, string> = {};
+  // Prefer anon key for read-only metrics; allow edge secret as fallback.
+  if (ANON_KEY) {
+    headers.Authorization = `Bearer ${ANON_KEY}`;
+    headers.apikey = ANON_KEY;
+  }
+  if (EDGE_SECRET) {
+    headers["X-Edge-Secret"] = EDGE_SECRET;
+  }
   const resp = await fetch(url, {
-    headers: {
-      "X-Edge-Secret": EDGE_SECRET,
-    },
+    headers,
   });
   if (!resp.ok) {
     const body = await resp.text().catch(() => "");
@@ -255,10 +267,23 @@ const bucketCounts: Record<Bucket, number> = {
 };
 
 const reasonCounts = new Map<string, number>();
-const truthLaneCounts = new Map<string, number>();
-let truthFetchFailed = 0;
-let truthJournalMissing = 0;
+const truthLaneCounts = new Map<string, number>(); // per interaction id
+let truthFetchFailedInteractions = 0;
+let truthJournalMissingInteractions = 0;
 const confs: number[] = [];
+
+if (!skipTruthGraph) {
+  for (const interactionId of interactionIds) {
+    const tg = truthByInteraction.get(interactionId);
+    if (!tg || !tg.ok) {
+      truthFetchFailedInteractions += 1;
+      continue;
+    }
+    const lane = String(tg.lane || "unknown").trim();
+    truthLaneCounts.set(lane, (truthLaneCounts.get(lane) || 0) + 1);
+    if (lane === "journal") truthJournalMissingInteractions += 1;
+  }
+}
 
 for (const item of items) {
   const perItemCodes = new Set(
@@ -272,15 +297,6 @@ for (const item of items) {
   if (typeof item.confidence === "number") confs.push(item.confidence);
 
   const tg = truthByInteraction.get(item.interaction_id) || null;
-  if (tg) {
-    if (!tg.ok) {
-      truthFetchFailed += 1;
-    } else {
-      const lane = String(tg.lane || "unknown").trim();
-      truthLaneCounts.set(lane, (truthLaneCounts.get(lane) || 0) + 1);
-      if (lane === "journal") truthJournalMissing += 1;
-    }
-  }
   const bucket = decideBucket(item, tg);
   bucketCounts[bucket] += 1;
 }
@@ -289,9 +305,17 @@ const total = items.length;
 const pickRequiredRate = total > 0 ? bucketCounts.PICK_REQUIRED / total : 0;
 const defectRate = total > 0 ? bucketCounts.PIPELINE_DEFECT / total : 0;
 const needsSplitRate = total > 0 ? bucketCounts.NEEDS_SPLIT / total : 0;
+const truthGraphInteractionCount = skipTruthGraph ? 0 : interactionIds.length;
+const truthGraphFetchFailedRate = truthGraphInteractionCount > 0
+  ? truthFetchFailedInteractions / truthGraphInteractionCount
+  : 0;
 
 let decision = "No items returned; treat as empty queue or freshness-filtered.";
 if (total > 0) {
+  if (!skipTruthGraph && truthGraphInteractionCount > 0 && truthGraphFetchFailedRate > 0.05) {
+    decision =
+      "Truth-graph fetch failures are elevated; rerun before acting on defect-rate guidance (picker-first anti-anchoring is still safe to pursue).";
+  } else
   if (defectRate > 0.02) {
     decision = "Prioritize pipeline repair + truth-graph defect UX before attribution UX polish.";
   } else if (needsSplitRate > 0.05) {
@@ -330,8 +354,10 @@ const summary = {
       ? null
       : {
         lane_counts: Object.fromEntries([...truthLaneCounts.entries()].sort((a, b) => b[1] - a[1])),
-        journal_missing_count: truthJournalMissing,
-        fetch_failed_count: truthFetchFailed,
+        interaction_count: truthGraphInteractionCount,
+        journal_missing_interactions: truthJournalMissingInteractions,
+        fetch_failed_interactions: truthFetchFailedInteractions,
+        fetch_failed_rate: truthGraphInteractionCount > 0 ? truthGraphFetchFailedRate : null,
       },
     confidence: {
       count: confs.length,
@@ -363,8 +389,10 @@ if (flags.json) {
     for (const [lane, count] of Object.entries(summary.queue.truth_graph.lane_counts)) {
       console.log(`  ${lane}: ${count}`);
     }
-    if (summary.queue.truth_graph.fetch_failed_count > 0) {
-      console.log(`  truth_graph_fetch_failed: ${summary.queue.truth_graph.fetch_failed_count}`);
+    if (summary.queue.truth_graph.fetch_failed_interactions > 0) {
+      console.log(
+        `  truth_graph_fetch_failed_interactions: ${summary.queue.truth_graph.fetch_failed_interactions} (${Math.round(((summary.queue.truth_graph.fetch_failed_rate || 0) * 100) * 10) / 10}%)`,
+      );
     }
   }
   console.log("Reason code counts:");
