@@ -37,6 +37,14 @@ private enum TruthGraphDemoAutomation {
     }
 }
 
+private enum StartupTabAutomation {
+    static let openSettingsFlag = "--open-settings"
+
+    static var initialTab: RedlineTab {
+        ProcessInfo.processInfo.arguments.contains(openSettingsFlag) ? .settings : .inbox
+    }
+}
+
 enum RedlineTab: Hashable {
     case inbox
     case calls
@@ -49,7 +57,7 @@ enum RedlineTab: Hashable {
 struct CamberRedlineApp: App {
     @State private var contactListViewModel = ContactListViewModel()
     @State private var threadViewModel = ThreadViewModel()
-    @State private var selectedTab: RedlineTab = .inbox
+    @State private var selectedTab: RedlineTab = StartupTabAutomation.initialTab
     @State private var isTriagePresented = false
     @State private var isTruthGraphDemoPresented = false
     @State private var didRunSmokeDrive = false

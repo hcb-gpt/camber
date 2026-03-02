@@ -4,6 +4,12 @@ struct SettingsView: View {
     var contactListViewModel: ContactListViewModel
 
     @State private var showResetConfirmation = false
+#if DEBUG
+    @AppStorage(InternalModeConfig.enabledDefaultsKey) private var isInternalModeEnabled = false
+    @State private var edgeSecretDraft = ""
+    @State private var hasStoredEdgeSecret = false
+    @State private var internalModeMessage: String?
+#endif
 
     private let bgColor = Color(white: 0.06)
 
@@ -41,6 +47,46 @@ struct SettingsView: View {
                     SettingsKeyValueRow(label: "Version", value: appVersionString)
                     SettingsKeyValueRow(label: "Bundle", value: Bundle.main.bundleIdentifier ?? "unknown")
                 }
+
+#if DEBUG
+                Section("Internal Mode (DEBUG)") {
+                    Toggle("Internal Mode", isOn: $isInternalModeEnabled)
+
+                    SecureField("X-Edge-Secret (stored in Keychain)", text: $edgeSecretDraft)
+                        .textInputAutocapitalization(.never)
+                        .autocorrectionDisabled()
+
+                    HStack(spacing: 12) {
+                        Button("Save Secret") {
+                            saveEdgeSecret()
+                        }
+                        .disabled(edgeSecretDraft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+
+                        Button("Wipe Stored Secret", role: .destructive) {
+                            wipeEdgeSecret()
+                        }
+                        .disabled(!hasStoredEdgeSecret)
+                    }
+
+                    if hasStoredEdgeSecret {
+                        Label("Edge secret stored (not shown)", systemImage: "checkmark.seal")
+                            .foregroundStyle(.secondary)
+                    } else {
+                        Label("No edge secret stored", systemImage: "xmark.seal")
+                            .foregroundStyle(.secondary)
+                    }
+
+                    if let internalModeMessage {
+                        Text(internalModeMessage)
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                    }
+
+                    Text("When enabled, `X-Edge-Secret` is attached only to bootstrap-review write actions (resolve/dismiss/undo). It is never sent on queue GET requests.")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                }
+#endif
             }
             .listStyle(.insetGrouped)
             .scrollContentBackground(.hidden)
@@ -63,6 +109,9 @@ struct SettingsView: View {
             }
         }
         .preferredColorScheme(.dark)
+#if DEBUG
+        .task { refreshEdgeSecretState() }
+#endif
     }
 
     private var appVersionString: String {
@@ -71,6 +120,58 @@ struct SettingsView: View {
         if let version, let build { return "\(version) (\(build))" }
         return version ?? build ?? "unknown"
     }
+
+#if DEBUG
+    @MainActor
+    private func refreshEdgeSecretState() {
+        do {
+            let stored = try KeychainStore.read(
+                service: InternalModeConfig.edgeSecretKeychainService,
+                account: InternalModeConfig.edgeSecretKeychainAccount
+            )
+            hasStoredEdgeSecret = stored != nil
+        } catch {
+            hasStoredEdgeSecret = false
+            internalModeMessage = "Unable to read Keychain item (\(error.localizedDescription))."
+        }
+    }
+
+    @MainActor
+    private func saveEdgeSecret() {
+        let trimmed = edgeSecretDraft.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else {
+            internalModeMessage = "Secret is empty."
+            return
+        }
+
+        do {
+            try KeychainStore.upsert(
+                service: InternalModeConfig.edgeSecretKeychainService,
+                account: InternalModeConfig.edgeSecretKeychainAccount,
+                value: Data(trimmed.utf8)
+            )
+            edgeSecretDraft = ""
+            internalModeMessage = "Saved."
+            refreshEdgeSecretState()
+        } catch {
+            internalModeMessage = "Unable to save to Keychain (\(error.localizedDescription))."
+        }
+    }
+
+    @MainActor
+    private func wipeEdgeSecret() {
+        do {
+            try KeychainStore.delete(
+                service: InternalModeConfig.edgeSecretKeychainService,
+                account: InternalModeConfig.edgeSecretKeychainAccount
+            )
+            internalModeMessage = "Wiped."
+            refreshEdgeSecretState()
+        } catch {
+            internalModeMessage = "Unable to wipe Keychain item (\(error.localizedDescription))."
+        }
+    }
+#endif
 }
 
 private struct SettingsKeyValueRow: View {
@@ -195,4 +296,3 @@ private struct PipelineHeartbeatRow: View {
         return "\(hours)h"
     }
 }
-

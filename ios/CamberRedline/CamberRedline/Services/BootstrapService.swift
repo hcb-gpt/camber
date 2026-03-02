@@ -2,6 +2,17 @@ import Foundation
 import Observation
 import os
 
+enum InternalModeConfig {
+    static let enabledDefaultsKey = "internal_mode_enabled"
+    static let edgeSecretKeychainService = "CamberRedline"
+    static let edgeSecretKeychainAccount = "x_edge_secret"
+}
+
+private enum EdgeSecretPolicy {
+    case none
+    case bootstrapWritesOnly
+}
+
 private enum BootstrapSmokeAutomation {
     static let launchFlag = "--smoke-drive"
     static let logger = Logger(subsystem: "CamberRedline", category: "smoke")
@@ -36,8 +47,12 @@ final class BootstrapService {
 
     private(set) var writeLockState: BootstrapWriteLockState?
 
+    var writesLocked: Bool {
+        writeLockState != nil && !canBypassWriteLock
+    }
+
     var writesLockedBannerText: String? {
-        guard let state = writeLockState else { return nil }
+        guard let state = writeLockState, !canBypassWriteLock else { return nil }
 
         var message = "Attribution writes temporarily locked (needs privileged auth). Reads still available."
         if let functionVersion = state.functionVersion?.trimmingCharacters(in: .whitespacesAndNewlines),
@@ -67,7 +82,15 @@ final class BootstrapService {
         encoder = JSONEncoder()
     }
 
-    private var edgeSharedSecret: String? {
+    private var isInternalModeEnabled: Bool {
+        #if DEBUG
+        UserDefaults.standard.bool(forKey: InternalModeConfig.enabledDefaultsKey)
+        #else
+        false
+        #endif
+    }
+
+    private var edgeSecretFromEnvironment: String? {
         #if DEBUG
         let raw = (ProcessInfo.processInfo.environment["EDGE_SHARED_SECRET"] ?? "")
             .trimmingCharacters(in: .whitespacesAndNewlines)
@@ -77,11 +100,41 @@ final class BootstrapService {
         #endif
     }
 
-    private func applyAuthHeaders(to request: inout URLRequest) {
-        request.setValue("Bearer \(anonKey)", forHTTPHeaderField: "Authorization")
-        if let edgeSharedSecret {
-            request.setValue(edgeSharedSecret, forHTTPHeaderField: "X-Edge-Secret")
+    private var edgeSecretFromKeychain: String? {
+        #if DEBUG
+        guard let data = try? KeychainStore.read(
+            service: InternalModeConfig.edgeSecretKeychainService,
+            account: InternalModeConfig.edgeSecretKeychainAccount
+        ) else {
+            return nil
         }
+
+        let raw = (String(data: data, encoding: .utf8) ?? "")
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+        return raw.isEmpty ? nil : raw
+        #else
+        nil
+        #endif
+    }
+
+    private var edgeSecretForBootstrapWriteRequest: String? {
+        guard isInternalModeEnabled else { return nil }
+        return edgeSecretFromKeychain ?? edgeSecretFromEnvironment
+    }
+
+    private var canBypassWriteLock: Bool {
+        edgeSecretForBootstrapWriteRequest != nil
+    }
+
+    private func applyAuthHeaders(
+        to request: inout URLRequest,
+        edgeSecretPolicy: EdgeSecretPolicy = .none,
+        isWrite: Bool = false
+    ) {
+        request.setValue("Bearer \(anonKey)", forHTTPHeaderField: "Authorization")
+        guard isWrite, edgeSecretPolicy == .bootstrapWritesOnly else { return }
+        guard let edgeSecretForBootstrapWriteRequest else { return }
+        request.setValue(edgeSecretForBootstrapWriteRequest, forHTTPHeaderField: "X-Edge-Secret")
     }
 
     // MARK: - Fetch Queue
@@ -98,7 +151,7 @@ final class BootstrapService {
         }
 
         var request = URLRequest(url: url)
-        applyAuthHeaders(to: &request)
+        applyAuthHeaders(to: &request, edgeSecretPolicy: .none, isWrite: false)
 
         let (data, response) = try await session.data(for: request)
         try validateHTTPResponse(response, data: data)
@@ -205,7 +258,7 @@ final class BootstrapService {
         }
 
         var request = URLRequest(url: url)
-        applyAuthHeaders(to: &request)
+        applyAuthHeaders(to: &request, edgeSecretPolicy: .none, isWrite: false)
 
         let (data, response) = try await session.data(for: request)
         try validateHTTPResponse(response, data: data)
@@ -260,7 +313,7 @@ final class BootstrapService {
         var request = URLRequest(url: assistantChatURL)
         request.httpMethod = "POST"
         request.setValue("application/json", forHTTPHeaderField: "Content-Type")
-        applyAuthHeaders(to: &request)
+        applyAuthHeaders(to: &request, edgeSecretPolicy: .none, isWrite: true)
 
         let body: [String: Any?] = [
             "message": message,
@@ -348,7 +401,7 @@ final class BootstrapService {
         var request = URLRequest(url: assistantFeedbackURL)
         request.httpMethod = "POST"
         request.setValue("application/json", forHTTPHeaderField: "Content-Type")
-        applyAuthHeaders(to: &request)
+        applyAuthHeaders(to: &request, edgeSecretPolicy: .none, isWrite: true)
         request.httpBody = try encoder.encode(payload)
 
         let (data, response) = try await session.data(for: request)
@@ -364,7 +417,11 @@ final class BootstrapService {
     // MARK: - Helpers
 
     private func post<T: Encodable>(action: String, body: T) async throws -> Data {
-        if let writeLockState {
+        if canBypassWriteLock {
+            writeLockState = nil
+        }
+
+        if let writeLockState, !canBypassWriteLock {
             throw BootstrapServiceError.writesLocked(writeLockState)
         }
 
@@ -378,7 +435,7 @@ final class BootstrapService {
         var request = URLRequest(url: url)
         request.httpMethod = "POST"
         request.setValue("application/json", forHTTPHeaderField: "Content-Type")
-        applyAuthHeaders(to: &request)
+        applyAuthHeaders(to: &request, edgeSecretPolicy: .bootstrapWritesOnly, isWrite: true)
         request.httpBody = try encoder.encode(body)
 
         let (data, response) = try await session.data(for: request)
