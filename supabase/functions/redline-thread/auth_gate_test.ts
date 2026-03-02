@@ -94,3 +94,21 @@ Deno.test("top-level gate (edge-secret-or-anon) rejects junk Bearer tokens", asy
   assertEquals(body.ok, false);
   assertEquals(body.error_code, "invalid_auth");
 });
+
+Deno.test("redline-thread allows anon-key for truth_graph action", () => {
+  const source = Deno.readTextFileSync(new URL("./index.ts", import.meta.url));
+  assert(
+    source.includes('action === "contacts" || action === "reset_clock" || action === "truth_graph"'),
+    "truth_graph MUST be in anon-key whitelist",
+  );
+});
+
+Deno.test("redline-thread does not allow anon-key bypass for sensitive actions", () => {
+  const source = Deno.readTextFileSync(new URL("./index.ts", import.meta.url));
+  assert(
+    !source.includes(
+      'action === "contacts" || action === "reset_clock" || action === "truth_graph" || action === "projects"',
+    ),
+    "projects MUST NOT be in anon-key whitelist",
+  );
+});
