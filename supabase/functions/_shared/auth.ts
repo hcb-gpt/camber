@@ -96,6 +96,7 @@ export function authErrorResponse(
   return new Response(
     JSON.stringify({
       ok: false,
+      error_code: errorCode,
       error: errorCode,
       detail: detail || undefined,
     }),
