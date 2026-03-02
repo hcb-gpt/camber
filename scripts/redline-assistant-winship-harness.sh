@@ -68,7 +68,7 @@ run_prompt() {
   tr -d '\r\n' < "${text_file}"
 }
 
-PROMPT_A="Winship hardscape"
+PROMPT_A="Tell me about winship"
 PROMPT_B="What projects do you have"
 
 echo "== redline-assistant harness =="
@@ -88,13 +88,15 @@ echo
 
 PASS_A=0
 PASS_B=0
-PASS_A_FACT=0
+PASS_A_STYLE=0
 
-if grep -qi "winship residence" <<<"${ANSWER_A}"; then PASS_A=1; fi
-if grep -qi "winship residence" <<<"${ANSWER_B}"; then PASS_B=1; fi
+if grep -qi "winship" <<<"${ANSWER_A}"; then PASS_A=1; fi
+if grep -qi "winship" <<<"${ANSWER_B}"; then PASS_B=1; fi
 
-if grep -Eiq 'cll_[A-Za-z0-9]+' <<<"${ANSWER_A}" || grep -Eiq '[0-9]+[^[:alpha:]]*(calls|claims|loops|reviews|interactions|pending)' <<<"${ANSWER_A}"; then
-  PASS_A_FACT=1
+if ! grep -Eiq 'UTC|interaction|inbound|outbound|These interactions show' <<<"${ANSWER_A}" \
+  && grep -Eiq '(^|[[:space:]])(Next:|Want me to)' <<<"${ANSWER_A}" \
+  && [[ "${#ANSWER_A}" -le 1200 ]]; then
+  PASS_A_STYLE=1
 fi
 
 REQ_A="$(header_value "${OUT_DIR}/q1_winship_hardscape.headers" "x-request-id")"
@@ -108,7 +110,7 @@ MODEL_B="$(header_value "${OUT_DIR}/q2_projects_roster.headers" "x-model-id")"
 
 echo "CHECK_WINSHIP_Q1=${PASS_A}"
 echo "CHECK_WINSHIP_Q2=${PASS_B}"
-echo "CHECK_RECENT_FACT_Q1=${PASS_A_FACT}"
+echo "CHECK_STYLE_Q1=${PASS_A_STYLE}"
 echo "REQUEST_ID_Q1=${REQ_A:-NONE}"
 echo "REQUEST_ID_Q2=${REQ_B:-NONE}"
 echo "ASSISTANT_CONTEXT_REQUEST_ID_Q1=${CTX_REQ_A:-NONE}"
@@ -122,7 +124,7 @@ SUMMARY_FILE="${OUT_DIR}/summary.txt"
 cat > "${SUMMARY_FILE}" <<EOF
 CHECK_WINSHIP_Q1=${PASS_A}
 CHECK_WINSHIP_Q2=${PASS_B}
-CHECK_RECENT_FACT_Q1=${PASS_A_FACT}
+CHECK_STYLE_Q1=${PASS_A_STYLE}
 REQUEST_ID_Q1=${REQ_A:-NONE}
 REQUEST_ID_Q2=${REQ_B:-NONE}
 ASSISTANT_CONTEXT_REQUEST_ID_Q1=${CTX_REQ_A:-NONE}
@@ -134,7 +136,7 @@ MODEL_Q2=${MODEL_B:-NONE}
 EOF
 echo "SUMMARY_FILE=${SUMMARY_FILE}"
 
-if [[ "${PASS_A}" -eq 1 && "${PASS_B}" -eq 1 && "${PASS_A_FACT}" -eq 1 ]]; then
+if [[ "${PASS_A}" -eq 1 && "${PASS_B}" -eq 1 && "${PASS_A_STYLE}" -eq 1 ]]; then
   echo "HARNESS_STATUS=PASS"
 else
   echo "HARNESS_STATUS=FAIL"

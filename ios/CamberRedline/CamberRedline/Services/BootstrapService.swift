@@ -341,10 +341,16 @@ final class BootstrapService {
         request.setValue("application/json", forHTTPHeaderField: "Content-Type")
         applyAuthHeaders(to: &request)
 
+        let tz = TimeZone.current
+        let tzOffsetMinutes = Int(tz.secondsFromGMT() / 60)
+
         let body: [String: Any?] = [
             "message": message,
             "contact_id": contactId,
             "project_id": projectId,
+            "client_tz_name": tz.identifier,
+            "client_utc_offset_minutes": tzOffsetMinutes,
+            "response_style": "superintendent_v1",
             "history": history.map { ["role": $0.role, "content": $0.content] }
         ]
         let filteredBody = body.compactMapValues { $0 }
