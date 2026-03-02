@@ -4,47 +4,18 @@ set -euo pipefail
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 IOS_DIR="${ROOT_DIR}/ios/CamberRedline"
 BUNDLE_ID="com.heartwoodcustombuilders.CamberRedline"
+
 STAMP="$(date -u +%Y%m%dT%H%M%SZ)"
-OUT_DIR="${ROOT_DIR}/artifacts/ios_simulator_smoke/${STAMP}"
-DERIVED_DIR="${OUT_DIR}/DerivedData"
-SCREEN_DIR="${OUT_DIR}/screens"
-SYNTHETIC_IDS="${SYNTHETIC_IDS:-}"
-SCREEN_STEPS=7
-SCREEN_INTERVAL_SECONDS=4
-
-usage() {
-  cat <<'EOF'
-Usage: scripts/ios_simulator_smoke_drive.sh [options]
-
-Options:
-  --synthetic-ids <csv>   Comma-separated interaction IDs to target in triage smoke.
-  --help, -h              Show this help.
-EOF
-}
-
-while [[ $# -gt 0 ]]; do
-  case "$1" in
-    --synthetic-ids)
-      SYNTHETIC_IDS="${2:-}"
-      shift 2
-      ;;
-    --help|-h)
-      usage
-      exit 0
-      ;;
-    *)
-      echo "ERROR: unknown argument: $1" >&2
-      usage >&2
-      exit 2
-      ;;
-  esac
-done
-
-mkdir -p "${SCREEN_DIR}"
+PROOF_DATE="$(date +%Y-%m-%d)"
+PROOF_DIR="${ROOT_DIR}/docs/proofs/ios/${PROOF_DATE}"
+WORK_DIR="${ROOT_DIR}/.temp/ios_simulator_smoke/${STAMP}_realtime_cleanup_proof"
+DERIVED_DIR="${WORK_DIR}/DerivedData"
 
 # In sandboxed sessions, toolchains cannot always write under ~/Library.
 # Use a local HOME for simctl + xcodebuild.
-SIMCTL_HOME="${ROOT_DIR}/.simctl-home"
+SIMCTL_HOME="${ROOT_DIR}/.temp/simctl-home"
+mkdir -p "${PROOF_DIR}"
+mkdir -p "${WORK_DIR}"
 mkdir -p "${SIMCTL_HOME}/Library/Logs/CoreSimulator"
 
 simctl() {
@@ -62,7 +33,6 @@ wait_for_simctl() {
     open -a Simulator >/dev/null 2>&1 || true
     sleep 3
   done
-  # Final check after last sleep — avoids off-by-one false-negative
   simctl list devices >/dev/null 2>&1
 }
 
@@ -100,7 +70,8 @@ is_booted() {
   simctl list devices | awk -v udid="${udid}" '$0 ~ udid && /Booted/ {found=1} END {exit !found}'
 }
 
-echo "[smoke] output: ${OUT_DIR}"
+echo "[smoke] proof_dir: ${PROOF_DIR}"
+echo "[smoke] work_dir: ${WORK_DIR}"
 
 if ! wait_for_simctl; then
   echo "ERROR: CoreSimulatorService unavailable" >&2
@@ -118,7 +89,6 @@ if ! is_booted "${DEVICE_UDID}"; then
 fi
 
 open -a Simulator || true
-# bootstatus can fail transiently under set -e; retry once after short wait
 simctl bootstatus "${DEVICE_UDID}" -b || {
   sleep 3
   simctl bootstatus "${DEVICE_UDID}" -b
@@ -134,7 +104,11 @@ echo "[smoke] building for simulator ${DEVICE_UDID}"
     -derivedDataPath "${DERIVED_DIR}" \
     CODE_SIGNING_ALLOWED=NO \
     build
-) > "${OUT_DIR}/build.log" 2>&1
+) > "${WORK_DIR}/build.raw.log" 2>&1
+
+# Proof rule: avoid committing literal /Users/... paths
+sed -E 's#/Users/[^/]+#<HOME>#g' "${WORK_DIR}/build.raw.log" > "${WORK_DIR}/build.log"
+rm -f "${WORK_DIR}/build.raw.log"
 
 APP_PATH="${DERIVED_DIR}/Build/Products/Debug-iphonesimulator/CamberRedline.app"
 if [[ ! -d "${APP_PATH}" ]]; then
@@ -148,53 +122,50 @@ simctl terminate "${DEVICE_UDID}" "${BUNDLE_ID}" >/dev/null 2>&1 || true
 
 echo "[smoke] capturing device logs"
 simctl spawn "${DEVICE_UDID}" log stream --style compact --level debug \
-  --predicate "process == \"CamberRedline\"" > "${OUT_DIR}/app.log" 2>&1 &
+  --predicate "process == \"CamberRedline\"" > "${WORK_DIR}/app.log" 2>&1 &
 LOG_PID=$!
 
-echo "[smoke] recording video"
-simctl io "${DEVICE_UDID}" recordVideo --codec h264 "${OUT_DIR}/session.mp4" >/dev/null 2>&1 &
-VIDEO_PID=$!
-
 cleanup() {
-  kill "${VIDEO_PID}" >/dev/null 2>&1 || true
   kill "${LOG_PID}" >/dev/null 2>&1 || true
-  wait "${VIDEO_PID}" >/dev/null 2>&1 || true
   wait "${LOG_PID}" >/dev/null 2>&1 || true
 }
 trap cleanup EXIT
 
-echo "[smoke] launching app with automation flag"
-LAUNCH_ARGS=(--smoke-drive)
-if [[ -n "${SYNTHETIC_IDS}" ]]; then
-  LAUNCH_ARGS+=(--smoke-synthetic-ids "${SYNTHETIC_IDS}")
-fi
-simctl launch "${DEVICE_UDID}" "${BUNDLE_ID}" "${LAUNCH_ARGS[@]}" > "${OUT_DIR}/launch.txt" 2>&1
+echo "[smoke] launching app with realtime cleanup proof flags"
+export SIMCTL_CHILD_SMOKE_FORCE_CLAIM_GRADES_CANCEL=1
+export SIMCTL_CHILD_SMOKE_FORCE_THREAD_INTERACTIONS_SUBSCRIBE_FAIL=1
+export SIMCTL_CHILD_SMOKE_FORCE_CONTACTLIST_SUBSCRIBE_FAIL=1
 
-for step in $(seq 1 "${SCREEN_STEPS}"); do
-  sleep "${SCREEN_INTERVAL_SECONDS}"
-  step_label=$(printf "%02d" "${step}")
-  simctl io "${DEVICE_UDID}" screenshot "${SCREEN_DIR}/shot_${step_label}.png" >/dev/null
-done
+simctl launch "${DEVICE_UDID}" "${BUNDLE_ID}" --smoke-realtime-cleanup-proof > "${WORK_DIR}/launch.txt" 2>&1
 
-sleep 2
+sleep 4
+simctl terminate "${DEVICE_UDID}" "${BUNDLE_ID}" >/dev/null 2>&1 || true
+
 cleanup
 trap - EXIT
 
-SMOKE_MARKERS="${OUT_DIR}/smoke_markers.log"
-grep -E "SMOKE_EVENT" "${OUT_DIR}/app.log" > "${SMOKE_MARKERS}" || true
+SMOKE_MARKERS="${WORK_DIR}/smoke_markers.log"
+grep -E "SMOKE_EVENT" "${WORK_DIR}/app.log" > "${SMOKE_MARKERS}" || true
 
-cat > "${OUT_DIR}/summary.txt" <<EOF
-bundle_id=${BUNDLE_ID}
-device_udid=${DEVICE_UDID}
-out_dir=${OUT_DIR}
-screens=${SCREEN_DIR}
-video=${OUT_DIR}/session.mp4
-build_log=${OUT_DIR}/build.log
-app_log=${OUT_DIR}/app.log
-smoke_markers=${SMOKE_MARKERS}
-synthetic_ids=${SYNTHETIC_IDS}
-launch_args=${LAUNCH_ARGS[*]}
-EOF
+PROOF_MARKERS="${PROOF_DIR}/realtime_cleanup_smoke_markers_${STAMP}.log"
+grep -E "REALTIME_CLEANUP_PROOF" "${SMOKE_MARKERS}" > "${PROOF_MARKERS}" || true
 
-echo "[smoke] done"
-cat "${OUT_DIR}/summary.txt"
+require_marker() {
+  local needle="${1}"
+  if ! grep -E "${needle}" "${PROOF_MARKERS}" >/dev/null 2>&1; then
+    echo "ERROR: missing marker: ${needle}" >&2
+    echo "see: ${PROOF_MARKERS}" >&2
+    sed -n '1,200p' "${PROOF_MARKERS}" >&2 || true
+    exit 1
+  fi
+}
+
+require_marker "REALTIME_CLEANUP_PROOF_START"
+require_marker "claim_grades_cleanup_ok=true"
+require_marker "thread_interactions_removed_review_queue=1"
+require_marker "thread_interactions_channels_cleared=true"
+require_marker "contactlist_removed_review_queue=1"
+require_marker "REALTIME_CLEANUP_PROOF_END"
+
+echo "[smoke] PASS"
+echo "[smoke] markers: ${PROOF_MARKERS}"
