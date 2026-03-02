@@ -1200,6 +1200,8 @@ final class ContactListViewModel {
             try await channel.subscribeWithError()
             try await smsChannel.subscribeWithError()
         } catch {
+            await service.client.removeChannel(channel)
+            await service.client.removeChannel(smsChannel)
             if shouldIgnoreRealtimeError(error) {
                 return
             }
