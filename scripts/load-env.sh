@@ -3,9 +3,14 @@
 # Sources credentials for scripts that need them
 # Usage: source scripts/load-env.sh
 
-# Idempotent: avoid re-loading in the same shell
+# Idempotent: avoid re-loading in the same shell.
+# If CAMBER_CREDS_LOADED is exported, it leaks to child shells and can freeze
+# stale credentials after rotations. Unset and continue loading in that case.
 if [ -n "${CAMBER_CREDS_LOADED:-}" ]; then
-    if [ -n "${SUPABASE_URL:-}" ] && [ -n "${SUPABASE_SERVICE_ROLE_KEY:-}" ] && [ -n "${EDGE_SHARED_SECRET:-}" ]; then
+    if printenv CAMBER_CREDS_LOADED >/dev/null 2>&1; then
+        echo "WARN: CAMBER_CREDS_LOADED is exported; unsetting to allow credential reload." >&2
+        unset CAMBER_CREDS_LOADED
+    elif [ -n "${SUPABASE_URL:-}" ] && [ -n "${SUPABASE_SERVICE_ROLE_KEY:-}" ] && [ -n "${EDGE_SHARED_SECRET:-}" ]; then
         return 0 2>/dev/null || exit 0
     fi
 fi
