@@ -32,6 +32,7 @@ final class SupabaseService {
     private let reviewResolveURL: URL
 
     private let anonKey: String
+    private let configurationErrorMessage: String?
     private let threadCacheTTL: TimeInterval = 30
     private var threadCache: [ThreadCacheKey: ThreadCacheEntry] = [:]
 
@@ -49,13 +50,17 @@ final class SupabaseService {
         let supabaseURL = URL(string: supabaseUrlString) ?? Config.fallbackSupabaseURL
         let resolvedAnonKey = anonKey.isEmpty ? Config.fallbackAnonKey : anonKey
 
-        if supabaseURL == Config.fallbackSupabaseURL || anonKey.isEmpty {
-            #if DEBUG
-            print("[SupabaseService] Missing/invalid \(Config.supabaseURLKey) / \(Config.supabaseAnonKeyKey); check Info.plist or env vars.")
-            #endif
+        let configurationErrorMessage = (supabaseURL == Config.fallbackSupabaseURL || anonKey.isEmpty)
+            ? "Missing/invalid \(Config.supabaseURLKey) / \(Config.supabaseAnonKeyKey); check Info.plist or env vars."
+            : nil
+        #if DEBUG
+        if let configurationErrorMessage {
+            print("[SupabaseService] \(configurationErrorMessage)")
         }
+        #endif
 
         self.anonKey = resolvedAnonKey
+        self.configurationErrorMessage = configurationErrorMessage
         edgeFunctionBaseURL = supabaseURL.appendingPathComponent("functions/v1/redline-thread")
         reviewResolveURL = supabaseURL.appendingPathComponent("functions/v1/review-resolve")
 
@@ -65,9 +70,17 @@ final class SupabaseService {
         )
     }
 
+    private func requireValidConfiguration() throws {
+        if let configurationErrorMessage {
+            throw ServiceError.misconfigured(configurationErrorMessage)
+        }
+    }
+
     // MARK: - Fetch Contacts (edge function: GET ?action=contacts)
 
     func fetchContactsList() async throws -> [Contact] {
+        try requireValidConfiguration()
+
         var components = URLComponents(url: edgeFunctionBaseURL, resolvingAgainstBaseURL: false)!
         components.queryItems = [
             URLQueryItem(name: "action", value: "contacts"),
@@ -128,6 +141,8 @@ final class SupabaseService {
         preferCache: Bool = true,
         forceRefresh: Bool = false
     ) async throws -> ThreadResponse {
+        try requireValidConfiguration()
+
         let cacheKey = ThreadCacheKey(contactId: contactId, limit: limit, offset: offset)
         if preferCache, !forceRefresh, let cached = cachedThreadResponse(for: cacheKey) {
             return cached
@@ -197,6 +212,8 @@ final class SupabaseService {
     // MARK: - Truth Graph (edge function: GET ?action=truth_graph&interaction_id=X)
 
     func fetchTruthGraph(interactionId: String) async throws -> TruthGraphResponse {
+        try requireValidConfiguration()
+
         var components = URLComponents(url: edgeFunctionBaseURL, resolvingAgainstBaseURL: false)!
         components.queryItems = [
             URLQueryItem(name: "action", value: "truth_graph"),
@@ -234,6 +251,8 @@ final class SupabaseService {
     }
 
     func prefetchThread(contactId: UUID, limit: Int = 50, offset: Int = 0) async {
+        guard configurationErrorMessage == nil else { return }
+
         _ = try? await fetchThread(
             contactId: contactId,
             limit: limit,
@@ -259,6 +278,8 @@ final class SupabaseService {
         correctionText: String?,
         gradedBy: String
     ) async throws {
+        try requireValidConfiguration()
+
         let body = NewGrade(
             claimId: claimId,
             grade: grade,
@@ -286,6 +307,8 @@ final class SupabaseService {
     // MARK: - Reset Grading Clock (edge function: GET ?action=reset_clock)
 
     func resetGradingClock() async throws {
+        try requireValidConfiguration()
+
         var components = URLComponents(url: edgeFunctionBaseURL, resolvingAgainstBaseURL: false)!
         components.queryItems = [
             URLQueryItem(name: "action", value: "reset_clock"),
@@ -319,6 +342,8 @@ final class SupabaseService {
         notes: String? = nil,
         source: String = "redline"
     ) async throws -> ReviewResolveResponse {
+        try requireValidConfiguration()
+
         let accessToken = try await reviewResolveAccessToken()
         return try await Self.performReviewResolveRequest(
             url: reviewResolveURL,
@@ -339,6 +364,8 @@ final class SupabaseService {
         notes: String? = nil,
         source: String = "redline"
     ) async throws -> [ReviewResolveResponse] {
+        try requireValidConfiguration()
+
         var seen = Set<String>()
         let uniqueQueueIds = reviewQueueIds.filter { seen.insert($0).inserted }
         guard !uniqueQueueIds.isEmpty else { return [] }
@@ -377,6 +404,8 @@ final class SupabaseService {
     // MARK: - Pipeline Heartbeat (direct Supabase query)
 
     func fetchPipelineHeartbeat() async throws -> [PipelineHeartbeat] {
+        try requireValidConfiguration()
+
         let rows: [PipelineHeartbeat] = try await client
             .from("pipeline_heartbeat")
             .select()
@@ -627,6 +656,7 @@ struct RawThreadItem: Decodable {
 // MARK: - ServiceError
 
 enum ServiceError: LocalizedError {
+    case misconfigured(String)
     case invalidURL
     case invalidResponse
     case httpError(statusCode: Int)
@@ -634,6 +664,8 @@ enum ServiceError: LocalizedError {
 
     var errorDescription: String? {
         switch self {
+        case .misconfigured(let message):
+            return message
         case .invalidURL:
             return "Failed to construct request URL."
         case .invalidResponse:
