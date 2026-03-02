@@ -3017,11 +3017,11 @@ Deno.serve(async (req: Request) => {
 
   const t0 = Date.now();
   const url = new URL(req.url);
-  const db = createClient(Deno.env.get("SUPABASE_URL")!, Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!);
 
   try {
     // Health check — fast path, no auth, no cache
     if (url.searchParams.get("mode") === "health") {
+      const db = createClient(Deno.env.get("SUPABASE_URL")!, Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!);
       return await handleHealth(db, t0);
     }
 
@@ -3034,6 +3034,8 @@ Deno.serve(async (req: Request) => {
       return json({ ok: false, error_code: "missing_auth", error: "Valid X-Edge-Secret required" }, 401);
     }
 
+    // Create service-role client only after auth has passed for non-health routes.
+    const db = createClient(Deno.env.get("SUPABASE_URL")!, Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!);
     const action = url.searchParams.get("action");
 
     const apiRoute = parseRedlineApiRoute(url);
