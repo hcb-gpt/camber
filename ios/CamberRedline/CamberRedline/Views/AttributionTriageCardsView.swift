@@ -392,10 +392,10 @@ struct AttributionTriageCardsView: View {
                     .fontWeight(.semibold)
                     .foregroundStyle(Color.noRed.opacity(0.7))
                 Spacer()
-                Label("ACCEPT", systemImage: "arrow.right")
+                Label("CONFIRM", systemImage: "arrow.right")
                     .font(.caption)
                     .fontWeight(.semibold)
-                    .foregroundStyle(Color.yesGreen.opacity(0.7))
+                    .foregroundStyle(Color.commentBlue.opacity(0.8))
             }
             HStack(spacing: 0) {
                 Label("ESCALATE", systemImage: "arrow.up")
@@ -1127,7 +1127,7 @@ private struct SwipeableTriageCard: View {
     }
 
     private var swipeIndicatorColor: Color {
-        if offset.width > 40 { return Color.yesGreen.opacity(swipeIndicatorOpacity) }
+        if offset.width > 40 { return Color.commentBlue.opacity(swipeIndicatorOpacity) }
         if offset.width < -40 { return Color.noRed.opacity(swipeIndicatorOpacity) }
         if offset.height < -40 { return Color.escalateOrange.opacity(swipeIndicatorOpacity) }
         if offset.height > 40 { return Color.skipGray.opacity(swipeIndicatorOpacity) }
