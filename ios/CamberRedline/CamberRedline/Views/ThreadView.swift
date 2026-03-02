@@ -272,14 +272,14 @@ struct ThreadView: View {
                             .padding(.vertical, 8)
                     }
 
-                    let missingCount = missingAttributions(in: groups)
-                    if missingCount > 0 {
+                    let unassignedIds = unassignedInteractions(in: groups)
+                    if !unassignedIds.isEmpty {
                         if isTruthGraphStatusCardEnabled {
-                            truthGraphStatusCard(missingCount: missingCount)
+                            truthGraphStatusCard(unassignedIds: unassignedIds)
                                 .padding(.horizontal, 16)
                                 .padding(.bottom, 10)
                         } else {
-                            legacyMissingAttributionBanner(missingCount: missingCount)
+                            legacyMissingAttributionBanner(missingCount: unassignedIds.count)
                                 .padding(.horizontal, 16)
                                 .padding(.bottom, 10)
                         }
@@ -542,42 +542,35 @@ struct ThreadView: View {
 
     // MARK: - Date separator logic
 
-    private func missingAttributions(in groups: [DisplayGroup]) -> Int {
-        groups.reduce(0) { partial, group in
+    private func unassignedInteractions(in groups: [DisplayGroup]) -> [String] {
+        var ids = Set<String>()
+        for group in groups {
             switch group {
             case .callGroup(let header, _):
                 let optimisticResolved = header.spans.filter {
                     $0.needsAttribution && spanOverrides[$0.spanId] != nil
                 }.count
-                return partial + max(0, header.pendingAttributionCount - optimisticResolved)
+                if header.pendingAttributionCount - optimisticResolved > 0 {
+                    ids.insert(header.interactionId)
+                }
             case .smsGroup(let entries, _):
-                let pendingQueueIds = Set(
-                    entries.compactMap { entry -> String? in
-                        guard entry.needsAttribution else { return nil }
-                        return entry.reviewQueueId
+                for entry in entries {
+                    if entry.needsAttribution && smsOverrides[entry.messageId]?.projectId == nil {
+                        ids.insert(entry.messageId)
                     }
-                )
-                let optimisticResolvedQueueIds = Set(
-                    entries.compactMap { entry -> String? in
-                        guard
-                            entry.needsAttribution,
-                            smsOverrides[entry.messageId]?.projectId != nil
-                        else { return nil }
-                        return entry.reviewQueueId
-                    }
-                )
-                return partial + max(0, pendingQueueIds.count - optimisticResolvedQueueIds.count)
+                }
             case .voicemail, .aiSummary:
-                return partial
+                break
             }
         }
+        return Array(ids).sorted()
     }
 
     @ViewBuilder
     private func legacyMissingAttributionBanner(missingCount: Int) -> some View {
         HStack(spacing: 8) {
             Image(systemName: "exclamationmark.triangle.fill")
-            Text("\(missingCount) attribution\(missingCount == 1 ? "" : "s") still missing in this thread")
+            Text("\(missingCount) Unassigned item\(missingCount == 1 ? "" : "s") still in this thread")
                 .font(.caption)
                 .fontWeight(.semibold)
             Spacer()
@@ -589,7 +582,7 @@ struct ThreadView: View {
     }
 
     @ViewBuilder
-    private func truthGraphStatusCard(missingCount: Int) -> some View {
+    private func truthGraphStatusCard(unassignedIds: [String]) -> some View {
         VStack(alignment: .leading, spacing: 10) {
             HStack(spacing: 8) {
                 Image(systemName: "point.3.connected.trianglepath.dotted")
@@ -614,11 +607,43 @@ struct ThreadView: View {
                 }
             }
 
-            Text("\(missingCount) attribution\(missingCount == 1 ? "" : "s") still missing. Evidence is visible and repairable from this thread.")
+            let count = unassignedIds.count
+            Text("\(count) Unassigned item\(count == 1 ? "" : "s"). Evidence is visible and repairable from this thread.")
                 .font(.caption)
                 .foregroundStyle(Color(.systemGray2))
 
-            Text("Repair routes: refresh thread state, refresh project candidates, then resolve missing items in call cards below.")
+            if !unassignedIds.isEmpty {
+                DisclosureGroup {
+                    VStack(alignment: .leading, spacing: 6) {
+                        ForEach(unassignedIds, id: \.self) { id in
+                            HStack {
+                                Text(id)
+                                    .font(.system(.caption2, design: .monospaced))
+                                    .foregroundStyle(Color(.systemGray3))
+                                Spacer()
+                                Button {
+                                    UIPasteboard.general.string = id
+                                    triggerAssignmentHaptic()
+                                } label: {
+                                    Image(systemName: "doc.on.doc")
+                                        .font(.caption2)
+                                        .foregroundStyle(Color(red: 0.95, green: 0.62, blue: 0.23))
+                                }
+                                .buttonStyle(.plain)
+                            }
+                            .padding(.vertical, 2)
+                        }
+                    }
+                    .padding(.top, 4)
+                } label: {
+                    Text("Show IDs")
+                        .font(.caption2)
+                        .fontWeight(.semibold)
+                        .foregroundStyle(Color(red: 0.95, green: 0.62, blue: 0.23))
+                }
+            }
+
+            Text("Repair routes: refresh thread state, refresh project candidates, then resolve unassigned items in call cards below.")
                 .font(.caption2)
                 .foregroundStyle(Color(.systemGray3))
 
@@ -1109,7 +1134,7 @@ private struct CallTranscriptCard: View {
                 HStack(spacing: 6) {
                     Image(systemName: "exclamationmark.triangle.fill")
                         .font(.caption2)
-                    Text("\(unresolvedCount) missing attribution\(unresolvedCount == 1 ? "" : "s")")
+                    Text("\(unresolvedCount) unassigned")
                         .font(.caption)
                         .fontWeight(.semibold)
                     if projectOptions.isEmpty {
