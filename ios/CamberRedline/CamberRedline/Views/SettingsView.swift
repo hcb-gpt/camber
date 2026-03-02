@@ -4,7 +4,7 @@ struct SettingsView: View {
     var contactListViewModel: ContactListViewModel
 
     @State private var showResetConfirmation = false
-#if DEBUG || INTERNAL
+#if DEBUG
     @AppStorage(InternalModeConfig.enabledDefaultsKey) private var isInternalModeEnabled = false
     @State private var edgeSecretDraft = ""
     @State private var hasStoredEdgeSecret = false
@@ -48,7 +48,7 @@ struct SettingsView: View {
                     SettingsKeyValueRow(label: "Bundle", value: Bundle.main.bundleIdentifier ?? "unknown")
                 }
 
-#if DEBUG || INTERNAL
+#if DEBUG
                 Section("Internal Mode") {
                     Toggle("Internal Mode", isOn: $isInternalModeEnabled)
 
@@ -109,7 +109,7 @@ struct SettingsView: View {
             }
         }
         .preferredColorScheme(.dark)
-#if DEBUG || INTERNAL
+#if DEBUG
         .task { refreshEdgeSecretState() }
 #endif
     }
@@ -121,7 +121,7 @@ struct SettingsView: View {
         return version ?? build ?? "unknown"
     }
 
-#if DEBUG || INTERNAL
+#if DEBUG
     @MainActor
     private func refreshEdgeSecretState() {
         do {

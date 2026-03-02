@@ -83,7 +83,7 @@ final class BootstrapService {
     }
 
     private var isInternalModeEnabled: Bool {
-        #if DEBUG || INTERNAL
+        #if DEBUG
         UserDefaults.standard.bool(forKey: InternalModeConfig.enabledDefaultsKey)
         #else
         false
@@ -91,7 +91,7 @@ final class BootstrapService {
     }
 
     private var edgeSecretFromEnvironment: String? {
-        #if DEBUG || INTERNAL
+        #if DEBUG
         let raw = (ProcessInfo.processInfo.environment["EDGE_SHARED_SECRET"] ?? "")
             .trimmingCharacters(in: .whitespacesAndNewlines)
         return raw.isEmpty ? nil : raw
@@ -101,7 +101,7 @@ final class BootstrapService {
     }
 
     private var edgeSecretFromKeychain: String? {
-        #if DEBUG || INTERNAL
+        #if DEBUG
         guard let data = try? KeychainStore.read(
             service: InternalModeConfig.edgeSecretKeychainService,
             account: InternalModeConfig.edgeSecretKeychainAccount
