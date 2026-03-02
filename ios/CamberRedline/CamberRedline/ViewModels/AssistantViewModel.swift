@@ -53,7 +53,7 @@ final class AssistantViewModel: ObservableObject {
                let requestId = session.debug.requestId,
                !requestId.isEmpty {
                 AssistantRequestLogging.logger.log(
-                    "SMOKE_EVENT ASSISTANT_REQUEST_ID request_id=\(requestId, privacy: .public) prompt=\(input, privacy: .public)"
+                    "SMOKE_EVENT ASSISTANT_REQUEST_ID request_id=\(requestId, privacy: .public) prompt=\(input, privacy: .private)"
                 )
             }
 
