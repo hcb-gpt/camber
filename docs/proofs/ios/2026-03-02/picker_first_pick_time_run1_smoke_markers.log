@@ -1,0 +1,20 @@
+2026-03-02 14:45:44.538 Df CamberRedline[67305:13f5cc2] [CamberRedline:smoke] SMOKE_EVENT START
+2026-03-02 14:45:45.546 Df CamberRedline[67305:13f5cc2] [CamberRedline:smoke] SMOKE_EVENT OPEN_TRIAGE
+2026-03-02 14:45:47.486 Df CamberRedline[67305:13f5cc2] [CamberRedline:smoke] SMOKE_EVENT TRIAGE_TARGET queue=9583e897-c966-4a6a-b050-f851fe3eb557 interaction=cll_SYNTH_SYNTH_FLOATER_CONTIN_1772335530 event_at=2026-03-01T03:27:25Z
+2026-03-02 14:45:47.486 Df CamberRedline[67305:13f5cc2] [CamberRedline:smoke] SMOKE_EVENT TRIAGE_RESOLVE queue=9583e897-c966-4a6a-b050-f851fe3eb557 interaction=cll_SYNTH_SYNTH_FLOATER_CONTIN_1772335530 project=d8091a15-6a69-4634-8d5b-117abea35aa6
+2026-03-02 14:45:47.689 Df CamberRedline[67305:13f5cc2] [CamberRedline:smoke] SMOKE_EVENT TRIAGE_WRITE_LOCKED banner=Attribution writes temporarily locked (needs privileged auth). Reads still available. (bootstrap-review_v1.3.2, request_id: 019cb015-d81e-7234-b7b0-aa1f3741963c)
+2026-03-02 14:45:47.689 Df CamberRedline[67305:13f5cc2] [CamberRedline:smoke] SMOKE_EVENT TRIAGE_DONE remaining=17
+2026-03-02 14:45:47.711 Df CamberRedline[67305:13f5cc2] [CamberRedline:smoke] SMOKE_EVENT TRIAGE_PHASE_COMPLETE
+2026-03-02 14:45:48.311 Df CamberRedline[67305:13f5cc2] [CamberRedline:smoke] SMOKE_EVENT OPEN_ASSISTANT
+2026-03-02 14:45:49.156 Df CamberRedline[67305:13f5cc2] [CamberRedline:smoke] SMOKE_EVENT ASSISTANT_OPEN_CONTEXT_PACKET
+2026-03-02 14:45:49.156 Df CamberRedline[67305:13f5cc2] [CamberRedline:smoke] SMOKE_EVENT ASSISTANT_CONTEXT_FETCH
+2026-03-02 14:45:54.609 Df CamberRedline[67305:13f5cc2] [CamberRedline:smoke] SMOKE_EVENT ASSISTANT_CONTEXT request_id=019cb015-de8f-7b29-b2b1-c02ab4a8f40c version=assistant-context_v1.0.0
+2026-03-02 14:45:56.665 Df CamberRedline[67305:13f5cc2] [CamberRedline:smoke] SMOKE_EVENT ASSISTANT_CONTEXT request_id=019cb015-f3ab-7156-b403-0ab682d86a1f version=assistant-context_v1.0.0
+2026-03-02 14:45:59.484 Df CamberRedline[67305:13f5cc2] [CamberRedline:smoke] SMOKE_EVENT ASSISTANT_PROMPT prompt=Winship hardscape
+2026-03-02 14:46:03.642 Df CamberRedline[67305:13f5cc2] [CamberRedline:smoke] SMOKE_EVENT ASSISTANT_REQUEST_ID request_id=d81b31ee-c59a-427b-946d-d36c0427b397 prompt=Winship hardscape
+2026-03-02 14:46:07.672 Df CamberRedline[67305:13f5cc2] [CamberRedline:smoke] SMOKE_EVENT ASSISTANT_PROMPT prompt=What projects do you have
+2026-03-02 14:46:07.688 Df CamberRedline[67305:13f5cc2] [CamberRedline:smoke] SMOKE_EVENT END
+2026-03-02 14:46:08.160 Df CamberRedline[67305:13f5cc2] [CamberRedline:smoke] SMOKE_EVENT ASSISTANT_REQUEST_ID request_id=b0d01bd2-d3af-4020-99fb-b30585401f74 prompt=What projects do you have
+2026-03-02 14:46:09.192 Df CamberRedline[67305:13f5cc2] [CamberRedline:smoke] SMOKE_EVENT ASSISTANT_PROMPT prompt=What is going on recently?
+2026-03-02 14:46:11.138 Df CamberRedline[67305:13f5cc2] [CamberRedline:smoke] SMOKE_EVENT ASSISTANT_REQUEST_ID request_id=ce254a33-98d6-4284-8a69-256cd1cb7cd0 prompt=What is going on recently?
+2026-03-02 14:46:13.732 Df CamberRedline[67305:13f5cc2] [CamberRedline:smoke] SMOKE_EVENT ASSISTANT_DONE messages=6
