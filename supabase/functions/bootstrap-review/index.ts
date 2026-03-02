@@ -2,7 +2,7 @@ import "jsr:@supabase/functions-js/edge-runtime.d.ts";
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
 import { checkTopLevelEdgeSecretOrAnonKey } from "./auth_gate.ts";
 
-const FUNCTION_VERSION = "bootstrap-review_v1.3.0";
+const FUNCTION_VERSION = "bootstrap-review_v1.3.1";
 type ReviewQueueSource = "pipeline" | "redline";
 
 // ─── Helpers ─────────────────────────────────────────────────────────
@@ -1687,6 +1687,7 @@ Deno.serve(async (req: Request) => {
 
   const t0 = Date.now();
   const url = new URL(req.url);
+  const action = url.searchParams.get("action");
 
   // Auth gate
   // Health check — fast path, no auth
@@ -1707,14 +1708,31 @@ Deno.serve(async (req: Request) => {
     );
   }
 
+  // P0 security hotfix: write actions must NOT accept anon bearer.
+  // Reject anon before parsing body so requests cannot reach missing_* body validation errors.
+  if (
+    req.method === "POST" &&
+    (action === "resolve" || action === "dismiss" || action === "undo") &&
+    topLevelAuthResult.auth !== "edge_secret"
+  ) {
+    return json(
+      {
+        ok: false,
+        error_code: "invalid_auth",
+        error: "Write actions require X-Edge-Secret",
+        function_version: FUNCTION_VERSION,
+        ms: Date.now() - t0,
+      },
+      403,
+    );
+  }
+
   const db = createClient(
     Deno.env.get("SUPABASE_URL")!,
     Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!,
   );
 
   try {
-    const action = url.searchParams.get("action");
-
     // POST endpoints
     if (req.method === "POST") {
       if (action === "resolve") {
