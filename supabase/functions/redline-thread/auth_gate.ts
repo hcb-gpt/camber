@@ -211,12 +211,16 @@ export async function checkTopLevelEdgeSecretOrAnonKey(
 export function runTopLevelEdgeSecretProbe(
   req: Request,
   expectedEdgeSecret?: string,
+  functionVersion?: string,
 ): Response {
   const result = checkTopLevelEdgeSecret(req, expectedEdgeSecret);
-  return new Response(JSON.stringify(result), {
-    status: result.status,
-    headers: { "Content-Type": "application/json" },
-  });
+  return new Response(
+    JSON.stringify({ ...result, function_version: functionVersion }),
+    {
+      status: result.status,
+      headers: { "Content-Type": "application/json" },
+    },
+  );
 }
 
 export async function runTopLevelEdgeSecretOrAnonKeyProbe(
@@ -224,10 +228,14 @@ export async function runTopLevelEdgeSecretOrAnonKeyProbe(
   expectedEdgeSecret?: string,
   expectedAnonKey?: string,
   supabaseUrl?: string,
+  functionVersion?: string,
 ): Promise<Response> {
   const result = await checkTopLevelEdgeSecretOrAnonKey(req, expectedEdgeSecret, expectedAnonKey, supabaseUrl);
-  return new Response(JSON.stringify(result), {
-    status: result.status,
-    headers: { "Content-Type": "application/json" },
-  });
+  return new Response(
+    JSON.stringify({ ...result, function_version: functionVersion }),
+    {
+      status: result.status,
+      headers: { "Content-Type": "application/json" },
+    },
+  );
 }

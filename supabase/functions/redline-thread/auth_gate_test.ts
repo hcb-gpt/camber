@@ -28,11 +28,12 @@ Deno.test("redline-thread does not allow anon-key bypass for action routes via c
 
 Deno.test("top-level gate rejects missing X-Edge-Secret", async () => {
   const req = new Request("https://example.test/functions/v1/redline-thread?action=contacts");
-  const resp = runTopLevelEdgeSecretProbe(req, "expected-secret");
+  const resp = runTopLevelEdgeSecretProbe(req, "expected-secret", "test-v1");
   const body = await resp.json();
 
   assertEquals(resp.status, 401);
   assertEquals(body.error_code, "missing_auth");
+  assertEquals(body.function_version, "test-v1");
 });
 
 Deno.test("top-level gate allows valid X-Edge-Secret and source", async () => {
@@ -42,20 +43,22 @@ Deno.test("top-level gate allows valid X-Edge-Secret and source", async () => {
       "X-Source": "redline_ios",
     },
   });
-  const resp = runTopLevelEdgeSecretProbe(req, "expected-secret");
+  const resp = runTopLevelEdgeSecretProbe(req, "expected-secret", "test-v1");
   const body = await resp.json();
 
   assertEquals(resp.status, 200);
   assertEquals(body.ok, true);
+  assertEquals(body.function_version, "test-v1");
 });
 
 Deno.test("top-level gate (edge-secret-or-anon) rejects missing auth headers", async () => {
   const req = new Request("https://example.test/functions/v1/redline-thread?action=contacts");
-  const resp = await runTopLevelEdgeSecretOrAnonKeyProbe(req, "expected-secret", "expected-anon");
+  const resp = await runTopLevelEdgeSecretOrAnonKeyProbe(req, "expected-secret", "expected-anon", undefined, "test-v1");
   const body = await resp.json();
 
   assertEquals(resp.status, 401);
   assertEquals(body.error_code, "missing_auth");
+  assertEquals(body.function_version, "test-v1");
 });
 
 Deno.test("top-level gate (edge-secret-or-anon) allows Authorization: Bearer <anonKey>", async () => {
@@ -64,12 +67,13 @@ Deno.test("top-level gate (edge-secret-or-anon) allows Authorization: Bearer <an
       Authorization: "Bearer expected-anon",
     },
   });
-  const resp = await runTopLevelEdgeSecretOrAnonKeyProbe(req, "expected-secret", "expected-anon");
+  const resp = await runTopLevelEdgeSecretOrAnonKeyProbe(req, "expected-secret", "expected-anon", undefined, "test-v1");
   const body = await resp.json();
 
   assertEquals(resp.status, 200);
   assertEquals(body.ok, true);
   assertEquals(body.auth, "bearer");
+  assertEquals(body.function_version, "test-v1");
 });
 
 Deno.test("top-level gate (edge-secret-or-anon) rejects junk Bearer tokens", async () => {
