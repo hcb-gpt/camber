@@ -38,22 +38,42 @@ BASE_OUT_DIR="${ROOT_DIR}/artifacts/spotcheck_bruteforce_batch"
 while [[ $# -gt 0 ]]; do
   case "$1" in
     --count)
+      if [[ $# -lt 2 ]] || [[ -z "${2:-}" ]] || [[ "${2:-}" == --* ]]; then
+        echo "ERROR: --count requires a numeric value." >&2
+        exit 2
+      fi
       COUNT="${2:-}"
       shift 2
       ;;
     --sample)
+      if [[ $# -lt 2 ]] || [[ -z "${2:-}" ]] || [[ "${2:-}" == --* ]]; then
+        echo "ERROR: --sample requires 'latest' or 'random'." >&2
+        exit 2
+      fi
       SAMPLE_MODE="${2:-}"
       shift 2
       ;;
     --min-transcript-chars)
+      if [[ $# -lt 2 ]] || [[ -z "${2:-}" ]] || [[ "${2:-}" == --* ]]; then
+        echo "ERROR: --min-transcript-chars requires a numeric value." >&2
+        exit 2
+      fi
       MIN_TRANSCRIPT_CHARS="${2:-}"
       shift 2
       ;;
     --calls)
+      if [[ $# -lt 2 ]] || [[ -z "${2:-}" ]] || [[ "${2:-}" == --* ]]; then
+        echo "ERROR: --calls requires a comma-separated interaction_id list." >&2
+        exit 2
+      fi
       CALLS_CSV="${2:-}"
       shift 2
       ;;
     --output-dir)
+      if [[ $# -lt 2 ]] || [[ -z "${2:-}" ]] || [[ "${2:-}" == --* ]]; then
+        echo "ERROR: --output-dir requires a path." >&2
+        exit 2
+      fi
       BASE_OUT_DIR="${2:-}"
       shift 2
       ;;
@@ -73,6 +93,16 @@ done
 if [[ "${SAMPLE_MODE}" != "latest" && "${SAMPLE_MODE}" != "random" ]]; then
   echo "ERROR: --sample must be 'latest' or 'random'." >&2
   exit 1
+fi
+
+if [[ ! "${COUNT}" =~ ^[0-9]+$ ]] || (( COUNT <= 0 )); then
+  echo "ERROR: --count must be a positive integer." >&2
+  exit 2
+fi
+
+if [[ ! "${MIN_TRANSCRIPT_CHARS}" =~ ^[0-9]+$ ]]; then
+  echo "ERROR: --min-transcript-chars must be a non-negative integer." >&2
+  exit 2
 fi
 
 if [[ -n "${CALLS_CSV}" && "${SAMPLE_MODE}" == "random" ]]; then

@@ -42,11 +42,11 @@ while [[ $# -gt 0 ]]; do
       shift
       ;;
     --output-dir)
-      BASE_OUT_DIR="${2:-}"
-      if [[ -z "${BASE_OUT_DIR}" ]]; then
+      if [[ $# -lt 2 ]] || [[ -z "${2:-}" ]] || [[ "${2:-}" == --* ]]; then
         echo "ERROR: --output-dir requires a path." >&2
-        exit 1
+        exit 2
       fi
+      BASE_OUT_DIR="${2:-}"
       shift 2
       ;;
     --help|-h)
