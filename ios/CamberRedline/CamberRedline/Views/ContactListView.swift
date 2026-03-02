@@ -105,7 +105,15 @@ struct ContactListView: View {
                 guard !visibleContacts.isEmpty else { return }
 
                 didAutoNavigateForSmoke = true
-                let candidate = visibleContacts.first(where: { $0.ungradedCount > 0 }) ?? visibleContacts[0]
+                let probeDigits = "5555550100"
+                let candidate = visibleContacts.first(where: { contact in
+                    let phoneDigits = (contact.phone ?? "").filter(\.isNumber)
+                    let nameDigits = contact.name.filter(\.isNumber)
+                    return phoneDigits.hasSuffix(probeDigits) || nameDigits.hasSuffix(probeDigits)
+                })
+                    ?? visibleContacts.first(where: { $0.contactKey.hasPrefix("sms:") })
+                    ?? visibleContacts.first(where: { $0.ungradedCount > 0 })
+                    ?? visibleContacts[0]
                 navigationPath = [candidate]
             }
     }

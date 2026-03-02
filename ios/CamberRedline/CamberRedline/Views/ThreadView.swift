@@ -292,6 +292,14 @@ struct ThreadView: View {
                     .padding(.top, 12)
                     .padding(.bottom, 10)
 
+                    if ThreadSwipeSmokeAutomation.isEnabled {
+                        Text("SMOKE contact_key: \(contact.contactKey)")
+                            .font(.system(.caption2, design: .monospaced))
+                            .foregroundStyle(Color(.systemGray2))
+                            .padding(.horizontal, 16)
+                            .padding(.bottom, 8)
+                    }
+
                     if viewModel.isLoadingOlderThread {
                         ProgressView()
                             .tint(.white)
