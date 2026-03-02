@@ -2,6 +2,7 @@ import "jsr:@supabase/functions-js/edge-runtime.d.ts";
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
 import { computeTruthGraph, type TruthGraphHydration, type TruthGraphRepairAction } from "./truth_graph.ts";
 import { requireEdgeSecret } from "../_shared/auth.ts";
+import { checkTopLevelEdgeSecret } from "./auth_gate.ts";
 
 const FUNCTION_VERSION = "redline-thread_v3.4.0";
 /**
@@ -3013,23 +3014,27 @@ Deno.serve(async (req: Request) => {
 
   const t0 = Date.now();
   const url = new URL(req.url);
-  const db = createClient(Deno.env.get("SUPABASE_URL")!, Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!);
 
   try {
     // Health check — fast path, no auth, no cache
     if (url.searchParams.get("mode") === "health") {
+      const db = createClient(Deno.env.get("SUPABASE_URL")!, Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!);
       return await handleHealth(db, t0);
     }
 
-    const expectedEdgeSecret = Deno.env.get("EDGE_SHARED_SECRET");
-    if (!expectedEdgeSecret) {
-      return json({ ok: false, error_code: "server_misconfigured", error: "EDGE_SHARED_SECRET not set" }, 500);
-    }
-    const providedSecret = req.headers.get("X-Edge-Secret");
-    if (!providedSecret || providedSecret !== expectedEdgeSecret) {
-      return json({ ok: false, error_code: "missing_auth", error: "Valid X-Edge-Secret required" }, 401);
+    const topLevelAuthResult = checkTopLevelEdgeSecret(req);
+    if (!topLevelAuthResult.ok) {
+      return json(
+        {
+          ok: false,
+          error_code: topLevelAuthResult.error_code,
+          error: topLevelAuthResult.error,
+        },
+        topLevelAuthResult.status,
+      );
     }
 
+    const db = createClient(Deno.env.get("SUPABASE_URL")!, Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!);
     const action = url.searchParams.get("action");
 
     const apiRoute = parseRedlineApiRoute(url);
