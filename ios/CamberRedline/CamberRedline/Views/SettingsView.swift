@@ -18,6 +18,14 @@ struct SettingsView: View {
                     }
                 }
 
+                Section("Internal") {
+                    NavigationLink {
+                        InternalSettingsView()
+                    } label: {
+                        Label("Internal Settings", systemImage: "wrench.and.screwdriver")
+                    }
+                }
+
                 Section("Redline") {
                     Button(role: .destructive) {
                         showResetConfirmation = true
@@ -70,6 +78,77 @@ struct SettingsView: View {
         let build = Bundle.main.infoDictionary?["CFBundleVersion"] as? String
         if let version, let build { return "\(version) (\(build))" }
         return version ?? build ?? "unknown"
+    }
+}
+
+private struct InternalSettingsView: View {
+    @AppStorage(RedlineInternalSettings.Keys.truthGraphStatusCardEnabled)
+    private var truthGraphStatusCardEnabled = false
+    @AppStorage(RedlineInternalSettings.Keys.edgeSecret)
+    private var edgeSecret = ""
+    @State private var isSecretVisible = false
+
+    private let bgColor = Color(white: 0.08)
+
+    var body: some View {
+        ZStack {
+            bgColor.ignoresSafeArea()
+
+            List {
+                Section("Truth Graph") {
+                    Toggle(isOn: $truthGraphStatusCardEnabled) {
+                        Label("Enable status card", systemImage: "stethoscope")
+                    }
+                }
+
+                Section {
+                    HStack(alignment: .firstTextBaseline) {
+                        Text("X-Edge-Secret")
+                            .font(.subheadline)
+
+                        Spacer()
+
+                        Group {
+                            if isSecretVisible {
+                                TextField("Required for API access", text: $edgeSecret)
+                            } else {
+                                SecureField("Required for API access", text: $edgeSecret)
+                            }
+                        }
+                        .textInputAutocapitalization(.never)
+                        .autocorrectionDisabled()
+                        .textContentType(.password)
+                        .font(.footnote.monospaced())
+                        .multilineTextAlignment(.trailing)
+                    }
+
+                    HStack {
+                        Label(edgeSecret.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ? "Not set" : "Set", systemImage: "key.fill")
+                            .foregroundStyle(.secondary)
+                        Spacer()
+                        Button(isSecretVisible ? "Hide" : "Show") {
+                            isSecretVisible.toggle()
+                        }
+                        .buttonStyle(.borderless)
+                    }
+
+                    Button("Clear Edge Secret", role: .destructive) {
+                        edgeSecret = ""
+                    }
+                } header: {
+                    Text("Edge Auth")
+                } footer: {
+                    Text("Used to authenticate internal calls to Supabase Edge Functions. Stored locally on this device.")
+                }
+            }
+            .listStyle(.insetGrouped)
+            .scrollContentBackground(.hidden)
+        }
+        .navigationTitle("Internal")
+        .navigationBarTitleDisplayMode(.inline)
+        .toolbarBackground(Color(white: 0.06), for: .navigationBar)
+        .toolbarBackground(.visible, for: .navigationBar)
+        .preferredColorScheme(.dark)
     }
 }
 
@@ -195,4 +274,3 @@ private struct PipelineHeartbeatRow: View {
         return "\(hours)h"
     }
 }
-

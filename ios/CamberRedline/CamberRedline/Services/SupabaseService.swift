@@ -59,10 +59,11 @@ final class SupabaseService {
         request.setValue("Bearer \(anonKey)", forHTTPHeaderField: "Authorization")
         request.setValue("no-cache", forHTTPHeaderField: "Cache-Control")
         request.setValue("no-cache", forHTTPHeaderField: "Pragma")
+        applyRedlineEdgeAuthHeaders(&request)
 
         let (data, response) = try await URLSession.shared.data(for: request)
         let httpStatus = (response as? HTTPURLResponse)?.statusCode ?? -1
-        try validateHTTPResponse(response)
+        try validateHTTPResponse(response, data: data)
 
         let decoded: ContactsResponse
         do {
@@ -122,10 +123,11 @@ final class SupabaseService {
         request.setValue("Bearer \(anonKey)", forHTTPHeaderField: "Authorization")
         request.setValue("no-cache", forHTTPHeaderField: "Cache-Control")
         request.setValue("no-cache", forHTTPHeaderField: "Pragma")
+        applyRedlineEdgeAuthHeaders(&request)
 
         let (data, response) = try await URLSession.shared.data(for: request)
         let httpStatus = (response as? HTTPURLResponse)?.statusCode ?? -1
-        try validateHTTPResponse(response)
+        try validateHTTPResponse(response, data: data)
 
         let decoded: ThreadResponse
         do {
@@ -199,9 +201,10 @@ final class SupabaseService {
         request.setValue("application/json", forHTTPHeaderField: "Content-Type")
         request.setValue("Bearer \(anonKey)", forHTTPHeaderField: "Authorization")
         request.httpBody = try JSONEncoder().encode(body)
+        applyRedlineEdgeAuthHeaders(&request)
 
         let (data, response) = try await URLSession.shared.data(for: request)
-        try validateHTTPResponse(response)
+        try validateHTTPResponse(response, data: data)
 
         if let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
            let ok = json["ok"] as? Bool, !ok
@@ -227,9 +230,10 @@ final class SupabaseService {
         var request = URLRequest(url: url)
         request.cachePolicy = .reloadIgnoringLocalCacheData
         request.setValue("Bearer \(anonKey)", forHTTPHeaderField: "Authorization")
+        applyRedlineEdgeAuthHeaders(&request)
 
         let (data, response) = try await URLSession.shared.data(for: request)
-        try validateHTTPResponse(response)
+        try validateHTTPResponse(response, data: data)
 
         if let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
            let ok = json["ok"] as? Bool, !ok
@@ -237,6 +241,94 @@ final class SupabaseService {
             let message = json["error"] as? String ?? "Unknown error"
             throw ServiceError.apiError(message)
         }
+    }
+
+    // MARK: - Truth Graph (edge function: GET ?action=truth_graph&interaction_id=X)
+
+    func fetchTruthGraph(interactionId: String) async throws -> TruthGraphResponse {
+        var components = URLComponents(url: edgeFunctionBaseURL, resolvingAgainstBaseURL: false)!
+        components.queryItems = [
+            URLQueryItem(name: "action", value: "truth_graph"),
+            URLQueryItem(name: "interaction_id", value: interactionId),
+            URLQueryItem(name: "_ts", value: String(Int(Date().timeIntervalSince1970))),
+        ]
+
+        guard let url = components.url else {
+            throw ServiceError.apiError("Failed to construct truth_graph URL")
+        }
+
+        var request = URLRequest(url: url)
+        request.cachePolicy = .reloadIgnoringLocalCacheData
+        request.setValue("Bearer \(anonKey)", forHTTPHeaderField: "Authorization")
+        request.setValue("no-cache", forHTTPHeaderField: "Cache-Control")
+        request.setValue("no-cache", forHTTPHeaderField: "Pragma")
+        applyRedlineEdgeAuthHeaders(&request)
+
+        let (data, response) = try await URLSession.shared.data(for: request)
+        try validateHTTPResponse(response, data: data)
+
+        let decoded = try JSONDecoder().decode(TruthGraphResponse.self, from: data)
+        guard decoded.ok else {
+            throw ServiceError.apiError("Truth Graph endpoint returned ok=false")
+        }
+
+        return decoded
+    }
+
+    // MARK: - Truth Graph Repair (edge function: POST ?action=repair)
+
+    func triggerTruthGraphRepair(
+        interactionId: String,
+        repairAction: String,
+        idempotencyKey: String
+    ) async throws -> TruthGraphRepairResponse {
+        struct RepairRequest: Encodable {
+            let interactionId: String
+            let repairAction: String
+            let idempotencyKey: String
+            let requestedBy: String
+
+            enum CodingKeys: String, CodingKey {
+                case interactionId = "interaction_id"
+                case repairAction = "repair_action"
+                case idempotencyKey = "idempotency_key"
+                case requestedBy = "requested_by"
+            }
+        }
+
+        var components = URLComponents(url: edgeFunctionBaseURL, resolvingAgainstBaseURL: false)!
+        components.queryItems = [
+            URLQueryItem(name: "action", value: "repair"),
+            URLQueryItem(name: "_ts", value: String(Int(Date().timeIntervalSince1970))),
+        ]
+
+        guard let url = components.url else {
+            throw ServiceError.apiError("Failed to construct repair URL")
+        }
+
+        let payload = RepairRequest(
+            interactionId: interactionId,
+            repairAction: repairAction,
+            idempotencyKey: idempotencyKey,
+            requestedBy: RedlineInternalSettings.edgeSource
+        )
+
+        var request = URLRequest(url: url)
+        request.httpMethod = "POST"
+        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        request.setValue("Bearer \(anonKey)", forHTTPHeaderField: "Authorization")
+        request.httpBody = try JSONEncoder().encode(payload)
+        applyRedlineEdgeAuthHeaders(&request)
+
+        let (data, response) = try await URLSession.shared.data(for: request)
+        try validateHTTPResponse(response, data: data)
+
+        let decoded = try JSONDecoder().decode(TruthGraphRepairResponse.self, from: data)
+        if !decoded.ok {
+            let error = [decoded.errorCode, decoded.error].compactMap { $0 }.joined(separator: ": ")
+            throw ServiceError.apiError(error.isEmpty ? "Repair request failed" : error)
+        }
+        return decoded
     }
 
     // MARK: - Resolve Review Queue Item (edge function: review-resolve)
@@ -324,13 +416,51 @@ final class SupabaseService {
         return cached.response
     }
 
-    private func validateHTTPResponse(_ response: URLResponse) throws {
+    private func validateHTTPResponse(_ response: URLResponse, data: Data? = nil) throws {
         guard let http = response as? HTTPURLResponse else {
             throw ServiceError.invalidResponse
         }
         guard (200...299).contains(http.statusCode) else {
+            if let data, let errorMessage = bestEffortAPIErrorMessage(from: data, statusCode: http.statusCode) {
+                throw ServiceError.apiError(errorMessage)
+            }
             throw ServiceError.httpError(statusCode: http.statusCode)
         }
+    }
+
+    private func bestEffortAPIErrorMessage(from data: Data, statusCode: Int) -> String? {
+        if let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any] {
+            let errorCode = json["error_code"] as? String
+            let error = json["error"] as? String
+
+            if errorCode == "missing_auth", (error ?? "").contains("X-Edge-Secret") {
+                return "HTTP \(statusCode): Missing edge secret. Set it in Settings → Internal."
+            }
+
+            if let errorCode, let error {
+                return "HTTP \(statusCode): \(errorCode): \(error)"
+            }
+
+            if let error, let detail = json["detail"] as? String {
+                return "HTTP \(statusCode): \(error): \(detail)"
+            }
+
+            if let message = json["message"] as? String {
+                return "HTTP \(statusCode): \(message)"
+            }
+        }
+
+        if let preview = String(data: data.prefix(200), encoding: .utf8), !preview.isEmpty {
+            return "HTTP \(statusCode): \(preview)"
+        }
+
+        return nil
+    }
+
+    private func applyRedlineEdgeAuthHeaders(_ request: inout URLRequest) {
+        guard let secret = RedlineInternalSettings.edgeSecret else { return }
+        request.setValue(secret, forHTTPHeaderField: "X-Edge-Secret")
+        request.setValue(RedlineInternalSettings.edgeSource, forHTTPHeaderField: "X-Source")
     }
 
     private nonisolated static func performReviewResolveRequest(

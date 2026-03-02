@@ -20,8 +20,10 @@
 		318DEDE62A4D9753580B870D /* AssistantContext.swift in Sources */ = {isa = PBXBuildFile; fileRef = 286F14684E47ACD927777E89 /* AssistantContext.swift */; };
 		547C08130F2822252B3296F9 /* ClaimRow.swift in Sources */ = {isa = PBXBuildFile; fileRef = B70C4EA922BE454A904F95BB /* ClaimRow.swift */; };
 		54CEA22722BBC72BA5B92913 /* CallsView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 811F8ECECD49DD28083674CA /* CallsView.swift */; };
+		67372A3DAE77E88364651547 /* TruthGraph.swift in Sources */ = {isa = PBXBuildFile; fileRef = EA23B90F97447BC17B2D9BB4 /* TruthGraph.swift */; };
 		6810EA3F634A84FCB75E2AB9 /* ContactRow.swift in Sources */ = {isa = PBXBuildFile; fileRef = 64CAF4EB749EF62EB74ED822 /* ContactRow.swift */; };
 		685787AC4387F6EDEE201B93 /* AssistantChatView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 4A00522B1BB908D179B1DB3A /* AssistantChatView.swift */; };
+		69E31C2F461060F9811585DE /* TruthGraphStatusCard.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8BCA009346E3596FCA534A3B /* TruthGraphStatusCard.swift */; };
 		6AA54D206A9C4FB91121750A /* AttributionTriageCardsView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 370CFEDE912C1156C1F30EB5 /* AttributionTriageCardsView.swift */; };
 		73DCF539C5D0EB5285CA1AE6 /* AIView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 75C6B7FDB012B57B95706BE7 /* AIView.swift */; };
 		75E8F27A4E113F161D378177 /* DialView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 0AB89A707C416FD7AE32DD9B /* DialView.swift */; };
@@ -36,6 +38,7 @@
 		986CB6A00F10B14F7508F67B /* Supabase in Frameworks */ = {isa = PBXBuildFile; productRef = 187F6B7C7E102040AC0AAD35 /* Supabase */; };
 		B0A7C6545E6B3F687949F4CD /* SpeakerTurnBubble.swift in Sources */ = {isa = PBXBuildFile; fileRef = 88D0EA435EF93F8F71CDA172 /* SpeakerTurnBubble.swift */; };
 		B4148DF1A17F77A1103A1796 /* SupabaseService.swift in Sources */ = {isa = PBXBuildFile; fileRef = 49A9C46539AA007D7645122A /* SupabaseService.swift */; };
+		B64E75049984AB894EC73B49 /* RedlineInternalSettings.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1D7B6A6949528E0465AE6C9F /* RedlineInternalSettings.swift */; };
 		C037A4DFA1ABDC2539B274A3 /* ContactInfoView.swift in Sources */ = {isa = PBXBuildFile; fileRef = A801A78FDAAECC420340C609 /* ContactInfoView.swift */; };
 		D21A48D75846B897A735D708 /* ReviewItem.swift in Sources */ = {isa = PBXBuildFile; fileRef = 75E749332DE2AAC4065FBD2C /* ReviewItem.swift */; };
 		D7B89133BD2CD72F5991596D /* ThreadViewModel.swift in Sources */ = {isa = PBXBuildFile; fileRef = 51E44482F637661C85D155F8 /* ThreadViewModel.swift */; };
@@ -50,6 +53,7 @@
 		055EAEA048AB6BB4CA4EEE80 /* ThreadView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ThreadView.swift; sourceTree = "<group>"; };
 		0AB89A707C416FD7AE32DD9B /* DialView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DialView.swift; sourceTree = "<group>"; };
 		164D5EB420B7255586578549 /* ReviewProject.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ReviewProject.swift; sourceTree = "<group>"; };
+		1D7B6A6949528E0465AE6C9F /* RedlineInternalSettings.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RedlineInternalSettings.swift; sourceTree = "<group>"; };
 		286F14684E47ACD927777E89 /* AssistantContext.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AssistantContext.swift; sourceTree = "<group>"; };
 		34CB7D73C1D3046EEE6ECAAE /* CamberRedline.app */ = {isa = PBXFileReference; includeInIndex = 0; lastKnownFileType = wrapper.application; path = CamberRedline.app; sourceTree = BUILT_PRODUCTS_DIR; };
 		370CFEDE912C1156C1F30EB5 /* AttributionTriageCardsView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AttributionTriageCardsView.swift; sourceTree = "<group>"; };
@@ -65,6 +69,7 @@
 		811F8ECECD49DD28083674CA /* CallsView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CallsView.swift; sourceTree = "<group>"; };
 		818303E562C5E5945D154CAB /* CardTriageViewModel.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CardTriageViewModel.swift; sourceTree = "<group>"; };
 		88D0EA435EF93F8F71CDA172 /* SpeakerTurnBubble.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SpeakerTurnBubble.swift; sourceTree = "<group>"; };
+		8BCA009346E3596FCA534A3B /* TruthGraphStatusCard.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TruthGraphStatusCard.swift; sourceTree = "<group>"; };
 		8F826DDC57DEDE773FDE9A90 /* TranscriptParser.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TranscriptParser.swift; sourceTree = "<group>"; };
 		911A4F7AE09B7C357D50E794 /* SettingsView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SettingsView.swift; sourceTree = "<group>"; };
 		93F9EB787CFB3448E1EFC024 /* Contact.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Contact.swift; sourceTree = "<group>"; };
@@ -81,6 +86,7 @@
 		E5142F02E2BCC00AA2D0B352 /* TriageViewModel.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TriageViewModel.swift; sourceTree = "<group>"; };
 		E620CD5610E49C34C8D6DD31 /* ThreadItem.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ThreadItem.swift; sourceTree = "<group>"; };
 		E79147BC2C70818C0A8A0E84 /* TriageView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TriageView.swift; sourceTree = "<group>"; };
+		EA23B90F97447BC17B2D9BB4 /* TruthGraph.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TruthGraph.swift; sourceTree = "<group>"; };
 		EF9A6045C507E720138741A1 /* ContactListView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ContactListView.swift; sourceTree = "<group>"; };
 		FB112EFBB100898B64A8727D /* InboxView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = InboxView.swift; sourceTree = "<group>"; };
 		FF5BA52015DDCF6F215FA113 /* CamberRedlineApp.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CamberRedlineApp.swift; sourceTree = "<group>"; };
@@ -122,6 +128,7 @@
 				88D0EA435EF93F8F71CDA172 /* SpeakerTurnBubble.swift */,
 				055EAEA048AB6BB4CA4EEE80 /* ThreadView.swift */,
 				E79147BC2C70818C0A8A0E84 /* TriageView.swift */,
+				8BCA009346E3596FCA534A3B /* TruthGraphStatusCard.swift */,
 			);
 			path = Views;
 			sourceTree = "<group>";
@@ -162,6 +169,7 @@
 			isa = PBXGroup;
 			children = (
 				D46A39E4F7972B1C31B26A79 /* BootstrapService.swift */,
+				1D7B6A6949528E0465AE6C9F /* RedlineInternalSettings.swift */,
 				49A9C46539AA007D7645122A /* SupabaseService.swift */,
 			);
 			path = Services;
@@ -177,6 +185,7 @@
 				164D5EB420B7255586578549 /* ReviewProject.swift */,
 				E620CD5610E49C34C8D6DD31 /* ThreadItem.swift */,
 				8F826DDC57DEDE773FDE9A90 /* TranscriptParser.swift */,
+				EA23B90F97447BC17B2D9BB4 /* TruthGraph.swift */,
 			);
 			path = Models;
 			sourceTree = "<group>";
@@ -287,6 +296,7 @@
 				193B96A4F6E1BC3B7A0B3B61 /* GradeIndicator.swift in Sources */,
 				79C3F46D4F79C7EFBC0D426F /* InboxView.swift in Sources */,
 				8677D6B99962EA63BD37567D /* ProjectPickerSheet.swift in Sources */,
+				B64E75049984AB894EC73B49 /* RedlineInternalSettings.swift in Sources */,
 				D21A48D75846B897A735D708 /* ReviewItem.swift in Sources */,
 				F4526B156028BA0541CBA78C /* ReviewProject.swift in Sources */,
 				87C400F4F3874303B94EB83B /* SMSBubble.swift in Sources */,
@@ -299,6 +309,8 @@
 				0EF825BEF32FA479DE65FD79 /* TranscriptParser.swift in Sources */,
 				0F58E997CFCF95535981728E /* TriageView.swift in Sources */,
 				E66ABA2EA8746CB9634B7D93 /* TriageViewModel.swift in Sources */,
+				67372A3DAE77E88364651547 /* TruthGraph.swift in Sources */,
+				69E31C2F461060F9811585DE /* TruthGraphStatusCard.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};

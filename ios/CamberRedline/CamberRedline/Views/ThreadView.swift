@@ -103,6 +103,8 @@ struct ThreadView: View {
     @State private var activeNoteContext: ThreadNoteContext?
     @State private var noteDraft = ""
     @State private var isContactInfoPresented = false
+    @AppStorage(RedlineInternalSettings.Keys.truthGraphStatusCardEnabled)
+    private var truthGraphStatusCardEnabled = false
     private let bottomAnchorID = "thread-bottom-anchor"
     private let topLoadThreshold: CGFloat = -80
     private static let smsStripeColors: [Color] = [
@@ -272,19 +274,25 @@ struct ThreadView: View {
 
                     let missingCount = missingAttributions(in: groups)
                     if missingCount > 0 {
-                        HStack(spacing: 8) {
-                            Image(systemName: "exclamationmark.triangle.fill")
-                            Text("\(missingCount) attribution\(missingCount == 1 ? "" : "s") still missing in this thread")
-                                .font(.caption)
-                                .fontWeight(.semibold)
-                            Spacer()
+                        if truthGraphStatusCardEnabled, let interactionId = truthGraphInteractionId(in: groups) {
+                            TruthGraphStatusCard(missingCount: missingCount, interactionId: interactionId)
+                                .padding(.horizontal, 16)
+                                .padding(.bottom, 10)
+                        } else {
+                            HStack(spacing: 8) {
+                                Image(systemName: "exclamationmark.triangle.fill")
+                                Text("\(missingCount) attribution\(missingCount == 1 ? "" : "s") still missing in this thread")
+                                    .font(.caption)
+                                    .fontWeight(.semibold)
+                                Spacer()
+                            }
+                            .foregroundStyle(Color(red: 0.95, green: 0.62, blue: 0.23))
+                            .padding(.horizontal, 12)
+                            .padding(.vertical, 8)
+                            .background(Color(red: 0.20, green: 0.12, blue: 0.05), in: RoundedRectangle(cornerRadius: 10))
+                            .padding(.horizontal, 16)
+                            .padding(.bottom, 10)
                         }
-                        .foregroundStyle(Color(red: 0.95, green: 0.62, blue: 0.23))
-                        .padding(.horizontal, 12)
-                        .padding(.vertical, 8)
-                        .background(Color(red: 0.20, green: 0.12, blue: 0.05), in: RoundedRectangle(cornerRadius: 10))
-                        .padding(.horizontal, 16)
-                        .padding(.bottom, 10)
                     }
 
                     ForEach(Array(groups.enumerated()), id: \.element.id) { index, group in
@@ -543,6 +551,19 @@ struct ThreadView: View {
     }
 
     // MARK: - Date separator logic
+
+    private func truthGraphInteractionId(in groups: [DisplayGroup]) -> String? {
+        let callGroups = groups.compactMap { group -> CallHeaderEntry? in
+            guard case .callGroup(let header, _) = group else { return nil }
+            return header
+        }
+
+        if let pending = callGroups.first(where: { $0.pendingAttributionCount > 0 }) {
+            return pending.interactionId
+        }
+
+        return callGroups.first?.interactionId
+    }
 
     private func missingAttributions(in groups: [DisplayGroup]) -> Int {
         groups.reduce(0) { partial, group in
