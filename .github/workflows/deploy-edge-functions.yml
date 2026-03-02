@@ -54,11 +54,78 @@ jobs:
           # incompatibility that broke 14/19 deploys. Bump intentionally.
           version: 2.76.8
 
-      - name: Deploy function
+      - name: Resolve verify_jwt contract
+        id: auth-contract
+        shell: bash
         run: |
-          supabase functions deploy "${{ matrix.function }}" \
-            --project-ref ${{ secrets.SUPABASE_PROJECT_ID }} \
-            --no-verify-jwt
+          set -euo pipefail
+          fn="${{ matrix.function }}"
+          expected="$(python3 - "${fn}" <<'PY'
+          import pathlib
+          import sys
+          import tomllib
+
+          fn = sys.argv[1]
+          root = pathlib.Path(".")
+
+          expected = None
+          fn_cfg = root / "supabase" / "functions" / fn / "config.toml"
+          if fn_cfg.exists():
+              cfg = tomllib.loads(fn_cfg.read_text())
+              if isinstance(cfg.get("verify_jwt"), bool):
+                  expected = cfg["verify_jwt"]
+              else:
+                  section = cfg.get("function")
+                  if isinstance(section, dict) and isinstance(section.get("verify_jwt"), bool):
+                      expected = section["verify_jwt"]
+
+          if expected is None:
+              project_cfg_path = root / "supabase" / "config.toml"
+              if project_cfg_path.exists():
+                  project_cfg = tomllib.loads(project_cfg_path.read_text())
+                  functions_cfg = project_cfg.get("functions", {})
+                  entry = functions_cfg.get(fn)
+                  if isinstance(entry, dict) and isinstance(entry.get("verify_jwt"), bool):
+                      expected = entry["verify_jwt"]
+
+          if expected is None:
+              expected = True
+
+          print("true" if expected else "false")
+          PY
+          )"
+          echo "expected_verify_jwt=${expected}" >> "$GITHUB_OUTPUT"
+          echo "Resolved verify_jwt contract for ${fn}: ${expected}"
+
+      - name: Deploy function
+        shell: bash
+        run: |
+          set -euo pipefail
+          fn="${{ matrix.function }}"
+          project="${{ secrets.SUPABASE_PROJECT_ID }}"
+          expected="${{ steps.auth-contract.outputs.expected_verify_jwt }}"
+
+          if [[ "${expected}" == "false" ]]; then
+            echo "Deploying ${fn} with --no-verify-jwt (contract=false)"
+            supabase functions deploy "${fn}" \
+              --project-ref "${project}" \
+              --no-verify-jwt
+          else
+            echo "Deploying ${fn} with default JWT verification (contract=true)"
+            supabase functions deploy "${fn}" \
+              --project-ref "${project}"
+          fi
+        env:
+          SUPABASE_ACCESS_TOKEN: ${{ secrets.SUPABASE_ACCESS_TOKEN }}
+
+      - name: Verify verify_jwt drift guard
+        shell: bash
+        run: |
+          set -euo pipefail
+          chmod +x scripts/verify_jwt_drift_guard.sh
+          scripts/verify_jwt_drift_guard.sh \
+            --project-ref "${{ secrets.SUPABASE_PROJECT_ID }}" \
+            --functions "${{ matrix.function }}"
         env:
           SUPABASE_ACCESS_TOKEN: ${{ secrets.SUPABASE_ACCESS_TOKEN }}
 

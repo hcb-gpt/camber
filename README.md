@@ -49,6 +49,23 @@ supabase functions serve process-call --env-file .env.local
 supabase functions deploy process-call --no-verify-jwt
 ```
 
+## verify_jwt Drift Guard
+
+Validate deployed `verify_jwt` flags against repo source-of-truth before/after deploys:
+
+```bash
+cd /Users/chadbarlow/gh/hcb-gpt/camber
+scripts/verify_jwt_drift_guard.sh --project-ref rjhdwidddtfetbwqolof
+```
+
+For targeted checks:
+
+```bash
+scripts/verify_jwt_drift_guard.sh \
+  --project-ref rjhdwidddtfetbwqolof \
+  --functions "sms-beside-batch-ingest,process-call"
+```
+
 ## iOS (CamberRedline)
 
 One-command simulator build guard (useful for `ship/latest` sanity checks):
