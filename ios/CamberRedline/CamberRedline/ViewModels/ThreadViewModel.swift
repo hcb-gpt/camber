@@ -686,11 +686,11 @@ final class ThreadViewModel {
         do {
             try await channel.subscribeWithError()
         } catch {
+            await stopClaimGradeSubscription()
             if shouldIgnoreRealtimeError(error) {
                 return
             }
             print("Claim grade realtime unavailable: \(error.localizedDescription)")
-            await stopClaimGradeSubscription()
             return
         }
         error = nil
@@ -828,10 +828,12 @@ final class ThreadViewModel {
             try await interactionsChannel.subscribeWithError()
             try await smsChannel.subscribeWithError()
         } catch {
-            if !shouldIgnoreRealtimeError(error) {
-                print("Thread interactions realtime unavailable: \(error.localizedDescription)")
-            }
+            await service.client.removeChannel(reviewQueueChannel)
             await stopInteractionsSubscription()
+            if shouldIgnoreRealtimeError(error) {
+                return
+            }
+            print("Thread interactions realtime unavailable: \(error.localizedDescription)")
             startThreadFallbackRefresh(contactId: contactId)
             return
         }
@@ -980,6 +982,7 @@ final class ThreadViewModel {
         guard threadFallbackRefreshTask == nil else { return }
         threadFallbackRefreshTask = Task { @MainActor [weak self] in
             guard let self else { return }
+            defer { self.threadFallbackRefreshTask = nil }
             while !Task.isCancelled {
                 do {
                     try await Task.sleep(for: .seconds(5))
@@ -1200,15 +1203,13 @@ final class ContactListViewModel {
             try await channel.subscribeWithError()
             try await smsChannel.subscribeWithError()
         } catch {
+            await service.client.removeChannel(channel)
+            await service.client.removeChannel(smsChannel)
+            await service.client.removeChannel(reviewQueueChannel)
             if shouldIgnoreRealtimeError(error) {
                 return
             }
             print("Interactions realtime unavailable: \(error.localizedDescription)")
-            if let channel = interactionsChannel {
-                interactionsChannel = nil
-                await service.client.removeChannel(channel)
-            }
-            await service.client.removeChannel(smsChannel)
             return
         }
 
