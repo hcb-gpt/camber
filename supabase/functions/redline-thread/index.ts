@@ -820,9 +820,9 @@ export function deterministicUUID(input: string): string {
   return [
     padded.slice(0, 8),
     padded.slice(8, 12),
-    "4" + padded.slice(13, 16),
-    "8" + padded.slice(17, 20),
-    padded.slice(20, 32),
+    "4" + padded.slice(12, 15),
+    "8" + padded.slice(15, 18),
+    padded.slice(18, 30),
   ].join("-");
 }
 
@@ -1726,10 +1726,9 @@ async function handleThread(
       let from = 0;
       while (results.length < scanWindow) {
         const to = from + queryPageSize - 1;
-        const { data, error } = await db
+        let query = db
           .from("interactions")
           .select("id, interaction_id, event_at_utc, human_summary, contact_name, is_shadow")
-          .eq("contact_id", contactId)
           .or("channel.eq.call,channel.eq.phone,channel.is.null")
           .or("is_shadow.is.false,is_shadow.is.null")
           .not("interaction_id", "like", "cll_SHADOW_%")
@@ -1737,6 +1736,18 @@ async function handleThread(
           .not("event_at_utc", "is", null)
           .order("event_at_utc", { ascending: false })
           .range(from, to);
+
+        if (smsOnlyDigits) {
+          if (contactPhoneVariants.length === 1) {
+            query = query.eq("contact_phone", contactPhoneVariants[0]);
+          } else {
+            query = query.in("contact_phone", contactPhoneVariants);
+          }
+        } else {
+          query = query.eq("contact_id", contactId);
+        }
+
+        const { data, error } = await query;
         if (error) throw error;
         if (!data || data.length === 0) break;
         results = results.concat(data);
@@ -2047,15 +2058,17 @@ async function handleSpansApi(db: any, contactId: string, url: URL, t0: number):
   const scanWindow = Math.min(Math.max(offset + limit + 200, 300), 2000);
   const queryPageSize = 200;
 
+  const smsOnlyDigits = parseSmsOnlyContactDigits(contactId);
+  const contactPhoneVariants = buildPhoneVariants(contact.contact_phone);
+
   let allInteractions: any[] = [];
   let interactionsFrom = 0;
   let hasMoreInteractions = false;
   while (allInteractions.length < scanWindow) {
     const interactionsTo = interactionsFrom + queryPageSize - 1;
-    const { data: page, error: intErr } = await db
+    let query = db
       .from("interactions")
       .select("id, interaction_id, event_at_utc, contact_name, is_shadow")
-      .eq("contact_id", contactId)
       .or("channel.eq.call,channel.eq.phone,channel.is.null")
       .or("is_shadow.is.false,is_shadow.is.null")
       .not("interaction_id", "like", "cll_SHADOW_%")
@@ -2063,6 +2076,18 @@ async function handleSpansApi(db: any, contactId: string, url: URL, t0: number):
       .not("event_at_utc", "is", null)
       .order("event_at_utc", { ascending: false })
       .range(interactionsFrom, interactionsTo);
+
+    if (smsOnlyDigits) {
+      if (contactPhoneVariants.length === 1) {
+        query = query.eq("contact_phone", contactPhoneVariants[0]);
+      } else {
+        query = query.in("contact_phone", contactPhoneVariants);
+      }
+    } else {
+      query = query.eq("contact_id", contactId);
+    }
+
+    const { data: page, error: intErr } = await query;
 
     if (intErr) {
       return json({ ok: false, error_code: "interactions_query_failed", error: intErr.message }, 500);
