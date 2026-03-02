@@ -10,7 +10,7 @@ type ReviewQueueSource = "pipeline" | "redline";
 function corsHeaders(): Record<string, string> {
   return {
     "Access-Control-Allow-Origin": "*",
-    "Access-Control-Allow-Headers": "authorization, x-edge-secret, x-source, content-type",
+    "Access-Control-Allow-Headers": "authorization, apikey, x-edge-secret, x-source, content-type",
     "Access-Control-Allow-Methods": "GET, POST, OPTIONS",
   };
 }
@@ -1691,10 +1691,6 @@ Deno.serve(async (req: Request) => {
   // Auth gate
   // Health check — fast path, no auth
   if (url.searchParams.get("mode") === "health") {
-    const db = createClient(
-      Deno.env.get("SUPABASE_URL")!,
-      Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!,
-    );
     return json({ ok: true, version: FUNCTION_VERSION, ms: Date.now() - t0 });
   }
 

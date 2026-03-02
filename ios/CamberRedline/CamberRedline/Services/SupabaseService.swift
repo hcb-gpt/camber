@@ -84,6 +84,8 @@ final class SupabaseService {
         do {
             decoded = try JSONDecoder().decode(ContactsResponse.self, from: data)
         } catch let decodingError as DecodingError {
+            #if DEBUG
+            let preview = String(data: data.prefix(300), encoding: .utf8) ?? "<binary>"
             print("[ContactsDecode] DecodingError: \(decodingError)")
             if case .typeMismatch(let type, let ctx) = decodingError {
                 print("[ContactsDecode] typeMismatch: expected \(type), codingPath: \(ctx.codingPath.map(\.stringValue))")
@@ -92,11 +94,9 @@ final class SupabaseService {
             } else if case .valueNotFound(let type, let ctx) = decodingError {
                 print("[ContactsDecode] valueNotFound: \(type), codingPath: \(ctx.codingPath.map(\.stringValue))")
             }
-            #if DEBUG
-                let preview = String(data: data.prefix(300), encoding: .utf8) ?? "<binary>"
-                print("[ContactsDecode] HTTP \(httpStatus), response preview: \(preview)")
+            print("[ContactsDecode] HTTP \(httpStatus), response preview: \(preview)")
             #else
-                print("[ContactsDecode] HTTP \(httpStatus)")
+            print("[ContactsDecode] HTTP \(httpStatus)")
             #endif
             throw decodingError
         }
@@ -151,6 +151,8 @@ final class SupabaseService {
         do {
             decoded = try JSONDecoder().decode(ThreadResponse.self, from: data)
         } catch let decodingError as DecodingError {
+            #if DEBUG
+            let preview = String(data: data.prefix(300), encoding: .utf8) ?? "<binary>"
             print("[ThreadDecode] DecodingError: \(decodingError)")
             if case .typeMismatch(let type, let ctx) = decodingError {
                 print("[ThreadDecode] typeMismatch: expected \(type), codingPath: \(ctx.codingPath.map(\.stringValue))")
@@ -159,11 +161,9 @@ final class SupabaseService {
             } else if case .valueNotFound(let type, let ctx) = decodingError {
                 print("[ThreadDecode] valueNotFound: \(type), codingPath: \(ctx.codingPath.map(\.stringValue))")
             }
-            #if DEBUG
-                let preview = String(data: data.prefix(300), encoding: .utf8) ?? "<binary>"
-                print("[ThreadDecode] HTTP \(httpStatus), response preview: \(preview)")
+            print("[ThreadDecode] HTTP \(httpStatus), response preview: \(preview)")
             #else
-                print("[ThreadDecode] HTTP \(httpStatus)")
+            print("[ThreadDecode] HTTP \(httpStatus)")
             #endif
             throw decodingError
         }
@@ -585,6 +585,8 @@ enum ServiceError: LocalizedError {
 
     var errorDescription: String? {
         switch self {
+        case .invalidURL:
+            return "Failed to construct request URL."
         case .invalidResponse:
             return "Invalid response from server."
         case .httpError(let code):
