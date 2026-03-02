@@ -182,6 +182,8 @@ final class CardTriageViewModel {
             } else {
                 self.error = error.localizedDescription
             }
+            lastAction = nil
+            undoDeadline = nil
             queue.insert(CardItem(from: card), at: min(idx, queue.count))
             resolvedCount = max(0, resolvedCount - 1)
             activityLog.removeLast()
@@ -234,6 +236,8 @@ final class CardTriageViewModel {
             } else {
                 self.error = error.localizedDescription
             }
+            lastAction = nil
+            undoDeadline = nil
             queue.insert(CardItem(from: card), at: min(idx, queue.count))
             resolvedCount = max(0, resolvedCount - 1)
             activityLog.removeLast()
@@ -289,6 +293,8 @@ final class CardTriageViewModel {
             } else {
                 self.error = error.localizedDescription
             }
+            lastAction = nil
+            undoDeadline = nil
             queue.insert(CardItem(from: card), at: min(idx, queue.count))
             resolvedCount = max(0, resolvedCount - 1)
             escalatedCount = max(0, escalatedCount - 1)
@@ -331,7 +337,13 @@ final class CardTriageViewModel {
         undoDeadline = nil
 
         do {
-            try await service.undo(queueId: action.queueId)
+            let response = try await service.undo(queueId: action.queueId)
+            if CardTriageSmokeAutomation.isEnabled {
+                let requestId = response.requestId ?? "missing"
+                CardTriageSmokeAutomation.logger.log(
+                    "SMOKE_EVENT TRIAGE_ACTION kind=undo queue=\(action.queueId, privacy: .public) request_id=\(requestId, privacy: .public)"
+                )
+            }
             resolvedCount = max(0, resolvedCount - 1)
             if action.kind == .escalated {
                 escalatedCount = max(0, escalatedCount - 1)

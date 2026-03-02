@@ -36,7 +36,9 @@ supabase/.temp/
 .worktrees/
 
 # Artifacts (backfill runs, spotcheck outputs)
-artifacts/
+artifacts/*
+!artifacts/ios_simulator_smoke/
+!artifacts/ios_simulator_smoke/**
 
 # Scratch (ephemeral proofs, GT runs, debug output)
 .scratch/

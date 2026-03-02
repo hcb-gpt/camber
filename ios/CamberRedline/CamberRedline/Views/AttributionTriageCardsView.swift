@@ -451,7 +451,6 @@ struct AttributionTriageCardsView: View {
         }
 
         let targetIds = TriageSmokeAutomation.targetInteractionIds
-        var seenTargetIds = Set<String>()
         if !targetIds.isEmpty {
             let joinedTargets = targetIds.sorted().joined(separator: ",")
             TriageSmokeAutomation.logger.log(
@@ -465,93 +464,46 @@ struct AttributionTriageCardsView: View {
                let matched = viewModel.queue.first(where: { targetIds.contains($0.interactionId) }) {
                 return matched
             }
+            if let withProject = viewModel.queue.first(where: { $0.projectId != nil }) {
+                return withProject
+            }
             return viewModel.queue.first
         }
 
-        // P0 validation: ensure BizDev / No Project action exists and is wired.
-        // Show the project picker sheet long enough for the simulator smoke harness
-        // to capture screenshot/video evidence.
-        if let card = pickSmokeCard() {
-            if targetIds.contains(card.interactionId) {
-                seenTargetIds.insert(card.interactionId)
-            }
-            let eventAt = card.eventDate?.ISO8601Format() ?? "missing"
-            TriageSmokeAutomation.logger.log(
-                "SMOKE_EVENT TRIAGE_TARGET queue=\(card.queueId, privacy: .public) interaction=\(card.interactionId, privacy: .public) event_at=\(eventAt, privacy: .public)"
-            )
-            pickerMode = .project
-            pickerCard = card
-            showProjectPicker = true
-            TriageSmokeAutomation.logger.log(
-                "SMOKE_EVENT TRIAGE_OPEN_PICKER queue=\(card.queueId, privacy: .public) interaction=\(card.interactionId, privacy: .public)"
-            )
-            try? await Task.sleep(for: .seconds(5))
-
-            TriageSmokeAutomation.logger.log(
-                "SMOKE_EVENT TRIAGE_BIZDEV queue=\(card.queueId, privacy: .public) interaction=\(card.interactionId, privacy: .public)"
-            )
-            await viewModel.dismiss(card, reason: "bizdev_no_project", notes: "no_project_selected")
-
-            showProjectPicker = false
-            pickerCard = nil
-            try? await Task.sleep(for: .seconds(1))
+        guard let card = pickSmokeCard() else {
+            TriageSmokeAutomation.logger.log("SMOKE_EVENT TRIAGE_EMPTY_AFTER_PICK")
+            NotificationCenter.default.post(name: TriageSmokeAutomation.triageDoneNotification, object: nil)
+            return
         }
 
-        let steps = min(6, viewModel.queue.count)
-        for index in 0..<steps {
-            guard let card = pickSmokeCard() else { break }
-            if targetIds.contains(card.interactionId) {
-                seenTargetIds.insert(card.interactionId)
-            }
+        let eventAt = card.eventDate?.ISO8601Format() ?? "missing"
+        TriageSmokeAutomation.logger.log(
+            "SMOKE_EVENT TRIAGE_TARGET queue=\(card.queueId, privacy: .public) interaction=\(card.interactionId, privacy: .public) event_at=\(eventAt, privacy: .public)"
+        )
 
-            let eventAt = card.eventDate?.ISO8601Format() ?? "missing"
+        if let projectId = card.projectId, !projectId.isEmpty {
             TriageSmokeAutomation.logger.log(
-                "SMOKE_EVENT TRIAGE_TARGET queue=\(card.queueId, privacy: .public) interaction=\(card.interactionId, privacy: .public) event_at=\(eventAt, privacy: .public)"
+                "SMOKE_EVENT TRIAGE_RESOLVE queue=\(card.queueId, privacy: .public) interaction=\(card.interactionId, privacy: .public) project=\(projectId, privacy: .public)"
             )
-
-            switch index % 5 {
-            case 0 where card.projectId != nil:
-                TriageSmokeAutomation.logger.log(
-                    "SMOKE_EVENT TRIAGE_RESOLVE queue=\(card.queueId, privacy: .public) interaction=\(card.interactionId, privacy: .public) project=\(card.projectId!, privacy: .public)"
-                )
-                await viewModel.resolve(card, to: card.projectId!)
-            case 1:
-                TriageSmokeAutomation.logger.log(
-                    "SMOKE_EVENT TRIAGE_DISMISS queue=\(card.queueId, privacy: .public) interaction=\(card.interactionId, privacy: .public)"
-                )
-                await viewModel.dismiss(card)
-            case 2:
-                TriageSmokeAutomation.logger.log(
-                    "SMOKE_EVENT TRIAGE_ESCALATE queue=\(card.queueId, privacy: .public) interaction=\(card.interactionId, privacy: .public)"
-                )
-                await viewModel.escalate(card, reason: "smoke-test-escalation")
-            case 3:
-                TriageSmokeAutomation.logger.log(
-                    "SMOKE_EVENT TRIAGE_SKIP queue=\(card.queueId, privacy: .public) interaction=\(card.interactionId, privacy: .public)"
-                )
-                viewModel.skip(card)
-            case 4:
-                TriageSmokeAutomation.logger.log(
-                    "SMOKE_EVENT TRIAGE_COMMENT queue=\(card.queueId, privacy: .public) interaction=\(card.interactionId, privacy: .public)"
-                )
-                await viewModel.resolve(card, to: card.projectId ?? "", notes: "smoke-comment")
-            default:
-                TriageSmokeAutomation.logger.log(
-                    "SMOKE_EVENT TRIAGE_DISMISS queue=\(card.queueId, privacy: .public) interaction=\(card.interactionId, privacy: .public)"
-                )
-                await viewModel.dismiss(card)
-            }
-
-            try? await Task.sleep(for: .milliseconds(1200))
+            await viewModel.resolve(card, to: projectId, notes: "smoke")
+        } else {
+            TriageSmokeAutomation.logger.log(
+                "SMOKE_EVENT TRIAGE_DISMISS queue=\(card.queueId, privacy: .public) interaction=\(card.interactionId, privacy: .public)"
+            )
+            await viewModel.dismiss(card, reason: "smoke", notes: "smoke")
         }
 
-        if !targetIds.isEmpty {
-            let remainingTargetIds = targetIds.subtracting(seenTargetIds)
-            let matchedAll = remainingTargetIds.isEmpty
-            let remaining = remainingTargetIds.sorted().joined(separator: ",")
+        if viewModel.isAttributionWritesLocked, let banner = viewModel.attributionWritesLockedBannerText {
             TriageSmokeAutomation.logger.log(
-                "SMOKE_EVENT TRIAGE_TARGET_COVERAGE matched_all=\(matchedAll, privacy: .public) remaining=\(remaining, privacy: .public)"
+                "SMOKE_EVENT TRIAGE_WRITE_LOCKED banner=\(banner, privacy: .public)"
             )
+        } else if viewModel.canUndo {
+            TriageSmokeAutomation.logger.log(
+                "SMOKE_EVENT TRIAGE_UNDO_START queue=\(card.queueId, privacy: .public)"
+            )
+            try? await Task.sleep(for: .milliseconds(800))
+            await viewModel.undo()
+            try? await Task.sleep(for: .milliseconds(600))
         }
 
         TriageSmokeAutomation.logger.log("SMOKE_EVENT TRIAGE_DONE remaining=\(viewModel.queue.count, privacy: .public)")

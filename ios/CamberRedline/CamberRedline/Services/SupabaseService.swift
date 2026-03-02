@@ -757,6 +757,24 @@ struct TruthGraphHydration: Decodable, Hashable {
         case reviewQueue = "review_queue"
     }
 
+    init(
+        callsRaw: Bool,
+        interactions: Bool,
+        conversationSpans: Bool,
+        evidenceEvents: Bool,
+        spanAttributions: Bool,
+        journalClaims: Bool,
+        reviewQueue: Bool
+    ) {
+        self.callsRaw = callsRaw
+        self.interactions = interactions
+        self.conversationSpans = conversationSpans
+        self.evidenceEvents = evidenceEvents
+        self.spanAttributions = spanAttributions
+        self.journalClaims = journalClaims
+        self.reviewQueue = reviewQueue
+    }
+
     static let empty = TruthGraphHydration(
         callsRaw: false,
         interactions: false,

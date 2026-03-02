@@ -31,6 +31,7 @@
 		8677D6B99962EA63BD37567D /* ProjectPickerSheet.swift in Sources */ = {isa = PBXBuildFile; fileRef = A3B6E67F0EDF028F39994C5B /* ProjectPickerSheet.swift */; };
 		87C400F4F3874303B94EB83B /* SMSBubble.swift in Sources */ = {isa = PBXBuildFile; fileRef = C0B838D3F03C0D2CDB76E802 /* SMSBubble.swift */; };
 		8C920331FC246A2DDE612CC4 /* BootstrapService.swift in Sources */ = {isa = PBXBuildFile; fileRef = D46A39E4F7972B1C31B26A79 /* BootstrapService.swift */; };
+		5A01405A5DA404340C9E8489 /* KeychainStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = C313EB08FF4E7EFFEAA80B5A /* KeychainStore.swift */; };
 		930D6A53BC69DC25D29CBBF0 /* AssistantContextDebugView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 681533D1F455EC70B0983D2E /* AssistantContextDebugView.swift */; };
 		9729A9C737A2F3FB6C1A448C /* ThreadItem.swift in Sources */ = {isa = PBXBuildFile; fileRef = E620CD5610E49C34C8D6DD31 /* ThreadItem.swift */; };
 		986CB6A00F10B14F7508F67B /* Supabase in Frameworks */ = {isa = PBXBuildFile; productRef = 187F6B7C7E102040AC0AAD35 /* Supabase */; };
@@ -78,6 +79,7 @@
 		C92779B3641C0D2DE6615612 /* CallSummaryCard.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CallSummaryCard.swift; sourceTree = "<group>"; };
 		D3AC87EECD3CC3F7CBD39A60 /* Assets.xcassets */ = {isa = PBXFileReference; lastKnownFileType = folder.assetcatalog; path = Assets.xcassets; sourceTree = "<group>"; };
 		D46A39E4F7972B1C31B26A79 /* BootstrapService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BootstrapService.swift; sourceTree = "<group>"; };
+		C313EB08FF4E7EFFEAA80B5A /* KeychainStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = KeychainStore.swift; sourceTree = "<group>"; };
 		E49C0E479C5BF9BBBEA78C7F /* ClaimGrade.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ClaimGrade.swift; sourceTree = "<group>"; };
 		E5142F02E2BCC00AA2D0B352 /* TriageViewModel.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TriageViewModel.swift; sourceTree = "<group>"; };
 		E620CD5610E49C34C8D6DD31 /* ThreadItem.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ThreadItem.swift; sourceTree = "<group>"; };
@@ -164,6 +166,7 @@
 			isa = PBXGroup;
 			children = (
 				D46A39E4F7972B1C31B26A79 /* BootstrapService.swift */,
+				C313EB08FF4E7EFFEAA80B5A /* KeychainStore.swift */,
 				49A9C46539AA007D7645122A /* SupabaseService.swift */,
 			);
 			path = Services;
@@ -273,6 +276,7 @@
 				2D1C18B8BA5D214E003BFCF4 /* AssistantViewModel.swift in Sources */,
 				6AA54D206A9C4FB91121750A /* AttributionTriageCardsView.swift in Sources */,
 				8C920331FC246A2DDE612CC4 /* BootstrapService.swift in Sources */,
+				5A01405A5DA404340C9E8489 /* KeychainStore.swift in Sources */,
 				235D7418A5D411C038ECD3C2 /* CallHeaderCard.swift in Sources */,
 				09304E51DC232ACF9D604391 /* CallSummaryCard.swift in Sources */,
 				54CEA22722BBC72BA5B92913 /* CallsView.swift in Sources */,

@@ -4,6 +4,12 @@ struct SettingsView: View {
     var contactListViewModel: ContactListViewModel
 
     @State private var showResetConfirmation = false
+    #if DEBUG
+    @State private var internalModeEnabled = BootstrapService.shared.isInternalModeEnabled()
+    @State private var edgeSecretDraft = ""
+    @State private var hasStoredEdgeSecret = BootstrapService.shared.hasStoredEdgeSecret()
+    @State private var internalModeStatusMessage: String?
+    #endif
 
     private let bgColor = Color(white: 0.06)
 
@@ -25,6 +31,78 @@ struct SettingsView: View {
                         Label("Reset Grading Clock", systemImage: "clock.arrow.circlepath")
                     }
                 }
+
+                #if DEBUG
+                Section("Internal Mode (DEBUG)") {
+                    Toggle("Enable privileged attribution writes", isOn: $internalModeEnabled)
+                        .onChange(of: internalModeEnabled) { _, newValue in
+                            BootstrapService.shared.setInternalModeEnabled(newValue)
+                        }
+
+                    VStack(alignment: .leading, spacing: 6) {
+                        SecureField("X-Edge-Secret (stored in Keychain)", text: $edgeSecretDraft)
+                            .textInputAutocapitalization(.never)
+                            .autocorrectionDisabled()
+                            .font(.callout.monospaced())
+
+                        HStack {
+                            Button("Save Secret") {
+                                let secret = edgeSecretDraft
+                                edgeSecretDraft = ""
+                                internalModeStatusMessage = nil
+                                do {
+                                    try BootstrapService.shared.storeEdgeSecret(secret)
+                                    hasStoredEdgeSecret = BootstrapService.shared.hasStoredEdgeSecret()
+                                    internalModeStatusMessage = "Saved to Keychain."
+                                } catch {
+                                    internalModeStatusMessage = error.localizedDescription
+                                }
+                            }
+                            .disabled(edgeSecretDraft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+
+                            Spacer()
+
+                            Button("Clear Write Lock") {
+                                BootstrapService.shared.clearWriteLock()
+                                internalModeStatusMessage = "Write lock cleared."
+                            }
+                        }
+
+                        Button("Wipe Secret", role: .destructive) {
+                            internalModeStatusMessage = nil
+                            do {
+                                try BootstrapService.shared.wipeStoredEdgeSecret()
+                                hasStoredEdgeSecret = false
+                                internalModeStatusMessage = "Secret wiped."
+                            } catch {
+                                internalModeStatusMessage = error.localizedDescription
+                            }
+                        }
+                    }
+
+                    VStack(alignment: .leading, spacing: 4) {
+                        Text(hasStoredEdgeSecret ? "Secret stored in Keychain." : "No secret stored.")
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+
+                        if let banner = BootstrapService.shared.writesLockedBannerText {
+                            Text(banner)
+                                .font(.caption)
+                                .foregroundStyle(.orange)
+                        } else {
+                            Text("Attribution writes unlocked (no lock observed).")
+                                .font(.caption)
+                                .foregroundStyle(.secondary)
+                        }
+
+                        if let internalModeStatusMessage {
+                            Text(internalModeStatusMessage)
+                                .font(.caption)
+                                .foregroundStyle(.secondary)
+                        }
+                    }
+                }
+                #endif
 
                 Section("Visibility") {
                     if let url = URL(string: "https://github.com/hcb-gpt/orbit/tree/main/apps/camber-map") {
@@ -195,4 +273,3 @@ private struct PipelineHeartbeatRow: View {
         return "\(hours)h"
     }
 }
-

@@ -24,6 +24,14 @@ final class BootstrapService {
         static let fallbackURL = URL(string: "https://example.invalid")!
     }
 
+    #if DEBUG
+    private enum InternalModeConfig {
+        static let enabledKey = "bootstrap_internal_mode_enabled_v1"
+        static let keychainService = "CamberRedline"
+        static let keychainAccount = "bootstrap_edge_secret_v1"
+    }
+    #endif
+
     private let baseURL: URL
     private let anonKey: String
 
@@ -40,9 +48,17 @@ final class BootstrapService {
         guard let state = writeLockState else { return nil }
 
         var message = "Attribution writes temporarily locked (needs privileged auth). Reads still available."
+        var meta: [String] = []
         if let functionVersion = state.functionVersion?.trimmingCharacters(in: .whitespacesAndNewlines),
            !functionVersion.isEmpty {
-            message += " (\(functionVersion))"
+            meta.append(functionVersion)
+        }
+        if let requestId = state.requestId?.trimmingCharacters(in: .whitespacesAndNewlines),
+           !requestId.isEmpty {
+            meta.append("request_id: \(requestId)")
+        }
+        if !meta.isEmpty {
+            message += " (\(meta.joined(separator: ", ")))"
         }
         return message
     }
@@ -77,11 +93,71 @@ final class BootstrapService {
         #endif
     }
 
-    private func applyAuthHeaders(to request: inout URLRequest) {
-        request.setValue("Bearer \(anonKey)", forHTTPHeaderField: "Authorization")
-        if let edgeSharedSecret {
-            request.setValue(edgeSharedSecret, forHTTPHeaderField: "X-Edge-Secret")
+    private enum EdgeSecretPolicy {
+        case never
+        case bootstrapWritesOnly
+    }
+
+    func clearWriteLock() {
+        writeLockState = nil
+    }
+
+    #if DEBUG
+    func isInternalModeEnabled() -> Bool {
+        UserDefaults.standard.bool(forKey: InternalModeConfig.enabledKey)
+    }
+
+    func setInternalModeEnabled(_ enabled: Bool) {
+        UserDefaults.standard.set(enabled, forKey: InternalModeConfig.enabledKey)
+        if !enabled {
+            clearWriteLock()
         }
+    }
+
+    func hasStoredEdgeSecret() -> Bool {
+        (try? KeychainStore.readString(service: InternalModeConfig.keychainService, account: InternalModeConfig.keychainAccount)) != nil
+    }
+
+    func storeEdgeSecret(_ secret: String) throws {
+        let trimmed = secret.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { return }
+        try KeychainStore.writeString(
+            trimmed,
+            service: InternalModeConfig.keychainService,
+            account: InternalModeConfig.keychainAccount,
+            accessibility: .afterFirstUnlockThisDeviceOnly
+        )
+    }
+
+    func wipeStoredEdgeSecret() throws {
+        try KeychainStore.deleteItem(service: InternalModeConfig.keychainService, account: InternalModeConfig.keychainAccount)
+        clearWriteLock()
+    }
+
+    private func edgeSecretForWriteRequest() -> String? {
+        guard isInternalModeEnabled() else { return nil }
+
+        if let edgeSharedSecret {
+            return edgeSharedSecret
+        }
+        return try? KeychainStore.readString(service: InternalModeConfig.keychainService, account: InternalModeConfig.keychainAccount)
+    }
+    #endif
+
+    private func applyAuthHeaders(
+        to request: inout URLRequest,
+        edgeSecretPolicy: EdgeSecretPolicy = .never,
+        isWrite: Bool = false
+    ) {
+        request.setValue("Bearer \(anonKey)", forHTTPHeaderField: "Authorization")
+
+        guard isWrite, edgeSecretPolicy == .bootstrapWritesOnly else { return }
+
+        #if DEBUG
+        if let edgeSecret = edgeSecretForWriteRequest() {
+            request.setValue(edgeSecret, forHTTPHeaderField: "X-Edge-Secret")
+        }
+        #endif
     }
 
     // MARK: - Fetch Queue
@@ -180,10 +256,11 @@ final class BootstrapService {
 
     // MARK: - Undo
 
-    func undo(queueId: String) async throws {
+    @discardableResult
+    func undo(queueId: String) async throws -> BootstrapActionResponse {
         let body = UndoRequest(reviewQueueId: queueId)
         let data = try await post(action: "undo", body: body)
-        _ = try decodeOkResponse(data, action: "undo")
+        return try decodeOkResponse(data, action: "undo")
     }
 
     // MARK: - Assistant Context
@@ -378,7 +455,7 @@ final class BootstrapService {
         var request = URLRequest(url: url)
         request.httpMethod = "POST"
         request.setValue("application/json", forHTTPHeaderField: "Content-Type")
-        applyAuthHeaders(to: &request)
+        applyAuthHeaders(to: &request, edgeSecretPolicy: .bootstrapWritesOnly, isWrite: true)
         request.httpBody = try encoder.encode(body)
 
         let (data, response) = try await session.data(for: request)
