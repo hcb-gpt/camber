@@ -20,7 +20,7 @@ RUN_DIR="${STATE_DIR}/latest"
 DERIVED_DIR="${STATE_DIR}/DerivedData"
 LAST_SHA_PATH="${STATE_DIR}/last_sha.txt"
 LOCK_DIR="${STATE_DIR}/lock"
-SIMCTL_HOME="${ROOT_DIR}/.simctl-home"
+SIMCTL_HOME="${STATE_DIR}/simctl-home"
 
 # A dedicated worktree avoids stomping on Chad's (often dirty) main checkout.
 WORKTREE_DIR_DEFAULT="${HOME}/Library/Caches/hcb-gpt/camber-ios-sim-live"
@@ -269,4 +269,3 @@ if [[ -n "${LOOP_INTERVAL_SECONDS}" ]]; then
 else
   build_and_launch_once
 fi
-
