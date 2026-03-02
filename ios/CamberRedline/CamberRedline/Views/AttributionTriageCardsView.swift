@@ -26,6 +26,14 @@ private enum TriageSmokeAutomation {
     }
 }
 
+private enum TriageProofAutomation {
+    static let openEvidenceFlag = "--smoke-triage-open-evidence"
+
+    static var shouldAutoOpenEvidence: Bool {
+        ProcessInfo.processInfo.arguments.contains(openEvidenceFlag)
+    }
+}
+
 private extension Color {
     static let cardsBg = Color.black
     static let cardFace = Color(red: 0.082, green: 0.082, blue: 0.09)     // #151517
@@ -44,6 +52,7 @@ struct AttributionTriageCardsView: View {
     @State private var showProjectPicker = false
     @State private var pickerCard: CardItem?
     @State private var pickerMode: PickerMode = .project
+    @State private var pickedProjectByQueueId: [String: String] = [:]
     @State private var pendingResolveNote: String?
     @State private var showCommentComposer = false
     @State private var commentCard: CardItem?
@@ -52,6 +61,9 @@ struct AttributionTriageCardsView: View {
     @State private var escalateCard: CardItem?
     @State private var showAnalysisDrawer = false
     @State private var analysisCard: CardItem?
+    @State private var showEvidenceSheet = false
+    @State private var evidenceCard: CardItem?
+    @State private var didAutoOpenEvidenceSheet = false
 
     var body: some View {
         NavigationStack {
@@ -90,6 +102,15 @@ struct AttributionTriageCardsView: View {
                 if viewModel.queue.isEmpty {
                     await viewModel.loadQueue()
                 }
+
+                if TriageProofAutomation.shouldAutoOpenEvidence,
+                   !didAutoOpenEvidenceSheet,
+                   let card = viewModel.queue.first
+                {
+                    didAutoOpenEvidenceSheet = true
+                    evidenceCard = card
+                    showEvidenceSheet = true
+                }
             }
             .onReceive(NotificationCenter.default.publisher(for: TriageSmokeAutomation.triageNotification)) { _ in
                 guard TriageSmokeAutomation.isEnabled else { return }
@@ -105,10 +126,16 @@ struct AttributionTriageCardsView: View {
                         onSelect: { projectId in
                             let notes = pendingResolveNote
                             pendingResolveNote = nil
-                            Task { await viewModel.resolve(card, to: projectId, notes: notes) }
+                            if pickerMode == .commentOnly {
+                                Task { await viewModel.resolve(card, to: projectId, notes: notes) }
+                                pickedProjectByQueueId.removeValue(forKey: card.queueId)
+                            } else {
+                                pickedProjectByQueueId[card.queueId] = projectId
+                            }
                         },
                         onDismissItem: {
                             Task { await viewModel.dismiss(card) }
+                            pickedProjectByQueueId.removeValue(forKey: card.queueId)
                         },
                         onBizDevNoProject: {
                             Task {
@@ -118,6 +145,7 @@ struct AttributionTriageCardsView: View {
                                     notes: "no_project_selected"
                                 )
                             }
+                            pickedProjectByQueueId.removeValue(forKey: card.queueId)
                         },
                         showsDismissAction: pickerMode != .commentOnly,
                         writesLocked: viewModel.isAttributionWritesLocked,
@@ -167,6 +195,11 @@ struct AttributionTriageCardsView: View {
                         card: card,
                         projectName: viewModel.projectName(for: card.projectId)
                     )
+                }
+            }
+            .sheet(isPresented: $showEvidenceSheet) {
+                if let card = evidenceCard {
+                    EvidenceTokenSheet(card: card)
                 }
             }
         }
@@ -267,9 +300,15 @@ struct AttributionTriageCardsView: View {
         ZStack {
             ForEach(Array(viewModel.queue.prefix(3).enumerated().reversed()), id: \.element.id) { index, card in
                 let isTop = index == 0
+                let pickedProjectId = pickedProjectByQueueId[card.queueId]
+                    .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
+                    .flatMap { $0.isEmpty ? nil : $0 }
+                let pickedProjectName = pickedProjectId.flatMap { viewModel.projectName(for: $0) }
+                let hasExplicitPick = pickedProjectId != nil
                 SwipeableTriageCard(
                     card: card,
                     projectName: viewModel.projectName(for: card.projectId),
+                    selectedProjectName: pickedProjectName,
                     isTop: isTop,
                     writesLocked: viewModel.isAttributionWritesLocked,
                     onBlockedWrite: {
@@ -277,13 +316,25 @@ struct AttributionTriageCardsView: View {
                             viewModel.error = banner
                         }
                     },
+                    onConfirmLocked: {
+                        viewModel.error = "Confirm is locked. Pick a project first."
+                    },
+                    onSelectSuggested: {
+                        guard let suggested = card.projectId else { return }
+                        let trimmed = suggested.trimmingCharacters(in: .whitespacesAndNewlines)
+                        guard !trimmed.isEmpty else { return }
+                        pickedProjectByQueueId[card.queueId] = trimmed
+                    },
+                    onTapEvidence: {
+                        evidenceCard = card
+                        showEvidenceSheet = true
+                    },
                     onSwipeRight: {
-                        guard let projectId = card.projectId else {
-                            pickerMode = .project
-                            pickerCard = card
-                            showProjectPicker = true
+                        guard hasExplicitPick, let projectId = pickedProjectId else {
+                            viewModel.error = "Confirm is locked. Pick a project first."
                             return
                         }
+                        pickedProjectByQueueId.removeValue(forKey: card.queueId)
                         Task { await viewModel.resolve(card, to: projectId) }
                     },
                     onSwipeLeft: {
@@ -297,6 +348,7 @@ struct AttributionTriageCardsView: View {
                     },
                     onSwipeDown: {
                         viewModel.skip(card)
+                        pickedProjectByQueueId.removeValue(forKey: card.queueId)
                     },
                     onTapAnalysis: {
                         analysisCard = card
@@ -521,9 +573,13 @@ struct AttributionTriageCardsView: View {
 private struct SwipeableTriageCard: View {
     let card: CardItem
     let projectName: String?
+    let selectedProjectName: String?
     let isTop: Bool
     let writesLocked: Bool
     let onBlockedWrite: () -> Void
+    let onConfirmLocked: () -> Void
+    let onSelectSuggested: () -> Void
+    let onTapEvidence: () -> Void
     let onSwipeRight: () -> Void
     let onSwipeLeft: () -> Void
     let onSwipeUp: () -> Void
@@ -537,6 +593,34 @@ private struct SwipeableTriageCard: View {
 
     private let horizontalSwipeThreshold: CGFloat = 100
     private let verticalSwipeThreshold: CGFloat = 90
+
+    private enum TruthState {
+        case pending
+        case ready
+        case blocked
+
+        var label: String {
+            switch self {
+            case .pending: return "Pending"
+            case .ready: return "Ready"
+            case .blocked: return "Blocked"
+            }
+        }
+
+        var tint: Color {
+            switch self {
+            case .pending: return Color.skipGray
+            case .ready: return Color.commentBlue
+            case .blocked: return Color.noRed
+            }
+        }
+    }
+
+    private var truthState: TruthState {
+        if writesLocked { return .blocked }
+        if selectedProjectName != nil { return .ready }
+        return .pending
+    }
 
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
@@ -578,35 +662,7 @@ private struct SwipeableTriageCard: View {
 
             Divider().background(Color.cardStroke)
 
-            // AI guess
-            if let name = projectName {
-                HStack(spacing: 8) {
-                    Image(systemName: "cpu")
-                        .font(.caption)
-                        .foregroundStyle(Color.yesGreen.opacity(0.7))
-                    Text(name)
-                        .font(.subheadline)
-                        .fontWeight(.medium)
-                        .foregroundStyle(.white)
-                    Spacer()
-                    Text("Swipe \(Image(systemName: "arrow.right")) to confirm")
-                        .font(.caption2)
-                        .foregroundStyle(.secondary)
-                }
-            } else {
-                HStack(spacing: 8) {
-                    Image(systemName: "questionmark.circle")
-                        .font(.caption)
-                        .foregroundStyle(Color.undoAmber.opacity(0.7))
-                    Text("No AI guess")
-                        .font(.subheadline)
-                        .foregroundStyle(.secondary)
-                    Spacer()
-                    Text("Swipe to pick project")
-                        .font(.caption2)
-                        .foregroundStyle(.secondary)
-                }
-            }
+            truthSurfaceControls
 
             // Collapsible alternatives
             if !card.candidates.isEmpty {
@@ -698,7 +754,12 @@ private struct SwipeableTriageCard: View {
                     }
                     if value.translation.width > horizontalSwipeThreshold,
                        abs(value.translation.width) >= abs(value.translation.height) {
-                        swipeAway(direction: .right)
+                        if truthState == .ready {
+                            swipeAway(direction: .right)
+                        } else {
+                            snapBack()
+                            onConfirmLocked()
+                        }
                     } else if value.translation.width < -horizontalSwipeThreshold,
                               abs(value.translation.width) >= abs(value.translation.height) {
                         swipeAway(direction: .left)
@@ -721,6 +782,137 @@ private struct SwipeableTriageCard: View {
     }
 
     // MARK: - Card Sections
+
+    private var truthSurfaceControls: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            HStack(spacing: 8) {
+                chip(label: truthState.label, tint: truthState.tint)
+
+                Button {
+                    onTapEvidence()
+                } label: {
+                    HStack(spacing: 6) {
+                        Image(systemName: "quote.opening")
+                            .font(.system(size: 10))
+                        Text("Evidence")
+                            .font(.system(size: 11, weight: .semibold))
+                        Text("\(card.evidenceAnchors.count)")
+                            .font(.system(size: 11, weight: .bold))
+                        if let date = card.eventDate {
+                            Text(date, style: .relative)
+                                .font(.system(size: 11, weight: .semibold))
+                                .foregroundStyle(.secondary)
+                        }
+                    }
+                    .foregroundStyle(.white)
+                    .padding(.horizontal, 10)
+                    .padding(.vertical, 6)
+                    .background(Color.chipBg, in: Capsule())
+                }
+                .buttonStyle(.plain)
+
+                Spacer()
+
+                if let name = projectName {
+                    Button {
+                        onSelectSuggested()
+                    } label: {
+                        HStack(spacing: 6) {
+                            Image(systemName: "cpu")
+                                .font(.system(size: 10))
+                            Text("Suggested")
+                                .font(.system(size: 11, weight: .semibold))
+                            Text(name)
+                                .font(.system(size: 11, weight: .semibold))
+                                .lineLimit(1)
+                        }
+                        .foregroundStyle(.white)
+                        .padding(.horizontal, 10)
+                        .padding(.vertical, 6)
+                        .background(Color.yesGreen.opacity(0.25), in: Capsule())
+                    }
+                    .buttonStyle(.plain)
+                    .disabled(writesLocked)
+                    .opacity(writesLocked ? 0.6 : 1)
+                }
+            }
+
+            HStack(spacing: 8) {
+                Button {
+                    if writesLocked {
+                        onBlockedWrite()
+                    } else {
+                        onSwipeLeft()
+                    }
+                } label: {
+                    HStack(spacing: 6) {
+                        Image(systemName: "folder")
+                            .font(.caption)
+                        Text(selectedProjectName == nil ? "Pick project" : "Change project")
+                            .font(.caption)
+                            .fontWeight(.semibold)
+                    }
+                    .foregroundStyle(.white)
+                    .padding(.horizontal, 12)
+                    .padding(.vertical, 8)
+                    .background(Color.noRed.opacity(0.35), in: Capsule())
+                }
+                .buttonStyle(.plain)
+                .opacity(writesLocked ? 0.6 : 1)
+
+                Button {
+                    if writesLocked {
+                        onBlockedWrite()
+                    } else if truthState == .ready {
+                        onSwipeRight()
+                    } else {
+                        onConfirmLocked()
+                    }
+                } label: {
+                    HStack(spacing: 6) {
+                        Image(systemName: truthState == .ready ? "checkmark.circle.fill" : "lock.fill")
+                            .font(.caption)
+                        Text("Confirm")
+                            .font(.caption)
+                            .fontWeight(.semibold)
+                    }
+                    .foregroundStyle(.white)
+                    .padding(.horizontal, 12)
+                    .padding(.vertical, 8)
+                    .background(Color.yesGreen.opacity(truthState == .ready ? 0.85 : 0.20), in: Capsule())
+                }
+                .buttonStyle(.plain)
+                .opacity(truthState == .ready ? 1 : 0.8)
+
+                Spacer()
+
+                if let selectedProjectName {
+                    Text(selectedProjectName)
+                        .font(.caption2)
+                        .foregroundStyle(.secondary)
+                        .lineLimit(1)
+                } else {
+                    Text("Pick required — confirm locked")
+                        .font(.caption2)
+                        .foregroundStyle(.secondary)
+                }
+            }
+        }
+    }
+
+    private func chip(label: String, tint: Color) -> some View {
+        HStack(spacing: 6) {
+            Circle()
+                .fill(tint)
+                .frame(width: 6, height: 6)
+            Text(label)
+                .font(.system(size: 11, weight: .semibold))
+        }
+        .foregroundStyle(.white)
+        .padding(.horizontal, 10)
+        .padding(.vertical, 6)
+        .background(Color.chipBg, in: Capsule())
+    }
 
     private var reasonCodesRow: some View {
         ScrollView(.horizontal, showsIndicators: false) {
@@ -1165,6 +1357,111 @@ private struct AnalysisDrawerSheet: View {
                 .fontWeight(.medium)
                 .foregroundStyle(.white)
                 .lineLimit(1)
+        }
+    }
+}
+
+// MARK: - EvidenceTokenSheet
+
+private struct EvidenceTokenSheet: View {
+    @Environment(\.dismiss) private var dismiss
+    let card: CardItem
+
+    var body: some View {
+        NavigationStack {
+            ScrollView {
+                VStack(alignment: .leading, spacing: 14) {
+                    header
+                    if card.evidenceAnchors.isEmpty {
+                        emptyState
+                    } else {
+                        anchorsList
+                    }
+                }
+                .padding()
+            }
+            .background(Color.cardsBg)
+            .navigationTitle("Evidence")
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                ToolbarItem(placement: .cancellationAction) {
+                    Button("Close") { dismiss() }
+                }
+            }
+        }
+        .presentationDetents([.medium, .large])
+        .presentationDragIndicator(.visible)
+        .preferredColorScheme(.dark)
+    }
+
+    private var header: some View {
+        VStack(alignment: .leading, spacing: 6) {
+            Text(card.contactName)
+                .font(.headline)
+                .foregroundStyle(.white)
+            if let date = card.eventDate {
+                Text(date, style: .relative)
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
+            Text("interaction: \(card.interactionId)")
+                .font(.caption2)
+                .foregroundStyle(.secondary)
+                .lineLimit(1)
+            Text(card.transcriptSegment)
+                .font(.subheadline)
+                .foregroundStyle(.white.opacity(0.85))
+                .lineLimit(6)
+        }
+    }
+
+    private var emptyState: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            Text("No evidence tokens")
+                .font(.subheadline)
+                .fontWeight(.semibold)
+                .foregroundStyle(.white)
+            Text("This item has 0 evidence anchors. That’s a pipeline gap: treat the suggestion as low confidence and rely on your own context.")
+                .font(.caption)
+                .foregroundStyle(.secondary)
+        }
+        .padding(12)
+        .background(Color.cardFace, in: RoundedRectangle(cornerRadius: 12))
+        .overlay(
+            RoundedRectangle(cornerRadius: 12)
+                .stroke(Color.cardStroke, lineWidth: 1)
+        )
+    }
+
+    private var anchorsList: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            ForEach(Array(card.evidenceAnchors.enumerated()), id: \.offset) { _, anchor in
+                VStack(alignment: .leading, spacing: 6) {
+                    Text(anchor.quote ?? anchor.text ?? "—")
+                        .font(.subheadline)
+                        .foregroundStyle(.white.opacity(0.9))
+                        .fixedSize(horizontal: false, vertical: true)
+                    HStack(spacing: 10) {
+                        if let matchType = anchor.matchType {
+                            Label(matchType, systemImage: "tag")
+                                .font(.caption2)
+                                .foregroundStyle(.secondary)
+                        }
+                        if let candidateProjectId = anchor.candidateProjectId {
+                            Text("candidate: \(candidateProjectId)")
+                                .font(.caption2)
+                                .foregroundStyle(.secondary)
+                                .lineLimit(1)
+                        }
+                    }
+                }
+                .padding(12)
+                .background(Color.cardFace, in: RoundedRectangle(cornerRadius: 12))
+                .overlay(
+                    RoundedRectangle(cornerRadius: 12)
+                        .stroke(Color.cardStroke, lineWidth: 1)
+                )
+            }
         }
     }
 }

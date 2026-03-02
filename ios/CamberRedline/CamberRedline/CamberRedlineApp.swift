@@ -22,6 +22,14 @@ private enum ThreadSwipeSmokeAutomation {
     }
 }
 
+private enum TriageStaticAutomation {
+    static let launchFlag = "--smoke-triage-static"
+
+    static var isEnabled: Bool {
+        ProcessInfo.processInfo.arguments.contains(launchFlag)
+    }
+}
+
 private enum TruthGraphDemoAutomation {
     static let launchFlag = "--truth-graph-demo"
     static let interactionIdEnv = "TRUTH_GRAPH_DEMO_INTERACTION_ID"
@@ -146,7 +154,9 @@ struct CamberRedlineApp: App {
                 .presentationDetents([.large])
             }
             .task {
-                if TruthGraphDemoAutomation.isEnabled {
+                if TriageStaticAutomation.isEnabled {
+                    isTriagePresented = true
+                } else if TruthGraphDemoAutomation.isEnabled {
                     isTruthGraphDemoPresented = true
                 } else if RealtimeCleanupProofAutomation.isEnabled {
                     await runRealtimeCleanupProofIfEnabled()
@@ -171,6 +181,9 @@ struct CamberRedlineApp: App {
             }
             .onChange(of: scenePhase) { _, newPhase in
                 if newPhase == .active {
+                    if TriageStaticAutomation.isEnabled {
+                        return
+                    }
                     Task {
                         await contactListViewModel.loadContacts()
                         threadViewModel.updateContactSequence(contactListViewModel.contacts)
@@ -193,6 +206,7 @@ struct CamberRedlineApp: App {
     private func updateBadge() {
         guard !AppSmokeAutomation.isEnabled else { return }
         guard !ThreadSwipeSmokeAutomation.isEnabled else { return }
+        guard !TriageStaticAutomation.isEnabled else { return }
         guard !RealtimeCleanupProofAutomation.isEnabled else { return }
         let count = contactListViewModel.totalUngraded
         UNUserNotificationCenter.current().setBadgeCount(count)
