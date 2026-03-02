@@ -54,11 +54,99 @@ jobs:
           # incompatibility that broke 14/19 deploys. Bump intentionally.
           version: 2.76.8
 
-      - name: Deploy function
+      - name: Resolve expected verify_jwt from config
+        id: jwt_expectation
+        shell: bash
         run: |
-          supabase functions deploy "${{ matrix.function }}" \
-            --project-ref ${{ secrets.SUPABASE_PROJECT_ID }} \
-            --no-verify-jwt
+          set -euo pipefail
+          fn="${{ matrix.function }}"
+          expected=""
+
+          # Source-of-truth precedence:
+          # 1) per-function supabase/functions/<fn>/config.toml
+          # 2) root supabase/config.toml [functions.<fn>]
+          # 3) Supabase default (true)
+          if [[ -f "supabase/functions/$fn/config.toml" ]]; then
+            expected=$(awk '
+              $1 == "verify_jwt" {
+                v=$3
+                gsub(/[[:space:]]/, "", v)
+                print v
+                exit
+              }
+            ' "supabase/functions/$fn/config.toml" || true)
+          fi
+
+          if [[ -z "$expected" ]]; then
+            expected=$(awk -v fn="$fn" '
+              BEGIN { in_block=0; expected="" }
+              $0 ~ ("^\\[functions\\." fn "\\]$") { in_block=1; next }
+              in_block && $0 ~ /^\[functions\./ { in_block=0 }
+              in_block && $1 == "verify_jwt" {
+                expected=$3
+                gsub(/[[:space:]]/, "", expected)
+                print expected
+                exit
+              }
+            ' supabase/config.toml || true)
+          fi
+
+          # Supabase default is verify_jwt=true when not explicitly configured.
+          if [[ -z "$expected" ]]; then
+            expected="true"
+          fi
+
+          if [[ "$expected" != "true" && "$expected" != "false" ]]; then
+            echo "Invalid verify_jwt value '$expected' for function '$fn' in supabase/config.toml" >&2
+            exit 1
+          fi
+
+          echo "expected_verify_jwt=$expected" >> "$GITHUB_OUTPUT"
+          echo "Function '$fn' expected verify_jwt=$expected"
+
+      - name: Deploy function
+        shell: bash
+        run: |
+          set -euo pipefail
+          fn="${{ matrix.function }}"
+          expected="${{ steps.jwt_expectation.outputs.expected_verify_jwt }}"
+
+          deploy_args=(functions deploy "$fn" --project-ref "${{ secrets.SUPABASE_PROJECT_ID }}")
+          if [[ "$expected" == "false" ]]; then
+            deploy_args+=(--no-verify-jwt)
+          fi
+
+          echo "Deploy command: supabase ${deploy_args[*]}"
+          supabase "${deploy_args[@]}"
+        env:
+          SUPABASE_ACCESS_TOKEN: ${{ secrets.SUPABASE_ACCESS_TOKEN }}
+
+      - name: Guard verify_jwt drift for deployed function
+        shell: bash
+        run: |
+          set -euo pipefail
+          fn="${{ matrix.function }}"
+          expected="${{ steps.jwt_expectation.outputs.expected_verify_jwt }}"
+          json=$(supabase functions list --project-ref "${{ secrets.SUPABASE_PROJECT_ID }}" -o json)
+          actual=$(echo "$json" | jq -r --arg fn "$fn" '
+            [.. | objects
+              | select((.name // .slug // .function_name // "") == $fn)
+              | (.verify_jwt // .verifyJwt // .verifyJWT)
+            ][0]
+            | if . == true then "true" elif . == false then "false" else empty end
+          ')
+
+          if [[ -z "$actual" ]]; then
+            echo "Could not resolve deployed verify_jwt for function '$fn' from Supabase API response." >&2
+            exit 1
+          fi
+
+          if [[ "$actual" != "$expected" ]]; then
+            echo "verify_jwt drift detected for '$fn': expected=$expected actual=$actual" >&2
+            exit 1
+          fi
+
+          echo "verify_jwt guard passed for '$fn' (expected=$expected, actual=$actual)"
         env:
           SUPABASE_ACCESS_TOKEN: ${{ secrets.SUPABASE_ACCESS_TOKEN }}
 
@@ -79,8 +167,121 @@ jobs:
         run: |
           echo "## Edge Function Deploy Result 🚀" >> $GITHUB_STEP_SUMMARY
           echo "" >> $GITHUB_STEP_SUMMARY
-          echo "| Function | Status |" >> $GITHUB_STEP_SUMMARY
-          echo "|----------|--------|" >> $GITHUB_STEP_SUMMARY
-          echo "| ${{ matrix.function }} | ✅ Deployed + Verified |" >> $GITHUB_STEP_SUMMARY
+          echo "| Function | verify_jwt (expected) | Status |" >> $GITHUB_STEP_SUMMARY
+          echo "|----------|-----------------------|--------|" >> $GITHUB_STEP_SUMMARY
+          echo "| ${{ matrix.function }} | ${{ steps.jwt_expectation.outputs.expected_verify_jwt }} | ✅ Deployed + Guarded + Verified |" >> $GITHUB_STEP_SUMMARY
           echo "" >> $GITHUB_STEP_SUMMARY
           echo "Endpoint: \`https://${{ secrets.SUPABASE_PROJECT_ID }}.supabase.co/functions/v1/${{ matrix.function }}\`" >> $GITHUB_STEP_SUMMARY
+
+  audit-webhook-verify-jwt:
+    needs: [discover-functions, deploy]
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Setup Supabase CLI
+        uses: supabase/setup-cli@v1
+        with:
+          version: 2.76.8
+
+      - name: Audit webhook function verify_jwt values
+        shell: bash
+        run: |
+          set -euo pipefail
+          deployable='${{ needs.discover-functions.outputs.functions }}'
+          mapfile -t funcs < <(jq -r '.[]' <<< "$deployable")
+
+          # Operational webhook surface in this repo.
+          is_webhook_fn() {
+            local fn="$1"
+            [[ "$fn" =~ (webhook|ingest|zapier|sms|process-call) ]]
+          }
+
+          expected_verify_jwt() {
+            local fn="$1"
+            local expected=""
+
+            if [[ -f "supabase/functions/$fn/config.toml" ]]; then
+              expected=$(awk '
+                $1 == "verify_jwt" {
+                  v=$3
+                  gsub(/[[:space:]]/, "", v)
+                  print v
+                  exit
+                }
+              ' "supabase/functions/$fn/config.toml" || true)
+            fi
+
+            if [[ -z "$expected" ]]; then
+              expected=$(awk -v fn="$fn" '
+                BEGIN { in_block=0; expected="" }
+                $0 ~ ("^\\[functions\\." fn "\\]$") { in_block=1; next }
+                in_block && $0 ~ /^\[functions\./ { in_block=0 }
+                in_block && $1 == "verify_jwt" {
+                  expected=$3
+                  gsub(/[[:space:]]/, "", expected)
+                  print expected
+                  exit
+                }
+              ' supabase/config.toml || true)
+            fi
+
+            if [[ -z "$expected" ]]; then
+              expected="true"
+            fi
+            echo "$expected"
+          }
+
+          functions_json=$(supabase functions list --project-ref "${{ secrets.SUPABASE_PROJECT_ID }}" -o json)
+          actual_verify_jwt() {
+            local fn="$1"
+            echo "$functions_json" | jq -r --arg fn "$fn" '
+              [.. | objects
+                | select((.name // .slug // .function_name // "") == $fn)
+                | (.verify_jwt // .verifyJwt // .verifyJWT)
+              ][0]
+              | if . == true then "true" elif . == false then "false" else empty end
+            '
+          }
+
+          mismatch=0
+          checked=0
+          {
+            echo "## Webhook verify_jwt audit"
+            echo ""
+            echo "| Function | Expected | Actual | Status |"
+            echo "|----------|----------|--------|--------|"
+          } >> "$GITHUB_STEP_SUMMARY"
+
+          for fn in "${funcs[@]}"; do
+            if ! is_webhook_fn "$fn"; then
+              continue
+            fi
+
+            checked=$((checked + 1))
+            expected=$(expected_verify_jwt "$fn")
+            actual=$(actual_verify_jwt "$fn")
+            status="PASS"
+
+            if [[ -z "$actual" ]]; then
+              status="FAIL (missing remote metadata)"
+              mismatch=$((mismatch + 1))
+            elif [[ "$actual" != "$expected" ]]; then
+              status="FAIL (drift)"
+              mismatch=$((mismatch + 1))
+            fi
+
+            echo "| $fn | $expected | ${actual:-unknown} | $status |" >> "$GITHUB_STEP_SUMMARY"
+          done
+
+          if [[ "$checked" -eq 0 ]]; then
+            echo "| _none matched webhook filter_ | n/a | n/a | SKIP |" >> "$GITHUB_STEP_SUMMARY"
+          fi
+
+          if [[ "$mismatch" -gt 0 ]]; then
+            echo "Webhook verify_jwt audit failed: $mismatch mismatch(es)." >&2
+            exit 1
+          fi
+        env:
+          SUPABASE_ACCESS_TOKEN: ${{ secrets.SUPABASE_ACCESS_TOKEN }}
