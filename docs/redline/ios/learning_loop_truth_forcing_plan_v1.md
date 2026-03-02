@@ -53,6 +53,19 @@ All triage surfaces (inbox + thread) must map each item into exactly one forcing
 | `NEEDS_SPLIT` | Span likely contains multiple projects; single label would be a lie. | Hard-block assignment. Require “Mark as multi-project” action. (v1: no interactive splitting.) | v1: set `NEEDS_SPLIT` + enqueue replay; v2: interactive sentence split. |
 | `PIPELINE_DEFECT` | Truth graph shows missing/stale substrate in *blocking lanes* (process-call / segment-call / ai-router). | Replace card with defect block + 1-tap repair action; prevent assignment. | `redline-thread?action=repair` (idempotent). |
 
+### 2.1 Shared UI Primitives (STRAT iOS finesse, canonical)
+These primitives apply across all forcing states (feed + thread):
+- Badges must be **truth-first**: never imply “done” when pipeline is uncertain.
+- Use 3-state chips everywhere: `Pending` (gray), `Ready` (blue), `Blocked` (red).
+- When an action is disabled:
+  - keep the affordance **visible but locked**
+  - tap explains *why* it’s locked (hiding actions creates false mental models)
+
+Empty states (canonical copy):
+- No evidence yet: “Waiting for evidence.” + secondary: “This may take a few minutes.”
+- Blocked by pipeline defect: “Blocked by pipeline defect.” + CTA: “Repair pipeline”
+- Needs split: “This thread mixes topics.” + CTA: “Split thread”
+
 ## 3) Learning Loop Forcing Functions (Grounded in Current Surfaces)
 This section is the “Gemini 3.1 forcing functions” translated into current repo reality.
 
@@ -74,6 +87,10 @@ Implementation v1 (based on live queue mix = 100% weak anchors):
   - Show “Pick project” UI as primary.
   - AI suggestion can be shown as a small “Suggested” chip, but never preselected.
   - “Confirm swipe” is disabled; only explicit pick enables submit.
+
+Optional stronger anti-anchoring (recommended if drift persists):
+- Show the current label as “Hypothesis” until Evidence Tokens ≥ threshold.
+- Never display a definitive grade without a confidence chip.
 
 Decision-linked metric:
 - `pick_time_p50` / `pick_time_p90`: if p90 > 20s, picker UX is too slow (add search/recents/chips), not more model complexity.
@@ -98,6 +115,11 @@ Phased approach:
 - v1: **hard-block** + “Mark multi-project (NEEDS_SPLIT)” + “Replay pipeline” (no interactive splitting UI).
 - v2: interactive sentence-level splitting (true corrective labeling).
 
+STRAT iOS UX notes for v2 split:
+- Primary action: `Split` / “Split thread” (not “scissor”)
+- Two-step flow: choose boundary → confirm
+- Confirmation copy: “Split creates two threads. You can undo immediately.”
+
 Decision-linked metric:
 - `needs_split_rate`: if > 5% weekly, prioritize v2 splitting UX.
 
@@ -117,6 +139,14 @@ Because the queue is currently dominated by weak anchors:
 1. **Picker-first triage** that is fast enough that users don’t “fight the tool.”
 2. **Anti-anchoring defaults** (no preselect, no confirm swipe for weak items).
 3. **Receipts not reasoning** (deterministic evidence only).
+
+### 4.1.1 Evidence Tokens (UI/UX finesse)
+Evidence Tokens should be visible but non-anchoring:
+- Show as compact chips with count + freshness (example: `3 tokens · 2m`)
+- Tap → sheet with:
+  - token list + timestamps
+  - 1-line “why this matters”
+This enables users to move quickly without “trusting the model’s story.”
 
 Concrete iOS touchpoints:
 - `camber/ios/CamberRedline/CamberRedline/Views/AttributionTriageCardsView.swift`
@@ -158,3 +188,12 @@ Every iOS PR that changes the truth surface includes:
 - `SIM_PROOF:` screenshots committed under `camber/artifacts/ios_simulator_smoke/YYYY-MM-DD/...`.
 
 Open integration: Strat iOS is producing a parallel UI/UX finesse plan; this doc is meant to be updated with their specific interaction design choices once received.
+
+Canonical copy strings (suggested SSOT):
+- “Waiting for evidence.”
+- “Blocked by pipeline defect.”
+- “Repair pipeline”
+- “This thread mixes topics.”
+- “Split thread”
+- “Evidence tokens”
+- “Override (expert)” (gate behind confirmation)
