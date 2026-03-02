@@ -559,6 +559,32 @@ final class ThreadViewModel {
         }
     }
 
+    // MARK: - Attribution Undo
+
+    @discardableResult
+    func undoAttribution(reviewQueueId: String, reloadAfterUndo: Bool = true) async -> Bool {
+        if let banner = bootstrapService.writesLockedBannerText {
+            showTransientError(banner, clearAfter: .seconds(4))
+            return false
+        }
+
+        error = nil
+        do {
+            try await bootstrapService.undo(queueId: reviewQueueId)
+            if reloadAfterUndo {
+                schedulePostResolveSync()
+            }
+            return true
+        } catch {
+            if let banner = bootstrapService.writesLockedBannerText {
+                showTransientError(banner, clearAfter: .seconds(4))
+            } else {
+                showTransientError("Undo failed: \(error.localizedDescription)")
+            }
+            return false
+        }
+    }
+
     private func schedulePostResolveSync() {
         postResolveRefreshTask?.cancel()
         postResolveRefreshTask = Task { @MainActor [weak self] in

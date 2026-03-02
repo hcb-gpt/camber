@@ -14,6 +14,14 @@ private enum AppSmokeAutomation {
     }
 }
 
+private enum ThreadSwipeSmokeAutomation {
+    static let launchFlag = "--smoke-thread-swipe"
+
+    static var isEnabled: Bool {
+        ProcessInfo.processInfo.arguments.contains(launchFlag)
+    }
+}
+
 private enum TruthGraphDemoAutomation {
     static let launchFlag = "--truth-graph-demo"
     static let interactionIdEnv = "TRUTH_GRAPH_DEMO_INTERACTION_ID"
@@ -130,6 +138,10 @@ struct CamberRedlineApp: App {
                     // Contact list, cache warming, and subscriptions are not needed
                     // for smoke drive and add 3-8s of blocking network time.
                     await runSmokeDriveIfEnabled()
+                } else if ThreadSwipeSmokeAutomation.isEnabled {
+                    await contactListViewModel.loadContacts()
+                    threadViewModel.updateContactSequence(contactListViewModel.contacts)
+                    await threadViewModel.warmProjectPickerCache()
                 } else {
                     await requestBadgePermission()
                     await contactListViewModel.loadContacts()
@@ -162,6 +174,8 @@ struct CamberRedlineApp: App {
     }
 
     private func updateBadge() {
+        guard !AppSmokeAutomation.isEnabled else { return }
+        guard !ThreadSwipeSmokeAutomation.isEnabled else { return }
         let count = contactListViewModel.totalUngraded
         UNUserNotificationCenter.current().setBadgeCount(count)
     }

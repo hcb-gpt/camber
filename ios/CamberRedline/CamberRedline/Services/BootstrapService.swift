@@ -67,6 +67,23 @@ final class BootstrapService {
         encoder = JSONEncoder()
     }
 
+    private var edgeSharedSecret: String? {
+        #if DEBUG
+        let raw = (ProcessInfo.processInfo.environment["EDGE_SHARED_SECRET"] ?? "")
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+        return raw.isEmpty ? nil : raw
+        #else
+        nil
+        #endif
+    }
+
+    private func applyAuthHeaders(to request: inout URLRequest) {
+        request.setValue("Bearer \(anonKey)", forHTTPHeaderField: "Authorization")
+        if let edgeSharedSecret {
+            request.setValue(edgeSharedSecret, forHTTPHeaderField: "X-Edge-Secret")
+        }
+    }
+
     // MARK: - Fetch Queue
 
     func fetchQueue(limit: Int = 30) async throws -> ReviewQueueResponse {
@@ -81,7 +98,7 @@ final class BootstrapService {
         }
 
         var request = URLRequest(url: url)
-        request.setValue("Bearer \(anonKey)", forHTTPHeaderField: "Authorization")
+        applyAuthHeaders(to: &request)
 
         let (data, response) = try await session.data(for: request)
         try validateHTTPResponse(response, data: data)
@@ -188,7 +205,7 @@ final class BootstrapService {
         }
 
         var request = URLRequest(url: url)
-        request.setValue("Bearer \(anonKey)", forHTTPHeaderField: "Authorization")
+        applyAuthHeaders(to: &request)
 
         let (data, response) = try await session.data(for: request)
         try validateHTTPResponse(response, data: data)
@@ -243,7 +260,7 @@ final class BootstrapService {
         var request = URLRequest(url: assistantChatURL)
         request.httpMethod = "POST"
         request.setValue("application/json", forHTTPHeaderField: "Content-Type")
-        request.setValue("Bearer \(anonKey)", forHTTPHeaderField: "Authorization")
+        applyAuthHeaders(to: &request)
 
         let body: [String: Any?] = [
             "message": message,
@@ -331,7 +348,7 @@ final class BootstrapService {
         var request = URLRequest(url: assistantFeedbackURL)
         request.httpMethod = "POST"
         request.setValue("application/json", forHTTPHeaderField: "Content-Type")
-        request.setValue("Bearer \(anonKey)", forHTTPHeaderField: "Authorization")
+        applyAuthHeaders(to: &request)
         request.httpBody = try encoder.encode(payload)
 
         let (data, response) = try await session.data(for: request)
@@ -361,7 +378,7 @@ final class BootstrapService {
         var request = URLRequest(url: url)
         request.httpMethod = "POST"
         request.setValue("application/json", forHTTPHeaderField: "Content-Type")
-        request.setValue("Bearer \(anonKey)", forHTTPHeaderField: "Authorization")
+        applyAuthHeaders(to: &request)
         request.httpBody = try encoder.encode(body)
 
         let (data, response) = try await session.data(for: request)

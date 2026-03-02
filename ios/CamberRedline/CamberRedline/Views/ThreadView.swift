@@ -1,5 +1,15 @@
 import SwiftUI
 import UIKit
+import os
+
+private enum ThreadSwipeSmokeAutomation {
+    static let launchFlag = "--smoke-thread-swipe"
+    static let logger = Logger(subsystem: "CamberRedline", category: "smoke")
+
+    static var isEnabled: Bool {
+        ProcessInfo.processInfo.arguments.contains(launchFlag)
+    }
+}
 
 // MARK: - Display Group
 
@@ -104,6 +114,9 @@ struct ThreadView: View {
     @State private var activeNoteContext: ThreadNoteContext?
     @State private var noteDraft = ""
     @State private var isContactInfoPresented = false
+    @State private var pendingUndo: PendingUndoAction?
+    @State private var undoClearTask: Task<Void, Never>?
+    @State private var didRunThreadSwipeSmoke = false
     private let bottomAnchorID = "thread-bottom-anchor"
     private let topLoadThreshold: CGFloat = -80
     private static let smsStripeColors: [Color] = [
@@ -121,6 +134,20 @@ struct ThreadView: View {
             return mapped
         }
         return [SMSProjectAssignment(projectId: nil, name: "Unknown Project", colorIndex: nil)] + mapped
+    }
+
+    private struct PendingUndoAction: Identifiable {
+        enum Kind: String {
+            case confirm
+            case reject
+            case correct
+        }
+
+        let id = UUID()
+        let kind: Kind
+        let reviewQueueId: String
+        let spanId: UUID?
+        let createdAt: Date
     }
 
     // MARK: - Derived display groups
@@ -337,14 +364,19 @@ struct ThreadView: View {
                 }
             }
             .overlay(alignment: .bottom) {
-                if let error = viewModel.error {
-                    Text(error)
-                        .font(.caption)
-                        .foregroundStyle(.red)
-                        .padding(8)
-                        .background(.ultraThinMaterial, in: RoundedRectangle(cornerRadius: 8))
-                        .padding()
+                VStack(spacing: 10) {
+                    if let pendingUndo {
+                        undoPill(pendingUndo)
+                    }
+                    if let error = viewModel.error {
+                        Text(error)
+                            .font(.caption)
+                            .foregroundStyle(.red)
+                            .padding(8)
+                            .background(.ultraThinMaterial, in: RoundedRectangle(cornerRadius: 8))
+                    }
                 }
+                .padding()
             }
             .task(id: contact.contactId) {
                 hasScrolledToLatest = false
@@ -368,6 +400,8 @@ struct ThreadView: View {
                     try? await Task.sleep(for: .milliseconds(80))
                 }
                 hasScrolledToLatest = true
+
+                await runThreadSwipeSmokeIfEnabled()
             }
             .onChange(of: viewModel.threadItems.count) { _, newCount in
                 guard newCount > 0 else { return }
@@ -422,6 +456,221 @@ struct ThreadView: View {
                 }
             )
         }
+    }
+
+    private func recordUndo(kind: PendingUndoAction.Kind, reviewQueueId: String, spanId: UUID?) {
+        let action = PendingUndoAction(kind: kind, reviewQueueId: reviewQueueId, spanId: spanId, createdAt: Date())
+        pendingUndo = action
+
+        undoClearTask?.cancel()
+        let actionId = action.id
+        undoClearTask = Task { @MainActor in
+            do {
+                try await Task.sleep(for: .seconds(25))
+            } catch {
+                return
+            }
+            guard pendingUndo?.id == actionId else { return }
+            pendingUndo = nil
+        }
+    }
+
+    @ViewBuilder
+    private func undoPill(_ action: PendingUndoAction) -> some View {
+        HStack(spacing: 10) {
+            Image(systemName: "arrow.uturn.backward.circle.fill")
+                .foregroundStyle(Color(.systemGray2))
+            Text("Undo")
+                .font(.caption)
+                .fontWeight(.semibold)
+                .foregroundStyle(.white)
+            Text(action.kind.rawValue.capitalized)
+                .font(.caption)
+                .foregroundStyle(Color(.systemGray2))
+            Spacer()
+            Button("Undo") {
+                undoAction(action)
+            }
+            .font(.caption)
+            .fontWeight(.semibold)
+            .buttonStyle(.borderedProminent)
+            .tint(Color(white: 0.22))
+            .disabled(viewModel.isAttributionWritesLocked)
+            .opacity(viewModel.isAttributionWritesLocked ? 0.45 : 1)
+        }
+        .padding(10)
+        .background(.ultraThinMaterial, in: RoundedRectangle(cornerRadius: 12, style: .continuous))
+    }
+
+    private func undoAction(_ action: PendingUndoAction) {
+        guard !viewModel.isAttributionWritesLocked else { return }
+
+        let queueId = action.reviewQueueId
+        let spanId = action.spanId
+
+        pendingUndo = nil
+        undoClearTask?.cancel()
+
+        Task {
+            let ok = await viewModel.undoAttribution(reviewQueueId: queueId)
+            if ok {
+                await MainActor.run {
+                    if let spanId {
+                        spanOverrides.removeValue(forKey: spanId)
+                    }
+                    triggerAssignmentHaptic()
+                }
+            }
+        }
+    }
+
+    private struct SmokeSwipeTarget {
+        let source: String
+        let interactionId: String
+        let spanId: UUID?
+        let spanIdRaw: String
+        let reviewQueueId: String
+        let kind: PendingUndoAction.Kind
+        let projectId: String
+    }
+
+    @MainActor
+    private func runThreadSwipeSmokeIfEnabled() async {
+        guard ThreadSwipeSmokeAutomation.isEnabled else { return }
+        guard !didRunThreadSwipeSmoke else { return }
+        didRunThreadSwipeSmoke = true
+
+        let threadTarget = findSmokeSwipeTarget()
+        let queueTarget = await findSmokeSwipeTargetFromQueue()
+        guard let target = threadTarget ?? queueTarget else {
+            ThreadSwipeSmokeAutomation.logger.log("SMOKE_EVENT THREAD_SWIPE_NO_TARGET")
+            return
+        }
+
+        ThreadSwipeSmokeAutomation.logger.log(
+            "SMOKE_EVENT THREAD_SWIPE_TARGET source=\(target.source, privacy: .public) kind=\(target.kind.rawValue, privacy: .public) queue=\(target.reviewQueueId, privacy: .public) interaction=\(target.interactionId, privacy: .public) span=\(target.spanIdRaw, privacy: .public)"
+        )
+
+        let didResolve = await viewModel.resolveAttribution(
+            reviewQueueId: target.reviewQueueId,
+            projectId: target.projectId,
+            notes: nil,
+            reloadAfterResolve: false
+        )
+        let resolveEvent: String = switch target.kind {
+        case .confirm:
+            "THREAD_SWIPE_CONFIRM"
+        case .correct:
+            "THREAD_SWIPE_CORRECT"
+        case .reject:
+            "THREAD_SWIPE_REJECT"
+        }
+        ThreadSwipeSmokeAutomation.logger.log("SMOKE_EVENT \(resolveEvent, privacy: .public) ok=\(didResolve, privacy: .public) queue=\(target.reviewQueueId, privacy: .public)")
+        guard didResolve else { return }
+
+        recordUndo(kind: target.kind, reviewQueueId: target.reviewQueueId, spanId: target.spanId)
+
+        try? await Task.sleep(for: .milliseconds(900))
+
+        ThreadSwipeSmokeAutomation.logger.log(
+            "SMOKE_EVENT THREAD_SWIPE_UNDO queue=\(target.reviewQueueId, privacy: .public)"
+        )
+        let didUndo = await viewModel.undoAttribution(reviewQueueId: target.reviewQueueId)
+        ThreadSwipeSmokeAutomation.logger.log(
+            "SMOKE_EVENT THREAD_SWIPE_UNDO_RESULT ok=\(didUndo, privacy: .public) queue=\(target.reviewQueueId, privacy: .public)"
+        )
+        if didUndo {
+            pendingUndo = nil
+            undoClearTask?.cancel()
+        }
+    }
+
+    private func findSmokeSwipeTarget() -> SmokeSwipeTarget? {
+        let fallbackProjectId = viewModel.reviewProjects
+            .map(\.id)
+            .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
+            .first(where: { !$0.isEmpty })
+
+        for group in displayGroups {
+            guard case .callGroup(let header, _) = group else { continue }
+            for span in header.spans.sorted(by: { $0.spanIndex < $1.spanIndex }) {
+                guard span.needsAttribution else { continue }
+                guard let reviewQueueId = span.reviewQueueId, !reviewQueueId.isEmpty else { continue }
+                let projectId = (span.projectId ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
+                if !projectId.isEmpty {
+                    return SmokeSwipeTarget(
+                        source: "thread",
+                        interactionId: header.interactionId,
+                        spanId: span.spanId,
+                        spanIdRaw: span.spanId.uuidString,
+                        reviewQueueId: reviewQueueId,
+                        kind: .confirm,
+                        projectId: projectId
+                    )
+                }
+                guard let fallbackProjectId else { continue }
+                return SmokeSwipeTarget(
+                    source: "thread",
+                    interactionId: header.interactionId,
+                    spanId: span.spanId,
+                    spanIdRaw: span.spanId.uuidString,
+                    reviewQueueId: reviewQueueId,
+                    kind: .correct,
+                    projectId: fallbackProjectId
+                )
+            }
+        }
+        return nil
+    }
+
+    @MainActor
+    private func findSmokeSwipeTargetFromQueue() async -> SmokeSwipeTarget? {
+        do {
+            let queue = try await BootstrapService.shared.fetchQueue(limit: 30)
+            let fallbackProjectId = queue.projects
+                .map(\.id)
+                .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
+                .first(where: { !$0.isEmpty })
+                ?? viewModel.reviewProjects
+                    .map(\.id)
+                    .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
+                    .first(where: { !$0.isEmpty })
+
+            for item in queue.items {
+                let reviewQueueId = item.id.trimmingCharacters(in: .whitespacesAndNewlines)
+                guard !reviewQueueId.isEmpty else { continue }
+
+                let rawSpanId = item.spanId.trimmingCharacters(in: .whitespacesAndNewlines)
+                let spanId = UUID(uuidString: rawSpanId)
+
+                if let guessProjectId = item.aiGuessProjectId,
+                   !guessProjectId.isEmpty {
+                    return SmokeSwipeTarget(
+                        source: "queue",
+                        interactionId: item.interactionId,
+                        spanId: spanId,
+                        spanIdRaw: rawSpanId.isEmpty ? "missing" : rawSpanId,
+                        reviewQueueId: reviewQueueId,
+                        kind: .confirm,
+                        projectId: guessProjectId
+                    )
+                }
+
+                guard let fallbackProjectId else { continue }
+                return SmokeSwipeTarget(
+                    source: "queue",
+                    interactionId: item.interactionId,
+                    spanId: spanId,
+                    spanIdRaw: rawSpanId.isEmpty ? "missing" : rawSpanId,
+                    reviewQueueId: reviewQueueId,
+                    kind: .correct,
+                    projectId: fallbackProjectId
+                )
+            }
+        } catch {
+            return nil
+        }
+        return nil
     }
 
     @ViewBuilder
@@ -523,6 +772,7 @@ struct ThreadView: View {
             } else {
                 await MainActor.run {
                     triggerAssignmentHaptic()
+                    recordUndo(kind: .correct, reviewQueueId: queueId, spanId: span.spanId)
                     if notes != nil {
                         viewModel.saveNote(targetType: .span, targetId: span.spanId.uuidString, text: "")
                     }
@@ -560,6 +810,7 @@ struct ThreadView: View {
             } else {
                 await MainActor.run {
                     triggerAssignmentHaptic()
+                    recordUndo(kind: .confirm, reviewQueueId: queueId, spanId: span.spanId)
                     if notes != nil {
                         viewModel.saveNote(targetType: .span, targetId: span.spanId.uuidString, text: "")
                     }
@@ -587,6 +838,7 @@ struct ThreadView: View {
             if didDismiss {
                 await MainActor.run {
                     triggerAssignmentHaptic()
+                    recordUndo(kind: .reject, reviewQueueId: queueId, spanId: span.spanId)
                     if notes != nil {
                         viewModel.saveNote(targetType: .span, targetId: span.spanId.uuidString, text: "")
                     }
@@ -1577,6 +1829,14 @@ private struct SpanBlock: View {
 
     @State private var isExpanded = false
     @State private var showProjectSheet = false
+    @State private var lastSwipeAt: Date?
+
+    private enum SwipeIntent {
+        case confirm
+        case reject
+        case correct
+        case comment
+    }
 
     private static let spanColors: [Color] = [
         Color(red: 0.18, green: 0.64, blue: 0.25),
@@ -1620,6 +1880,10 @@ private struct SpanBlock: View {
     private var parsedTurns: [SpeakerTurn] {
         guard let segment = span.transcriptSegment, !segment.isEmpty else { return [] }
         return TranscriptParser.parse(segment, contactName: contactName)
+    }
+
+    private var hasGuess: Bool {
+        !((span.projectId ?? "").trimmingCharacters(in: .whitespacesAndNewlines)).isEmpty
     }
 
     var body: some View {
@@ -1697,15 +1961,13 @@ private struct SpanBlock: View {
                             .foregroundStyle(Color(.systemGray))
                             .lineLimit(1)
                         Spacer()
-                        if let confidencePct {
-                            Text("\(confidencePct)%")
-                                .font(.caption2)
-                                .fontWeight(.semibold)
-                                .foregroundStyle(.white)
-                                .padding(.horizontal, 8)
-                                .padding(.vertical, 3)
-                                .background(Color(white: 0.20), in: Capsule())
-                        }
+                        Text(confidencePct.map { "\($0)%" } ?? "—")
+                            .font(.caption2)
+                            .fontWeight(.semibold)
+                            .foregroundStyle(confidencePct == nil ? Color(.systemGray2) : .white)
+                            .padding(.horizontal, 8)
+                            .padding(.vertical, 3)
+                            .background(Color(white: 0.20), in: Capsule())
                     }
 
                     ScrollView(.horizontal, showsIndicators: false) {
@@ -1752,6 +2014,10 @@ private struct SpanBlock: View {
                         }
                         .padding(.vertical, 2)
                     }
+
+                    Text("Swipe: \u{2192} Confirm  \u{2190} Reject  \u{2191} Correct  \u{2193} Comment")
+                        .font(.caption2)
+                        .foregroundStyle(Color(.systemGray3))
                 }
                 .padding(.top, 2)
             }
@@ -1814,6 +2080,13 @@ private struct SpanBlock: View {
                 .frame(width: 3)
         }
         .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
+        .contentShape(Rectangle())
+        .simultaneousGesture(
+            DragGesture(minimumDistance: 28)
+                .onEnded { value in
+                    handleSwipe(value.translation)
+                }
+        )
         .sheet(isPresented: $showProjectSheet) {
             ProjectAssignmentSheet(
                 title: "Assign Project",
@@ -1832,6 +2105,59 @@ private struct SpanBlock: View {
                 }
             )
         }
+    }
+
+    private func handleSwipe(_ translation: CGSize) {
+        guard span.needsAttribution, selectedAssignment == nil else { return }
+        guard !writesLocked else { return }
+        guard !showProjectSheet else { return }
+
+        if let lastSwipeAt, Date().timeIntervalSince(lastSwipeAt) < 0.45 {
+            return
+        }
+
+        guard let intent = swipeIntent(for: translation) else { return }
+        lastSwipeAt = Date()
+
+        UIImpactFeedbackGenerator(style: .medium).impactOccurred()
+
+        switch intent {
+        case .confirm:
+            if hasGuess {
+                onConfirmGuess()
+            } else {
+                showProjectSheet = true
+            }
+        case .reject:
+            onReject()
+        case .correct:
+            showProjectSheet = true
+        case .comment:
+            onAddNote(
+                "Comment — Attribution",
+                [ThreadNoteTarget(type: .span, id: span.spanId.uuidString)]
+            )
+        }
+    }
+
+    private func swipeIntent(for translation: CGSize) -> SwipeIntent? {
+        let dx = translation.width
+        let dy = translation.height
+
+        let horizontalThreshold: CGFloat = 64
+        let verticalThreshold: CGFloat = 120
+
+        let horizontalDominant = abs(dx) > abs(dy) * 1.35
+        let verticalDominant = abs(dy) > abs(dx) * 1.8
+
+        if horizontalDominant, abs(dx) >= horizontalThreshold {
+            return dx > 0 ? .confirm : .reject
+        }
+        if verticalDominant, abs(dy) >= verticalThreshold {
+            return dy < 0 ? .correct : .comment
+        }
+
+        return nil
     }
 
     private func actionPill(
