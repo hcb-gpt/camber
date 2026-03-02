@@ -52,9 +52,33 @@ MESSAGE=""
 
 while [[ $# -gt 0 ]]; do
   case "$1" in
-    --project-id)  PROJECT_ID="${2:-}"; shift 2 ;;
-    --contact-id)  CONTACT_ID="${2:-}"; shift 2 ;;
-    --model)       MODEL="${2:-}"; shift 2 ;;
+    --project-id)
+      if [[ $# -lt 2 ]] || [[ -z "${2:-}" ]] || [[ "${2:-}" == --* ]]; then
+        echo "[ERROR] --project-id requires a value." >&2
+        usage >&2
+        exit 2
+      fi
+      PROJECT_ID="${2:-}"
+      shift 2
+      ;;
+    --contact-id)
+      if [[ $# -lt 2 ]] || [[ -z "${2:-}" ]] || [[ "${2:-}" == --* ]]; then
+        echo "[ERROR] --contact-id requires a value." >&2
+        usage >&2
+        exit 2
+      fi
+      CONTACT_ID="${2:-}"
+      shift 2
+      ;;
+    --model)
+      if [[ $# -lt 2 ]] || [[ -z "${2:-}" ]] || [[ "${2:-}" == --* ]]; then
+        echo "[ERROR] --model requires a value." >&2
+        usage >&2
+        exit 2
+      fi
+      MODEL="${2:-}"
+      shift 2
+      ;;
     --raw)         RAW=true; shift ;;
     --headers)     SHOW_HEADERS=true; shift ;;
     -h|--help)     usage; exit 0 ;;
