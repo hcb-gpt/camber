@@ -2,9 +2,9 @@ import "jsr:@supabase/functions-js/edge-runtime.d.ts";
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
 import { computeTruthGraph, type TruthGraphHydration, type TruthGraphRepairAction } from "./truth_graph.ts";
 import { requireEdgeSecret } from "../_shared/auth.ts";
-import { checkTopLevelEdgeSecret } from "./auth_gate.ts";
+import { checkTopLevelEdgeSecret, checkTopLevelEdgeSecretOrAnonKey } from "./auth_gate.ts";
 
-const FUNCTION_VERSION = "redline-thread_v3.4.0";
+const FUNCTION_VERSION = "redline-thread_v3.4.1";
 /**
  * v3.2.1 - Fix typo interactionClaims -> _interactionClaims
  * v3.1.2 - iOS Contract Fix (P0 Unbrick)
@@ -12,6 +12,7 @@ const FUNCTION_VERSION = "redline-thread_v3.4.0";
  * - Closes visibility gap for beside_threads
  * v3.3.0 - Contacts payload: add last_interaction_id instrumentation + keep beside_thread rows
  * v3.4.0 - Truth Graph endpoint + idempotent repair hooks (truth-forcing surface)
+ * v3.4.1 - Hotfix: require auth for non-health routes (edge secret or iOS anon key on iOS routes)
  */
 const OWNER_SMS_USER_IDS = ["+17066889158", "usr_4PCSTDQ8N161KAC4GG7AF9CR94"];
 const OUTBOUND_INFERENCE_WINDOW_MS = 30 * 60 * 1000;
@@ -3027,26 +3028,46 @@ Deno.serve(async (req: Request) => {
     }
 
     const action = url.searchParams.get("action");
-    const isPublicRead = req.method === "GET" || (req.method === "POST" && url.pathname.includes("/redline/verdict"));
-
-    if (!isPublicRead) {
-      const topLevelAuthResult = checkTopLevelEdgeSecret(req);
-      if (!topLevelAuthResult.ok) {
-        return json(
-          {
-            ok: false,
-            error_code: topLevelAuthResult.error_code,
-            error: topLevelAuthResult.error,
-          },
-          topLevelAuthResult.status,
-        );
+    const apiRoute = parseRedlineApiRoute(url);
+    const contactIdParam = url.searchParams.get("contact_id") || url.searchParams.get("contact_key");
+    const allowAnonKey = (() => {
+      // iOS client uses Authorization: Bearer <anonKey>
+      // Allow anon-key auth only on iOS-known routes; require X-Edge-Secret everywhere else.
+      if (req.method === "GET") {
+        if (action === "contacts" || action === "reset_clock") return true;
+        if (contactIdParam) return true;
+        if (apiRoute && (apiRoute.kind === "contacts" || apiRoute.kind === "thread" || apiRoute.kind === "spans")) {
+          return true;
+        }
       }
+
+      if (req.method === "POST") {
+        if (apiRoute?.kind === "verdict") return true;
+        if (!action) return true; // default POST route (gradeClaimViaAPI)
+      }
+
+      return false;
+    })();
+
+    const topLevelAuthResult = allowAnonKey
+      ? checkTopLevelEdgeSecretOrAnonKey(req)
+      : checkTopLevelEdgeSecret(req);
+    if (!topLevelAuthResult.ok) {
+      return json(
+        {
+          ok: false,
+          error_code: topLevelAuthResult.error_code,
+          error: topLevelAuthResult.error,
+          function_version: FUNCTION_VERSION,
+          ms: Date.now() - t0,
+        },
+        topLevelAuthResult.status,
+      );
     }
 
     // Create service-role client only after auth has passed for non-health routes.
     const db = createClient(Deno.env.get("SUPABASE_URL")!, Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!);
 
-    const apiRoute = parseRedlineApiRoute(url);
     if (apiRoute) {
       if (apiRoute.kind === "contacts" && req.method === "GET") {
         return await handleContacts(db, url, t0);
