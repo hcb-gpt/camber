@@ -448,7 +448,39 @@
 
   <script>
     var SUPABASE_URL = "https://rjhdwidddtfetbwqolof.supabase.co";
-    var SUPABASE_ANON_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InJqaGR3aWRkZHRmZXRid3FvbG9mIiwicm9sZSI6ImFub24iLCJpYXQiOjE3MzE3OTQxMjMsImV4cCI6MjA0NzM3MDEyM30.G5G1ehbOSNPdqm3gCnurNFTgOQGyyqhq02BYDXQR8eg";
+    var SUPABASE_ANON_KEY_STORAGE_KEY = "camber_supabase_anon_key";
+
+    function resolveSupabaseAnonKey() {
+      try {
+        var params = new URLSearchParams(window.location.search || "");
+        var fromQuery = (params.get("anon_key") || "").trim();
+        if (fromQuery) {
+          try {
+            // Avoid leaving keys in the URL bar / browser history.
+            params.delete("anon_key");
+            var nextUrl = window.location.pathname + (params.toString() ? ("?" + params.toString()) : "") + window.location.hash;
+            window.history.replaceState(null, "", nextUrl);
+          } catch (_) {}
+          window.localStorage.setItem(SUPABASE_ANON_KEY_STORAGE_KEY, fromQuery);
+          return fromQuery;
+        }
+
+        var stored = (window.localStorage.getItem(SUPABASE_ANON_KEY_STORAGE_KEY) || "").trim();
+        if (stored) return stored;
+
+        var entered = (window.prompt(
+          "Enter Supabase anon key for " + SUPABASE_URL + " (stored locally in this browser):"
+        ) || "").trim();
+        if (entered) {
+          window.localStorage.setItem(SUPABASE_ANON_KEY_STORAGE_KEY, entered);
+          return entered;
+        }
+      } catch (_) {}
+
+      return "";
+    }
+
+    var SUPABASE_ANON_KEY = resolveSupabaseAnonKey();
     var API_URL = SUPABASE_URL + "/functions/v1/operator-validation";
 
     var sb = supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
