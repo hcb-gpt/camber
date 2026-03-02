@@ -35,7 +35,7 @@ function corsHeaders(): Record<string, string> {
     "Access-Control-Allow-Headers": "authorization, x-client-info, apikey, content-type, x-edge-secret, x-request-id",
     "Access-Control-Allow-Methods": "POST, OPTIONS",
     "Access-Control-Expose-Headers":
-      "x-request-id,x-contract-version,x-function-version,x-model-id,x-model-config-source",
+      "x-request-id,x-contract-version,x-function-version,x-model-id,x-model-config-source,x-assistant-context-request-id,x-assistant-context-contract-version",
   };
 }
 
@@ -50,9 +50,10 @@ function json(
     headers: {
       ...corsHeaders(),
       "Content-Type": "application/json",
-      ...(requestId ? { "x-request-id": requestId } : {}),
+      ...(requestId ? { "x-request-id": requestId, "x-assistant-context-request-id": requestId } : {}),
       "x-function-version": FUNCTION_VERSION,
       "x-contract-version": CONTRACT_VERSION,
+      "x-assistant-context-contract-version": CONTRACT_VERSION,
       ...(extraHeaders ?? {}),
     },
   });
@@ -186,8 +187,10 @@ function textSseResponse(
       "Content-Type": "text/event-stream",
       "Cache-Control": "no-cache",
       "x-request-id": requestId,
+      "x-assistant-context-request-id": requestId,
       "x-function-version": FUNCTION_VERSION,
       "x-contract-version": CONTRACT_VERSION,
+      "x-assistant-context-contract-version": CONTRACT_VERSION,
       ...extraHeaders,
     },
   });
@@ -533,7 +536,7 @@ Deno.serve(async (req: Request): Promise<Response> => {
 
     // Handle roster-listing queries directly (no LLM needed)
     if (isProjectsRosterQuery(userMessage)) {
-      const lines = projectsRoster.slice(0, 15).map((p, i) => {
+      const lines = projectsRoster.slice(0, 50).map((p, i) => {
         const status = p.status ? ` (${p.status})` : "";
         return `${i + 1}. ${p.name}${status}`;
       });
@@ -606,7 +609,7 @@ DATA GROUNDING RULES (strict):
 3) project_recent_highlights contains recent interaction events per project, each with interaction_id pointers back to the source.
 4) focused_project_highlights contains highlights specifically for the resolved project (if any). These may come from the RPC (with interaction_id, interaction_type, highlight_text) or from direct queries (with id, channel, contact_name, summary_text). Use whichever fields are present.
 5) If asked about project roster or "what projects", list project names from projects_roster.
-6) For status-style questions, cite at least one concrete highlight (event_at_utc, channel, summary_text or highlight_text) tied to a project name.
+6) For status-style questions, cite at least one concrete highlight (event_at_utc, channel, summary_text or highlight_text) and EXPLICITLY include its interaction_id (e.g. cll_XYZ) when available in the packet. Also, explicitly state the count of interactions found for the project (e.g., "Found 3 interactions").
 7) If resolution.mode is "ambiguous", present the matches and ask the user to pick.
 8) If resolution.mode is "none", say no match found and suggest closest roster names.
 9) If focused_project_highlights is empty, say you don't have recent activity details for this project, but confirm the project exists if it's in the roster.
@@ -689,8 +692,10 @@ ${JSON.stringify(contextPacket, null, 2)}
         "Content-Type": "text/event-stream",
         "Cache-Control": "no-cache",
         "x-request-id": requestId,
+        "x-assistant-context-request-id": requestId,
         "x-function-version": FUNCTION_VERSION,
         "x-contract-version": CONTRACT_VERSION,
+        "x-assistant-context-contract-version": CONTRACT_VERSION,
         "x-model-id": activeModel,
         "x-model-config-source": modelConfig.source,
       },
