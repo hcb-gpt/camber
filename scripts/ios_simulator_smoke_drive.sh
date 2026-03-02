@@ -168,6 +168,13 @@ LAUNCH_ARGS=(--smoke-drive)
 if [[ -n "${SYNTHETIC_IDS}" ]]; then
   LAUNCH_ARGS+=(--smoke-synthetic-ids "${SYNTHETIC_IDS}")
 fi
+
+EDGE_SECRET_PRESENT=0
+if [[ -n "${EDGE_SHARED_SECRET:-}" ]]; then
+  EDGE_SECRET_PRESENT=1
+  export SIMCTL_CHILD_EDGE_SHARED_SECRET="${EDGE_SHARED_SECRET}"
+fi
+
 simctl launch "${DEVICE_UDID}" "${BUNDLE_ID}" "${LAUNCH_ARGS[@]}" > "${OUT_DIR}/launch.txt" 2>&1
 
 for step in $(seq 1 "${SCREEN_STEPS}"); do
@@ -194,6 +201,7 @@ app_log=${OUT_DIR}/app.log
 smoke_markers=${SMOKE_MARKERS}
 synthetic_ids=${SYNTHETIC_IDS}
 launch_args=${LAUNCH_ARGS[*]}
+edge_secret_present=${EDGE_SECRET_PRESENT}
 EOF
 
 echo "[smoke] done"
