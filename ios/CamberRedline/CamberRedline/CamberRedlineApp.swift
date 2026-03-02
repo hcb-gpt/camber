@@ -14,50 +14,67 @@ private enum AppSmokeAutomation {
     }
 }
 
+enum RedlineTab: Hashable {
+    case inbox
+    case calls
+    case ai
+    case dial
+    case settings
+}
+
 @main
 struct CamberRedlineApp: App {
     @State private var contactListViewModel = ContactListViewModel()
     @State private var threadViewModel = ThreadViewModel()
-    @State private var selectedTab: Int = 0
+    @State private var selectedTab: RedlineTab = .inbox
+    @State private var isTriagePresented = false
     @State private var didRunSmokeDrive = false
     @Environment(\.scenePhase) private var scenePhase
 
-    // #FF3B30 — system red (Redline tab tint)
-    private let redlineTint = Color(red: 1.0, green: 0.231, blue: 0.188)
-    // #30D158 — system green (Triage tab tint)
-    private let triageTint = Color(red: 0.188, green: 0.820, blue: 0.345)
-    // #5E5CE6 — system indigo (Context tab tint)
-    private let contextTint = Color(red: 0.369, green: 0.361, blue: 0.902)
+    // #0A84FF — system blue (Beside-like tint)
+    private let besideTint = Color(red: 0.039, green: 0.518, blue: 1.0)
     // #0A0A0A — near-black tab bar background
     private let tabBarBackground = Color(red: 0.039, green: 0.039, blue: 0.039)
 
     var body: some Scene {
         WindowGroup {
             TabView(selection: $selectedTab) {
-                ContactListView(
+                InboxView(
                     contactListViewModel: contactListViewModel,
-                    threadViewModel: threadViewModel
+                    threadViewModel: threadViewModel,
+                    selectedTab: $selectedTab,
+                    isTriagePresented: $isTriagePresented
                 )
                 .tabItem {
-                    Label("Redline", systemImage: "phone.fill")
+                    Label("Inbox", systemImage: "tray.fill")
                 }
-                .tag(0)
+                .tag(RedlineTab.inbox)
 
-                AttributionTriageCardsView()
-                .tabItem {
-                    Label("Triage", systemImage: "checkmark.circle.fill")
-                }
-                .tag(1)
+                CallsView()
+                    .tabItem {
+                        Label("Calls", systemImage: "phone.fill")
+                    }
+                    .tag(RedlineTab.calls)
 
-                NavigationStack {
-                    AssistantChatView()
-                }
-                .tabItem {
-                    Label("Assistant", systemImage: "brain.head.profile")
-                }
-                .tag(2)
+                AIView(isTriagePresented: $isTriagePresented)
+                    .tabItem {
+                        Label("AI", systemImage: "sparkles")
+                    }
+                    .tag(RedlineTab.ai)
+
+                DialView()
+                    .tabItem {
+                        Label("Dial", systemImage: "circle.grid.3x3.fill")
+                    }
+                    .tag(RedlineTab.dial)
+
+                SettingsView(contactListViewModel: contactListViewModel)
+                    .tabItem {
+                        Label("Settings", systemImage: "gearshape.fill")
+                    }
+                    .tag(RedlineTab.settings)
             }
-            .tint(selectedTab == 0 ? redlineTint : selectedTab == 1 ? triageTint : contextTint)
+            .tint(besideTint)
             .preferredColorScheme(.dark)
             .onAppear {
                 let appearance = UITabBarAppearance()
@@ -65,6 +82,9 @@ struct CamberRedlineApp: App {
                 appearance.backgroundColor = UIColor(tabBarBackground)
                 UITabBar.appearance().standardAppearance = appearance
                 UITabBar.appearance().scrollEdgeAppearance = appearance
+            }
+            .sheet(isPresented: $isTriagePresented) {
+                AttributionTriageCardsView()
             }
             .task {
                 if AppSmokeAutomation.isEnabled {
@@ -125,26 +145,28 @@ struct CamberRedlineApp: App {
         try? await Task.sleep(for: .seconds(1))
 
         // --- Triage phase ---
-        selectedTab = 1
+        selectedTab = .inbox
+        isTriagePresented = true
         AppSmokeAutomation.logger.log("SMOKE_EVENT OPEN_TRIAGE")
-        // Give the triage view time to mount and start its queue load
-        try? await Task.sleep(for: .milliseconds(800))
+        // Give the sheet time to mount and start its queue load
+        try? await Task.sleep(for: .milliseconds(900))
         NotificationCenter.default.post(name: AppSmokeAutomation.triageNotification, object: nil)
 
         // Wait for triage to signal completion (up to 30s timeout)
         await waitForNotification(AppSmokeAutomation.triageDoneNotification, timeout: 30)
         AppSmokeAutomation.logger.log("SMOKE_EVENT TRIAGE_PHASE_COMPLETE")
-        try? await Task.sleep(for: .milliseconds(500))
+        isTriagePresented = false
+        try? await Task.sleep(for: .milliseconds(600))
 
         // --- Assistant phase ---
-        selectedTab = 2
+        selectedTab = .ai
         AppSmokeAutomation.logger.log("SMOKE_EVENT OPEN_ASSISTANT")
         try? await Task.sleep(for: .milliseconds(800))
         NotificationCenter.default.post(name: AppSmokeAutomation.assistantNotification, object: nil)
 
         // Keep assistant visible for prompts + screenshots
         try? await Task.sleep(for: .seconds(18))
-        selectedTab = 0
+        selectedTab = .inbox
         AppSmokeAutomation.logger.log("SMOKE_EVENT END")
     }
 
