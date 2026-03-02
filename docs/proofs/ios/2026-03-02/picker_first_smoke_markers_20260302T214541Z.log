@@ -1,0 +1,8 @@
+2026-03-02 16:45:45.166 Df CamberRedline[4490:14b3823] [CamberRedline:smoke] SMOKE_EVENT START
+2026-03-02 16:45:46.173 Df CamberRedline[4490:14b3823] [CamberRedline:smoke] SMOKE_EVENT OPEN_TRIAGE
+2026-03-02 16:45:48.140 Df CamberRedline[4490:14b3823] [CamberRedline:smoke] SMOKE_EVENT TRIAGE_TARGET queue=9583e897-c966-4a6a-b050-f851fe3eb557 interaction=cll_SYNTH_SYNTH_FLOATER_CONTIN_1772335530 event_at=2026-03-01T03:27:25Z
+2026-03-02 16:45:48.140 Df CamberRedline[4490:14b3823] [CamberRedline:smoke] SMOKE_EVENT TRIAGE_RESOLVE queue=9583e897-c966-4a6a-b050-f851fe3eb557 interaction=cll_SYNTH_SYNTH_FLOATER_CONTIN_1772335530 project=d8091a15-6a69-4634-8d5b-117abea35aa6
+2026-03-02 16:45:48.375 Df CamberRedline[4490:14b3823] [CamberRedline:smoke] SMOKE_EVENT TRIAGE_WRITE_LOCKED banner=Attribution writes temporarily locked (needs privileged auth). Reads still available. (bootstrap-review_v1.3.2, request_id: 019cb083-b7a7-70a6-b654-00b8ea30770a)
+2026-03-02 16:45:48.375 Df CamberRedline[4490:14b3823] [CamberRedline:smoke] SMOKE_EVENT TRIAGE_DONE remaining=17
+2026-03-02 16:45:48.406 Df CamberRedline[4490:14b3823] [CamberRedline:smoke] SMOKE_EVENT TRIAGE_PHASE_COMPLETE
+2026-03-02 16:45:48.406 Df CamberRedline[4490:14b3823] [CamberRedline:smoke] SMOKE_EVENT TRIAGE_PROOF_HOLD seconds=6
