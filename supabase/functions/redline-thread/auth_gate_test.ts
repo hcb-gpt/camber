@@ -51,7 +51,7 @@ Deno.test("top-level gate allows valid X-Edge-Secret and source", async () => {
 
 Deno.test("top-level gate (edge-secret-or-anon) rejects missing auth headers", async () => {
   const req = new Request("https://example.test/functions/v1/redline-thread?action=contacts");
-  const resp = runTopLevelEdgeSecretOrAnonKeyProbe(req, "expected-secret", "expected-anon");
+  const resp = await runTopLevelEdgeSecretOrAnonKeyProbe(req, "expected-secret", "expected-anon");
   const body = await resp.json();
 
   assertEquals(resp.status, 401);
@@ -64,10 +64,24 @@ Deno.test("top-level gate (edge-secret-or-anon) allows Authorization: Bearer <an
       Authorization: "Bearer expected-anon",
     },
   });
-  const resp = runTopLevelEdgeSecretOrAnonKeyProbe(req, "expected-secret", "expected-anon");
+  const resp = await runTopLevelEdgeSecretOrAnonKeyProbe(req, "expected-secret", "expected-anon");
   const body = await resp.json();
 
   assertEquals(resp.status, 200);
   assertEquals(body.ok, true);
   assertEquals(body.auth, "bearer");
+});
+
+Deno.test("top-level gate (edge-secret-or-anon) rejects junk Bearer tokens", async () => {
+  const req = new Request("https://example.test/functions/v1/redline-thread?action=contacts", {
+    headers: {
+      Authorization: "Bearer foo",
+    },
+  });
+  const resp = await runTopLevelEdgeSecretOrAnonKeyProbe(req, "expected-secret", "expected-anon", "https://example.test");
+  const body = await resp.json();
+
+  assertEquals(resp.status, 403);
+  assertEquals(body.ok, false);
+  assertEquals(body.error_code, "invalid_auth");
 });
