@@ -9,6 +9,20 @@ Redline iOS is not a “card viewer.” It is the **actuator** for the epistemic
 - Make *the fastest correct action* also *the most truth-preserving action*.
 - Turn every user action into a durable, auditable learning signal (or a durable repair request when substrate is broken).
 
+## 0.1) Vision (What “Good” Feels Like)
+The best features disappear. The user just feels like things got easier:
+- The user opens Redline and immediately sees what’s actionable: **Ready / Pending / Blocked**.
+- On weak/ambiguous items, the UI doesn’t “suggest” a default. It makes the correct move obvious: **pick the project**.
+- The user never wonders “did that do anything?” Every action returns an immediate receipt and the backlog visibly shrinks.
+- When the system is broken, Redline doesn’t ask the user to compensate. It says **Blocked** and offers **Repair**.
+- The user can do the whole loop one-handed in seconds, without reading long explanations.
+
+## 0.2) UX Invariants (Truth-Forcing Without Feeling Heavy)
+- **No hidden states:** if an action is unavailable, show it locked and explain why.
+- **Everything is reversible:** Undo is always available for recent actions.
+- **Receipts over reasoning:** show deterministic evidence tokens; never show LLM “because…” stories.
+- **Fast path first:** optimize the dominant forcing state (currently `PICK_REQUIRED`) before polishing edge paths.
+
 ## 1) Live Reality Check (Replace Opinions With Numbers)
 ### 1.1 Queue Forcing-State Mix (fresh window)
 Source: `bootstrap-review?action=queue` (max_age_days=21, limit=100), classified into forcing states.
