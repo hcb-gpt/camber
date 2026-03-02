@@ -2,9 +2,9 @@ import "jsr:@supabase/functions-js/edge-runtime.d.ts";
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
 import { computeTruthGraph, type TruthGraphHydration, type TruthGraphRepairAction } from "./truth_graph.ts";
 import { requireEdgeSecret } from "../_shared/auth.ts";
-import { checkTopLevelEdgeSecret } from "./auth_gate.ts";
+import { checkTopLevelEdgeSecret, checkTopLevelEdgeSecretOrAnonKey } from "./auth_gate.ts";
 
-const FUNCTION_VERSION = "redline-thread_v3.4.0";
+const FUNCTION_VERSION = "redline-thread_v3.4.2";
 /**
  * v3.2.1 - Fix typo interactionClaims -> _interactionClaims
  * v3.1.2 - iOS Contract Fix (P0 Unbrick)
@@ -12,6 +12,8 @@ const FUNCTION_VERSION = "redline-thread_v3.4.0";
  * - Closes visibility gap for beside_threads
  * v3.3.0 - Contacts payload: add last_interaction_id instrumentation + keep beside_thread rows
  * v3.4.0 - Truth Graph endpoint + idempotent repair hooks (truth-forcing surface)
+ * v3.4.1 - Hotfix: require auth for non-health routes (edge secret or iOS anon key on iOS routes)
+ * v3.4.2 - Hotfix: accept any Bearer token on iOS routes (prevent headerless unauth 200s)
  */
 const OWNER_SMS_USER_IDS = ["+17066889158", "usr_4PCSTDQ8N161KAC4GG7AF9CR94"];
 const OUTBOUND_INFERENCE_WINDOW_MS = 30 * 60 * 1000;
@@ -798,14 +800,14 @@ function parseRedlineApiRoute(url: URL): RedlineApiRoute | null {
 }
 
 // Parse synthetic SMS-only contact keys like "sms:7065551234" → digits, or null
-function parseSmsOnlyContactDigits(contactId: string): string | null {
+export function parseSmsOnlyContactDigits(contactId: string): string | null {
   if (!contactId) return null;
   const match = contactId.match(/^sms:(\d{7,15})$/);
   return match ? match[1] : null;
 }
 
 // Generate a deterministic UUID from a phone string so iOS can decode contact.id
-function deterministicUUID(input: string): string {
+export function deterministicUUID(input: string): string {
   let hash = 0;
   for (let i = 0; i < input.length; i++) {
     hash = ((hash << 5) - hash + input.charCodeAt(i)) | 0;
@@ -1044,23 +1046,31 @@ async function handleContacts(db: any, url: URL, t0: number): Promise<Response> 
   }
 
   const mapped = (data || [])
-    .filter((row: any) => row.contact_id != null)
-    .map((row: any) => ({
-      contact_id: row.contact_id,
-      contact_key: row.contact_id ?? `sms:${(row.contact_phone || "").replace(/\D/g, "").slice(-10)}`,
-      name: row.contact_name,
-      phone: row.contact_phone,
-      call_count: Number(row.call_count ?? 0),
-      sms_count: Number(row.sms_count ?? 0),
-      claim_count: Number(row.claim_count ?? 0),
-      ungraded_count: Number(row.ungraded_count ?? 0),
-      last_activity: row.last_activity || "",
-      last_summary: deriveContactLastSummary(row) || "",
-      last_direction: row.last_direction || "",
-      last_interaction_type: row.last_interaction_type || "",
-      last_interaction_id: "",
-      source: String(row.source || "").trim() || "contacts",
-    }));
+    // `redline_contacts_unified_matview` includes beside_thread rows where `contact_id` is NULL.
+    // Preserve those rows as long as they have a phone, and let the client synthesize a stable UUID.
+    .filter((row: any) => row.contact_id != null || String(row.contact_phone || "").trim() !== "")
+    .map((row: any) => {
+      const phone = String(row.contact_phone || "").trim();
+      const phoneDigits = phone.replace(/\D/g, "").slice(-10);
+      const contactKey = row.contact_id ??
+        (phoneDigits ? `sms:${phoneDigits}` : `unknown:${String(row.contact_name || "").trim() || "contact"}`);
+      return {
+        contact_id: row.contact_id ?? deterministicUUID(contactKey),
+        contact_key: contactKey,
+        name: row.contact_name,
+        phone: row.contact_phone,
+        call_count: Number(row.call_count ?? 0),
+        sms_count: Number(row.sms_count ?? 0),
+        claim_count: Number(row.claim_count ?? 0),
+        ungraded_count: Number(row.ungraded_count ?? 0),
+        last_activity: row.last_activity || "",
+        last_summary: deriveContactLastSummary(row) || "",
+        last_direction: row.last_direction || "",
+        last_interaction_type: row.last_interaction_type || "",
+        last_interaction_id: "",
+        source: String(row.source || "").trim() || "contacts",
+      };
+    });
 
   // Filter ghost rows: contact exists but has zero activity (no calls, no SMS, no last_activity)
   const liveRows = mapped.filter((row: any) =>
@@ -3027,26 +3037,44 @@ Deno.serve(async (req: Request) => {
     }
 
     const action = url.searchParams.get("action");
-    const isPublicRead = req.method === "GET" || (req.method === "POST" && url.pathname.includes("/redline/verdict"));
-
-    if (!isPublicRead) {
-      const topLevelAuthResult = checkTopLevelEdgeSecret(req);
-      if (!topLevelAuthResult.ok) {
-        return json(
-          {
-            ok: false,
-            error_code: topLevelAuthResult.error_code,
-            error: topLevelAuthResult.error,
-          },
-          topLevelAuthResult.status,
-        );
+    const apiRoute = parseRedlineApiRoute(url);
+    const contactIdParam = url.searchParams.get("contact_id") || url.searchParams.get("contact_key");
+    const allowAnonKey = (() => {
+      // iOS client uses Authorization: Bearer <anonKey>
+      // Allow anon-key auth only on iOS-known routes; require X-Edge-Secret everywhere else.
+      if (req.method === "GET") {
+        if (action === "contacts" || action === "reset_clock") return true;
+        if (contactIdParam) return true;
+        if (apiRoute && (apiRoute.kind === "contacts" || apiRoute.kind === "thread" || apiRoute.kind === "spans")) {
+          return true;
+        }
       }
+
+      if (req.method === "POST") {
+        if (apiRoute?.kind === "verdict") return true;
+        if (!action) return true; // default POST route (gradeClaimViaAPI)
+      }
+
+      return false;
+    })();
+
+    const topLevelAuthResult = allowAnonKey ? checkTopLevelEdgeSecretOrAnonKey(req) : checkTopLevelEdgeSecret(req);
+    if (!topLevelAuthResult.ok) {
+      return json(
+        {
+          ok: false,
+          error_code: topLevelAuthResult.error_code,
+          error: topLevelAuthResult.error,
+          function_version: FUNCTION_VERSION,
+          ms: Date.now() - t0,
+        },
+        topLevelAuthResult.status,
+      );
     }
 
     // Create service-role client only after auth has passed for non-health routes.
     const db = createClient(Deno.env.get("SUPABASE_URL")!, Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!);
 
-    const apiRoute = parseRedlineApiRoute(url);
     if (apiRoute) {
       if (apiRoute.kind === "contacts" && req.method === "GET") {
         return await handleContacts(db, url, t0);
