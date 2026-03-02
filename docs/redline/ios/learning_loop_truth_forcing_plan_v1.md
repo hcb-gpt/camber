@@ -1,6 +1,7 @@
 # Redline iOS Learning Loop (Truth-Forcing Surface) — Plan v1 (2026-03-02)
 
 Design bar (customer-linked): **"You're not designing for yourself. You're designing for someone who doesn't have time to figure out what you built."**
+Secondary bar (user-perceived value): **"The best features disappear. The user just feels like things got easier."**
 
 ## 0) Goal (User Benefit)
 Redline iOS is not a “card viewer.” It is the **actuator** for the epistemic control loop:
