@@ -3035,7 +3035,17 @@ Deno.serve(async (req: Request) => {
     }
 
     const action = url.searchParams.get("action");
-    const isPublicRead = req.method === "GET" || (req.method === "POST" && url.pathname.includes("/redline/verdict"));
+    const isIosRead = req.method === "GET" && (
+      action === "contacts" ||
+      action === "truth_graph" ||
+      url.searchParams.has("contact_id") ||
+      url.searchParams.has("contact_key") ||
+      url.pathname.includes("/redline/contacts") ||
+      url.pathname.includes("/redline/thread") ||
+      url.pathname.includes("/redline/spans")
+    );
+    const isPublicVerdict = req.method === "POST" && url.pathname.includes("/redline/verdict");
+    const isPublicRead = isIosRead || isPublicVerdict;
 
     if (!isPublicRead) {
       const topLevelAuthResult = checkTopLevelEdgeSecret(req);
@@ -3051,8 +3061,16 @@ Deno.serve(async (req: Request) => {
       }
     }
 
-    // Create service-role client only after auth has passed for non-health routes.
-    const db = createClient(Deno.env.get("SUPABASE_URL")!, Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!);
+    // Create client: anon/RLS for iOS reads, service_role for writes/admin/verdict
+    let db: any;
+    if (isIosRead) {
+      const authHeader = req.headers.get("Authorization");
+      db = createClient(Deno.env.get("SUPABASE_URL")!, Deno.env.get("SUPABASE_ANON_KEY")!, {
+        global: { headers: authHeader ? { Authorization: authHeader } : {} }
+      });
+    } else {
+      db = createClient(Deno.env.get("SUPABASE_URL")!, Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!);
+    }
 
     const apiRoute = parseRedlineApiRoute(url);
     if (apiRoute) {

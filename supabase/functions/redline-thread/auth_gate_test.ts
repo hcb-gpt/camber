@@ -4,7 +4,7 @@ import { runTopLevelEdgeSecretProbe } from "./auth_gate.ts";
 Deno.test("redline-thread keeps auth gate before non-health service-role client create", () => {
   const source = Deno.readTextFileSync(new URL("./index.ts", import.meta.url));
   const authCheckIdx = source.indexOf("checkTopLevelEdgeSecret(req)");
-  const dbAfterAuthIdx = source.indexOf("const db = createClient", authCheckIdx);
+  const dbAfterAuthIdx = source.indexOf("db = createClient(Deno.env.get(\"SUPABASE_URL\")!, Deno.env.get(\"SUPABASE_SERVICE_ROLE_KEY\")!)", authCheckIdx);
 
   assert(authCheckIdx >= 0, "Expected index.ts to call checkTopLevelEdgeSecret(req)");
   assert(
