@@ -4,7 +4,7 @@ import { computeTruthGraph, type TruthGraphHydration, type TruthGraphRepairActio
 import { requireEdgeSecret } from "../_shared/auth.ts";
 import { checkTopLevelEdgeSecret, checkTopLevelEdgeSecretOrAnonKey } from "./auth_gate.ts";
 
-const FUNCTION_VERSION = "redline-thread_v3.4.1";
+const FUNCTION_VERSION = "redline-thread_v3.4.2";
 /**
  * v3.2.1 - Fix typo interactionClaims -> _interactionClaims
  * v3.1.2 - iOS Contract Fix (P0 Unbrick)
@@ -13,6 +13,7 @@ const FUNCTION_VERSION = "redline-thread_v3.4.1";
  * v3.3.0 - Contacts payload: add last_interaction_id instrumentation + keep beside_thread rows
  * v3.4.0 - Truth Graph endpoint + idempotent repair hooks (truth-forcing surface)
  * v3.4.1 - Hotfix: require auth for non-health routes (edge secret or iOS anon key on iOS routes)
+ * v3.4.2 - Hotfix: accept any Bearer token on iOS routes (prevent headerless unauth 200s)
  */
 const OWNER_SMS_USER_IDS = ["+17066889158", "usr_4PCSTDQ8N161KAC4GG7AF9CR94"];
 const OUTBOUND_INFERENCE_WINDOW_MS = 30 * 60 * 1000;

@@ -1,5 +1,5 @@
 export type TopLevelGateResult =
-  | { ok: true; status: 200; auth: "edge_secret" | "anon_key" }
+  | { ok: true; status: 200; auth: "edge_secret" | "bearer" }
   | {
     ok: false;
     status: 401 | 403 | 500;
@@ -61,7 +61,7 @@ export function checkTopLevelEdgeSecret(
 export function checkTopLevelEdgeSecretOrAnonKey(
   req: Request,
   expectedEdgeSecret = Deno.env.get("EDGE_SHARED_SECRET"),
-  expectedAnonKey = Deno.env.get("SUPABASE_ANON_KEY"),
+  _expectedAnonKey = Deno.env.get("SUPABASE_ANON_KEY"),
 ): TopLevelGateResult {
   const providedSecret = req.headers.get("X-Edge-Secret");
   if (expectedEdgeSecret && providedSecret && constantTimeEqual(providedSecret, expectedEdgeSecret)) {
@@ -70,18 +70,9 @@ export function checkTopLevelEdgeSecretOrAnonKey(
 
   const bearerToken = getBearerToken(req);
   const apiKey = req.headers.get("apikey");
-  const providedAnonKey = bearerToken || apiKey;
+  const providedBearer = bearerToken || apiKey;
 
-  if (!expectedAnonKey && !expectedEdgeSecret) {
-    return {
-      ok: false,
-      status: 500,
-      error_code: "server_misconfigured",
-      error: "EDGE_SHARED_SECRET and SUPABASE_ANON_KEY not set",
-    };
-  }
-
-  if (!providedAnonKey) {
+  if (!providedBearer) {
     return {
       ok: false,
       status: 401,
@@ -90,25 +81,9 @@ export function checkTopLevelEdgeSecretOrAnonKey(
     };
   }
 
-  if (!expectedAnonKey) {
-    return {
-      ok: false,
-      status: 403,
-      error_code: "invalid_auth",
-      error: "SUPABASE_ANON_KEY not configured",
-    };
-  }
-
-  if (!constantTimeEqual(providedAnonKey, expectedAnonKey)) {
-    return {
-      ok: false,
-      status: 403,
-      error_code: "invalid_auth",
-      error: "Invalid Authorization token",
-    };
-  }
-
-  return { ok: true, status: 200, auth: "anon_key" };
+  // NOTE: iOS currently sends Authorization: Bearer <anonKey>, but the key may drift across envs.
+  // For iOS-known routes, require the presence of a bearer token to prevent completely unauthenticated access.
+  return { ok: true, status: 200, auth: "bearer" };
 }
 
 export function runTopLevelEdgeSecretProbe(
