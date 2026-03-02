@@ -4,6 +4,7 @@ import os
 private enum TriageSmokeAutomation {
     static let launchFlag = "--smoke-drive"
     static let syntheticIdsFlag = "--smoke-synthetic-ids"
+    static let keepUndoFlag = "--smoke-triage-keep-undo"
     static let triageNotification = Notification.Name("camber.smoke.runTriage")
     static let triageDoneNotification = Notification.Name("camber.smoke.triageDone")
     static let logger = Logger(subsystem: "CamberRedline", category: "smoke")
@@ -23,6 +24,10 @@ private enum TriageSmokeAutomation {
             .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
             .filter { !$0.isEmpty }
         return Set(values)
+    }
+
+    static var shouldKeepUndoBanner: Bool {
+        ProcessInfo.processInfo.arguments.contains(keepUndoFlag)
     }
 }
 
@@ -551,6 +556,7 @@ struct AttributionTriageCardsView: View {
             TriageSmokeAutomation.logger.log(
                 "SMOKE_EVENT TRIAGE_RESOLVE queue=\(card.queueId, privacy: .public) interaction=\(card.interactionId, privacy: .public) project=\(projectId, privacy: .public)"
             )
+            viewModel.recordPickTime()
             await viewModel.resolve(card, to: projectId, notes: "smoke")
         } else {
             TriageSmokeAutomation.logger.log(
@@ -564,12 +570,18 @@ struct AttributionTriageCardsView: View {
                 "SMOKE_EVENT TRIAGE_WRITE_LOCKED banner=\(banner, privacy: .public)"
             )
         } else if viewModel.canUndo {
-            TriageSmokeAutomation.logger.log(
-                "SMOKE_EVENT TRIAGE_UNDO_START queue=\(card.queueId, privacy: .public)"
-            )
-            try? await Task.sleep(for: .milliseconds(800))
-            await viewModel.undo()
-            try? await Task.sleep(for: .milliseconds(600))
+            if TriageSmokeAutomation.shouldKeepUndoBanner {
+                TriageSmokeAutomation.logger.log(
+                    "SMOKE_EVENT TRIAGE_UNDO_AVAILABLE queue=\(card.queueId, privacy: .public)"
+                )
+            } else {
+                TriageSmokeAutomation.logger.log(
+                    "SMOKE_EVENT TRIAGE_UNDO_START queue=\(card.queueId, privacy: .public)"
+                )
+                try? await Task.sleep(for: .milliseconds(800))
+                await viewModel.undo()
+                try? await Task.sleep(for: .milliseconds(600))
+            }
         }
 
         TriageSmokeAutomation.logger.log("SMOKE_EVENT TRIAGE_DONE remaining=\(viewModel.queue.count, privacy: .public)")
