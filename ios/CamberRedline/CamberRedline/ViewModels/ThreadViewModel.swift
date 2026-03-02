@@ -686,11 +686,11 @@ final class ThreadViewModel {
         do {
             try await channel.subscribeWithError()
         } catch {
+            print("Claim grade realtime unavailable: \(error.localizedDescription)")
+            await stopClaimGradeSubscription()
             if shouldIgnoreRealtimeError(error) {
                 return
             }
-            print("Claim grade realtime unavailable: \(error.localizedDescription)")
-            await stopClaimGradeSubscription()
             return
         }
         error = nil
@@ -800,30 +800,6 @@ final class ThreadViewModel {
             table: "interactions"
         )
 
-        let smsChannel = service.client.channel("thread-sms-\(contactId.uuidString.lowercased())")
-        threadSMSChannel = smsChannel
-        let smsInserts = smsChannel.postgresChange(
-            InsertAction.self,
-            schema: "public",
-            table: "sms_messages"
-        )
-        let smsUpdates = smsChannel.postgresChange(
-            UpdateAction.self,
-            schema: "public",
-            table: "sms_messages"
-        )
-        let reviewQueueChannel = service.client.channel("thread-review-queue-\(contactId.uuidString.lowercased())")
-        let reviewQueueInserts = reviewQueueChannel.postgresChange(
-            InsertAction.self,
-            schema: "public",
-            table: "review_queue"
-        )
-        let reviewQueueUpdates = reviewQueueChannel.postgresChange(
-            UpdateAction.self,
-            schema: "public",
-            table: "review_queue"
-        )
-
         do {
             try await interactionsChannel.subscribeWithError()
             try await smsChannel.subscribeWithError()
@@ -836,6 +812,18 @@ final class ThreadViewModel {
             return
         }
         stopThreadFallbackRefresh()
+
+        let reviewQueueChannel = service.client.channel("thread-review-queue-\(contactId.uuidString.lowercased())")
+        let reviewQueueInserts = reviewQueueChannel.postgresChange(
+            InsertAction.self,
+            schema: "public",
+            table: "review_queue"
+        )
+        let reviewQueueUpdates = reviewQueueChannel.postgresChange(
+            UpdateAction.self,
+            schema: "public",
+            table: "review_queue"
+        )
         do {
             try await reviewQueueChannel.subscribeWithError()
             threadReviewQueueChannel = reviewQueueChannel
