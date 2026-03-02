@@ -1,7 +1,8 @@
 import "jsr:@supabase/functions-js/edge-runtime.d.ts";
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
+import { checkTopLevelEdgeSecretOrAnonKey } from "./auth_gate.ts";
 
-const FUNCTION_VERSION = "bootstrap-review_v1.2.0";
+const FUNCTION_VERSION = "bootstrap-review_v1.3.2";
 type ReviewQueueSource = "pipeline" | "redline";
 
 // ─── Helpers ─────────────────────────────────────────────────────────
@@ -9,7 +10,7 @@ type ReviewQueueSource = "pipeline" | "redline";
 function corsHeaders(): Record<string, string> {
   return {
     "Access-Control-Allow-Origin": "*",
-    "Access-Control-Allow-Headers": "authorization, x-edge-secret, x-source, content-type",
+    "Access-Control-Allow-Headers": "authorization, apikey, x-edge-secret, x-source, content-type",
     "Access-Control-Allow-Methods": "GET, POST, OPTIONS",
   };
 }
@@ -313,10 +314,12 @@ async function handleQueue(
     const interaction: any = interactionMap.get(rq.interaction_id) || {};
     const call: any = callMap.get(rq.interaction_id) || {};
     return {
-      id: rq.id,
+      // DB RPC may return `id` (review_queue) or `review_queue_id` (triage view).
+      // iOS expects `id` for ReviewItem decoding.
+      id: rq.id ?? rq.review_queue_id ?? null,
       span_id: rq.span_id,
       interaction_id: rq.interaction_id,
-      created_at: rq.created_at || null,
+      created_at: rq.created_at ?? rq.queued_at ?? null,
       event_at: interaction.event_at_utc || null,
       context_payload: rq.context_payload,
       reasons: rq.reasons,
@@ -634,30 +637,18 @@ async function handleUndo(
     }, 500);
   }
 
-  // Revert span_attributions: clear applied_project_id, set needs_review back, revert lock
-  if (item.span_id) {
-    const { error: attrErr } = await db
-      .from("span_attributions")
-      .update({
-        applied_project_id: null,
-        needs_review: true,
-        attribution_lock: "ai",
-      })
-      .eq("span_id", item.span_id)
-      .eq("attribution_lock", "human");
-
-    if (attrErr) {
-      console.error(
-        `[bootstrap-review] undo attribution revert warning: ${attrErr.message}`,
-      );
-    }
-  }
+  // span_attributions.needs_review is kept consistent with review_queue.status by
+  // a DB trigger (sync_span_needs_review_for_span). We intentionally do not
+  // attempt to downgrade attribution_lock (human→ai) or clear applied_project_id
+  // here because the DB enforces lock monotonicity and anchored-contact
+  // auto-attribution can repopulate applied_project_id.
 
   console.log(`[bootstrap-review] Undone ${review_queue_id}`);
 
   return json({
     ok: true,
     undone: review_queue_id,
+    undo_scope: "review_queue",
     function_version: FUNCTION_VERSION,
     ms: Date.now() - t0,
   });
@@ -1686,14 +1677,52 @@ Deno.serve(async (req: Request) => {
 
   const t0 = Date.now();
   const url = new URL(req.url);
+  const action = url.searchParams.get("action");
+
+  // Auth gate
+  // Health check — fast path, no auth
+  if (url.searchParams.get("mode") === "health") {
+    return json({ ok: true, version: FUNCTION_VERSION, ms: Date.now() - t0 });
+  }
+
+  const topLevelAuthResult = await checkTopLevelEdgeSecretOrAnonKey(req);
+  if (!topLevelAuthResult.ok) {
+    return json(
+      {
+        ok: false,
+        error_code: topLevelAuthResult.error_code,
+        error: topLevelAuthResult.error,
+        function_version: FUNCTION_VERSION,
+      },
+      topLevelAuthResult.status,
+    );
+  }
+
+  // P0 security hotfix: write actions must NOT accept anon bearer.
+  // Reject anon before parsing body so requests cannot reach missing_* body validation errors.
+  if (
+    req.method === "POST" &&
+    (action === "resolve" || action === "dismiss" || action === "undo") &&
+    topLevelAuthResult.auth !== "edge_secret"
+  ) {
+    return json(
+      {
+        ok: false,
+        error_code: "invalid_auth",
+        error: "Write actions require X-Edge-Secret",
+        function_version: FUNCTION_VERSION,
+        ms: Date.now() - t0,
+      },
+      403,
+    );
+  }
+
   const db = createClient(
     Deno.env.get("SUPABASE_URL")!,
     Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!,
   );
 
   try {
-    const action = url.searchParams.get("action");
-
     // POST endpoints
     if (req.method === "POST") {
       if (action === "resolve") {

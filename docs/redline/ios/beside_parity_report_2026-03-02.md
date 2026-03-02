@@ -68,7 +68,7 @@ These exist on `camber` `master` today:
 | Inline row call affordance | call icon per row | **TODO** (blocked on above + `contact.phone`) | `contact.phone` present (nullable) | Team 2 (BE) + Team 3 (FE) | Call icon appears when phone exists; tap does not navigate |
 | Row preview snippet consistency | stable snippet | **PARTIAL** (`last_summary` → `lastSnippet`) | `last_summary` consistent + direction/type | Team 2 (BE) | Rows show meaningful preview on all contacts |
 | Thread header call + info | call + info | **DONE** | `contact.phone` | Team 3 (FE) | Call opens dialer; Info sheet opens |
-| Truth Graph status card | explain missing evidence + repair | **TODO** (still banner) | Truth Graph endpoint + repair actions | Team 2 (BE) + Team 3 (FE) | Missing evidence never hidden; repair routes exist (internal-only) |
+| Truth Graph status card | explain missing evidence + repair | **TODO** (still banner) | Truth Graph endpoint (`redline-thread?action=truth_graph`) + `suggested_repairs` payload (repair writes admin-only) | Team 2 (BE) + Team 3 (FE) | Missing evidence never hidden; repair routes exist (internal-only) |
 
 ---
 
@@ -114,3 +114,6 @@ DEPENDENCY_REQUEST (Inbox parity):
 - ACCEPTANCE: sample JSON payload + iOS decode proof (no fallback path for common case).
 - DEADLINE: ASAP (blocks row-call affordance and correct semantics).
 
+DELIVERED (Truth surface contract):
+- `GET redline-thread?action=truth_graph&interaction_id=<id>` is available and anon-key readable (no client edge secret; Option B posture).
+- Payload includes `hydration`, `lane`, `warnings`, and `suggested_repairs` (with `idempotency_key`); repair execution remains admin-only.

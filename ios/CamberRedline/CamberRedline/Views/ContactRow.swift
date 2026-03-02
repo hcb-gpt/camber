@@ -128,9 +128,11 @@ struct ContactRow: View {
         guard let phone = contact.phone?.trimmingCharacters(in: .whitespacesAndNewlines), !phone.isEmpty else {
             return nil
         }
-        let sanitized = phone.filter { $0.isNumber || $0 == "+" }
-        guard !sanitized.isEmpty else { return nil }
-        return URL(string: "tel://\(sanitized)")
+        let digits = phone.filter(\.isNumber)
+        guard !digits.isEmpty else { return nil }
+        let hasLeadingPlus = phone.first == "+"
+        let normalized = hasLeadingPlus ? "+\(digits)" : digits
+        return URL(string: "tel:\(normalized)")
     }
 
     // MARK: - Preview Text

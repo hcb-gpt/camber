@@ -94,6 +94,14 @@ final class CardTriageViewModel {
         return Double(resolvedCount) / Double(total)
     }
 
+    var isAttributionWritesLocked: Bool {
+        service.writeLockState != nil
+    }
+
+    var attributionWritesLockedBannerText: String? {
+        service.writesLockedBannerText
+    }
+
     /// Cards resolved per hour based on session elapsed time.
     var resolveRatePerHour: Double {
         let elapsed = Date().timeIntervalSince(sessionStartTime)
@@ -133,6 +141,11 @@ final class CardTriageViewModel {
     // MARK: - Actions
 
     func resolve(_ card: CardItem, to projectId: String, notes: String? = nil) async {
+        if let banner = service.writesLockedBannerText {
+            error = banner
+            return
+        }
+
         let timeSpent = recordTimeSpent()
         guard let idx = queue.firstIndex(where: { $0.id == card.id }) else { return }
         queue.remove(at: idx)
@@ -164,7 +177,11 @@ final class CardTriageViewModel {
                 )
             }
         } catch {
-            self.error = error.localizedDescription
+            if let banner = service.writesLockedBannerText {
+                self.error = banner
+            } else {
+                self.error = error.localizedDescription
+            }
             queue.insert(CardItem(from: card), at: min(idx, queue.count))
             resolvedCount = max(0, resolvedCount - 1)
             activityLog.removeLast()
@@ -176,6 +193,11 @@ final class CardTriageViewModel {
     }
 
     func dismiss(_ card: CardItem, reason: String? = nil, notes: String? = nil) async {
+        if let banner = service.writesLockedBannerText {
+            error = banner
+            return
+        }
+
         let timeSpent = recordTimeSpent()
         guard let idx = queue.firstIndex(where: { $0.id == card.id }) else { return }
         queue.remove(at: idx)
@@ -207,7 +229,11 @@ final class CardTriageViewModel {
                 )
             }
         } catch {
-            self.error = error.localizedDescription
+            if let banner = service.writesLockedBannerText {
+                self.error = banner
+            } else {
+                self.error = error.localizedDescription
+            }
             queue.insert(CardItem(from: card), at: min(idx, queue.count))
             resolvedCount = max(0, resolvedCount - 1)
             activityLog.removeLast()
@@ -223,6 +249,11 @@ final class CardTriageViewModel {
     }
 
     func escalate(_ card: CardItem, reason: String) async {
+        if let banner = service.writesLockedBannerText {
+            error = banner
+            return
+        }
+
         let timeSpent = recordTimeSpent()
         guard let idx = queue.firstIndex(where: { $0.id == card.id }) else { return }
         queue.remove(at: idx)
@@ -253,7 +284,11 @@ final class CardTriageViewModel {
                 notes: reason
             )
         } catch {
-            self.error = error.localizedDescription
+            if let banner = service.writesLockedBannerText {
+                self.error = banner
+            } else {
+                self.error = error.localizedDescription
+            }
             queue.insert(CardItem(from: card), at: min(idx, queue.count))
             resolvedCount = max(0, resolvedCount - 1)
             escalatedCount = max(0, escalatedCount - 1)
@@ -303,7 +338,11 @@ final class CardTriageViewModel {
             }
             await loadQueue()
         } catch {
-            self.error = "Undo failed: \(error.localizedDescription)"
+            if let banner = service.writesLockedBannerText {
+                self.error = banner
+            } else {
+                self.error = "Undo failed: \(error.localizedDescription)"
+            }
         }
     }
 

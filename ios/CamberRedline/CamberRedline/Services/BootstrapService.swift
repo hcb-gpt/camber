@@ -1,4 +1,5 @@
 import Foundation
+import Observation
 import os
 
 private enum BootstrapSmokeAutomation {
@@ -13,12 +14,18 @@ private enum BootstrapSmokeAutomation {
 // MARK: - BootstrapService
 
 @MainActor
+@Observable
 final class BootstrapService {
     static let shared = BootstrapService()
 
-    private let baseURL = URL(
-        string: "https://rjhdwidddtfetbwqolof.supabase.co/functions/v1/bootstrap-review"
-    )!
+    private enum Config {
+        static let supabaseURLKey = "SUPABASE_URL"
+        static let supabaseAnonKeyKey = "SUPABASE_ANON_KEY"
+        static let fallbackURL = URL(string: "https://example.invalid")!
+    }
+
+    private let baseURL: URL
+    private let anonKey: String
 
     private let session: URLSession
     private let decoder: JSONDecoder
@@ -27,10 +34,54 @@ final class BootstrapService {
     private var cachedReviewProjectsAt: Date?
     private let reviewProjectsCacheTTL: TimeInterval = 5 * 60
 
+    private(set) var writeLockState: BootstrapWriteLockState?
+
+    var writesLockedBannerText: String? {
+        guard let state = writeLockState else { return nil }
+
+        var message = "Attribution writes temporarily locked (needs privileged auth). Reads still available."
+        if let functionVersion = state.functionVersion?.trimmingCharacters(in: .whitespacesAndNewlines),
+           !functionVersion.isEmpty {
+            message += " (\(functionVersion))"
+        }
+        return message
+    }
+
     private init() {
+        let supabaseUrlString = (Bundle.main.object(forInfoDictionaryKey: Config.supabaseURLKey) as? String)?
+            .trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        let anonKey = (Bundle.main.object(forInfoDictionaryKey: Config.supabaseAnonKeyKey) as? String)?
+            .trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+
+        let supabaseURL = URL(string: supabaseUrlString) ?? Config.fallbackURL
+
+        if supabaseURL == Config.fallbackURL || anonKey.isEmpty {
+            assertionFailure("Missing \(Config.supabaseURLKey) / \(Config.supabaseAnonKeyKey) in Info.plist")
+        }
+
+        self.anonKey = anonKey
+        self.baseURL = supabaseURL.appendingPathComponent("functions/v1/bootstrap-review")
+
         session = URLSession.shared
         decoder = JSONDecoder()
         encoder = JSONEncoder()
+    }
+
+    private var edgeSharedSecret: String? {
+        #if DEBUG
+        let raw = (ProcessInfo.processInfo.environment["EDGE_SHARED_SECRET"] ?? "")
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+        return raw.isEmpty ? nil : raw
+        #else
+        nil
+        #endif
+    }
+
+    private func applyAuthHeaders(to request: inout URLRequest) {
+        request.setValue("Bearer \(anonKey)", forHTTPHeaderField: "Authorization")
+        if let edgeSharedSecret {
+            request.setValue(edgeSharedSecret, forHTTPHeaderField: "X-Edge-Secret")
+        }
     }
 
     // MARK: - Fetch Queue
@@ -46,8 +97,11 @@ final class BootstrapService {
             throw BootstrapServiceError.invalidURL
         }
 
-        let (data, response) = try await session.data(from: url)
-        try validateHTTPResponse(response)
+        var request = URLRequest(url: url)
+        applyAuthHeaders(to: &request)
+
+        let (data, response) = try await session.data(for: request)
+        try validateHTTPResponse(response, data: data)
 
         let decoded = try decoder.decode(ReviewQueueResponse.self, from: data)
         guard decoded.ok else {
@@ -134,9 +188,9 @@ final class BootstrapService {
 
     // MARK: - Assistant Context
 
-    private let assistantContextURL = URL(
-        string: "https://rjhdwidddtfetbwqolof.supabase.co/functions/v1/assistant-context"
-    )!
+    private var assistantContextURL: URL {
+        baseURL.deletingLastPathComponent().appendingPathComponent("assistant-context")
+    }
 
     func fetchAssistantContext(projectId: String? = nil) async throws -> AssistantContextPacket {
         var components = URLComponents(url: assistantContextURL, resolvingAgainstBaseURL: false)!
@@ -150,8 +204,11 @@ final class BootstrapService {
             throw BootstrapServiceError.invalidURL
         }
 
-        let (data, response) = try await session.data(from: url)
-        try validateHTTPResponse(response)
+        var request = URLRequest(url: url)
+        applyAuthHeaders(to: &request)
+
+        let (data, response) = try await session.data(for: request)
+        try validateHTTPResponse(response, data: data)
         do {
             let decoded = try decoder.decode(AssistantContextPacket.self, from: data)
             if BootstrapSmokeAutomation.isEnabled,
@@ -175,22 +232,24 @@ final class BootstrapService {
             @unknown default:
                 "unknown"
             }
+            #if DEBUG
             let preview = String(data: data.prefix(400), encoding: .utf8) ?? "<non-utf8>"
             print("[AssistantContextDecode] path=\(path) error=\(error)")
             print("[AssistantContextDecode] payload_preview=\(preview)")
+            #endif
             throw BootstrapServiceError.apiError("Assistant context decode failure at path: \(path)")
         }
     }
 
     // MARK: - Assistant Chat
 
-    private let assistantChatURL = URL(
-        string: "https://rjhdwidddtfetbwqolof.supabase.co/functions/v1/redline-assistant"
-    )!
+    private var assistantChatURL: URL {
+        baseURL.deletingLastPathComponent().appendingPathComponent("redline-assistant")
+    }
 
-    private let assistantFeedbackURL = URL(
-        string: "https://rjhdwidddtfetbwqolof.supabase.co/functions/v1/assistant-feedback"
-    )!
+    private var assistantFeedbackURL: URL {
+        baseURL.deletingLastPathComponent().appendingPathComponent("assistant-feedback")
+    }
 
     func streamAssistantChat(
         message: String,
@@ -201,15 +260,17 @@ final class BootstrapService {
         var request = URLRequest(url: assistantChatURL)
         request.httpMethod = "POST"
         request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        applyAuthHeaders(to: &request)
 
-        let body: [String: Any] = [
+        let body: [String: Any?] = [
             "message": message,
-            "contact_id": contactId as Any,
-            "project_id": projectId as Any,
+            "contact_id": contactId,
+            "project_id": projectId,
             "history": history.map { ["role": $0.role, "content": $0.content] }
-        ].compactMapValues { $0 }
+        ]
+        let filteredBody = body.compactMapValues { $0 }
 
-        request.httpBody = try JSONSerialization.data(withJSONObject: body)
+        request.httpBody = try JSONSerialization.data(withJSONObject: filteredBody)
         let payloadString = String(data: request.httpBody ?? Data(), encoding: .utf8) ?? "{}"
 
         let (bytes, response) = try await session.bytes(for: request)
@@ -287,10 +348,11 @@ final class BootstrapService {
         var request = URLRequest(url: assistantFeedbackURL)
         request.httpMethod = "POST"
         request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        applyAuthHeaders(to: &request)
         request.httpBody = try encoder.encode(payload)
 
         let (data, response) = try await session.data(for: request)
-        try validateHTTPResponse(response)
+        try validateHTTPResponse(response, data: data)
 
         let decoded = try decoder.decode(AssistantFeedbackResponse.self, from: data)
         guard decoded.ok else {
@@ -302,6 +364,10 @@ final class BootstrapService {
     // MARK: - Helpers
 
     private func post<T: Encodable>(action: String, body: T) async throws -> Data {
+        if let writeLockState {
+            throw BootstrapServiceError.writesLocked(writeLockState)
+        }
+
         var components = URLComponents(url: baseURL, resolvingAgainstBaseURL: false)!
         components.queryItems = [URLQueryItem(name: "action", value: action)]
 
@@ -312,10 +378,11 @@ final class BootstrapService {
         var request = URLRequest(url: url)
         request.httpMethod = "POST"
         request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        applyAuthHeaders(to: &request)
         request.httpBody = try encoder.encode(body)
 
         let (data, response) = try await session.data(for: request)
-        try validateHTTPResponse(response)
+        try validateHTTPResponse(response, data: data, isWrite: true)
 
         guard let http = response as? HTTPURLResponse else {
             return data
@@ -354,14 +421,68 @@ final class BootstrapService {
         return parsed
     }
 
-    private func validateHTTPResponse(_ response: URLResponse) throws {
+    private func validateHTTPResponse(_ response: URLResponse, data: Data? = nil, isWrite: Bool = false) throws {
         guard let http = response as? HTTPURLResponse else {
             throw BootstrapServiceError.invalidResponse
         }
         guard (200...299).contains(http.statusCode) else {
+            let requestId = http.value(forHTTPHeaderField: "x-request-id")
+                ?? http.value(forHTTPHeaderField: "sb-request-id")
+
+            if let data,
+               let payload = try? decoder.decode(EdgeFunctionErrorPayload.self, from: data),
+               let error = payload.error?.trimmingCharacters(in: .whitespacesAndNewlines),
+               !error.isEmpty {
+                if isWrite,
+                   [401, 403].contains(http.statusCode),
+                   payload.errorCode == "invalid_auth" || error.contains("Write actions require X-Edge-Secret") {
+                    let lockState = BootstrapWriteLockState(
+                        statusCode: http.statusCode,
+                        errorCode: payload.errorCode,
+                        error: error,
+                        functionVersion: payload.functionVersion,
+                        requestId: requestId,
+                        observedAt: Date()
+                    )
+                    writeLockState = lockState
+                    throw BootstrapServiceError.writesLocked(lockState)
+                }
+
+                if let requestId, !requestId.isEmpty {
+                    throw BootstrapServiceError.apiError("\(error) (request_id: \(requestId))")
+                }
+                throw BootstrapServiceError.apiError(error)
+            }
+
+            if let requestId, !requestId.isEmpty {
+                throw BootstrapServiceError.apiError("HTTP error \(http.statusCode) (request_id: \(requestId)).")
+            }
             throw BootstrapServiceError.httpError(statusCode: http.statusCode)
         }
     }
+}
+
+private struct EdgeFunctionErrorPayload: Decodable {
+    let ok: Bool?
+    let error: String?
+    let errorCode: String?
+    let functionVersion: String?
+
+    enum CodingKeys: String, CodingKey {
+        case ok
+        case error
+        case errorCode = "error_code"
+        case functionVersion = "function_version"
+    }
+}
+
+struct BootstrapWriteLockState: Equatable {
+    let statusCode: Int
+    let errorCode: String?
+    let error: String
+    let functionVersion: String?
+    let requestId: String?
+    let observedAt: Date
 }
 
 struct ResolveResponse: Decodable {
@@ -439,6 +560,7 @@ enum BootstrapServiceError: LocalizedError {
     case invalidResponse
     case httpError(statusCode: Int)
     case apiError(String)
+    case writesLocked(BootstrapWriteLockState)
 
     var errorDescription: String? {
         switch self {
@@ -449,6 +571,17 @@ enum BootstrapServiceError: LocalizedError {
         case .httpError(let code):
             return "HTTP error \(code)."
         case .apiError(let message):
+            return message
+        case .writesLocked(let state):
+            var message = "Attribution writes temporarily locked (needs privileged auth). Reads still available."
+            if let functionVersion = state.functionVersion?.trimmingCharacters(in: .whitespacesAndNewlines),
+               !functionVersion.isEmpty {
+                message += " (\(functionVersion))"
+            }
+            if let requestId = state.requestId?.trimmingCharacters(in: .whitespacesAndNewlines),
+               !requestId.isEmpty {
+                message += " (request_id: \(requestId))"
+            }
             return message
         }
     }
