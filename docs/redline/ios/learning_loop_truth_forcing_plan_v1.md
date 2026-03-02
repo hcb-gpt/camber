@@ -2,6 +2,7 @@
 
 Design bar (customer-linked): **"You're not designing for yourself. You're designing for someone who doesn't have time to figure out what you built."**
 Secondary bar (user-perceived value): **"The best features disappear. The user just feels like things got easier."**
+Posture (every line): **"Empathy isn't a phase. It's the posture you hold while you write every line."**
 
 ## 0) Goal (User Benefit)
 Redline iOS is not a “card viewer.” It is the **actuator** for the epistemic control loop:
