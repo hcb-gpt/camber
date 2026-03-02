@@ -902,6 +902,7 @@ Deno.serve(async (req: Request) => {
         if (shouldSync) {
           const updatePayload: Record<string, unknown> = {
             transcript_chars: nextTranscriptChars,
+            is_nonsegmentable: false,
           };
           if (removedEmptyTranscriptReason) {
             updatePayload.review_reasons = cleanedReasons;

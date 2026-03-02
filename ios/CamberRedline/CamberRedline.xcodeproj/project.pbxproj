@@ -3,73 +3,87 @@
 	archiveVersion = 1;
 	classes = {
 	};
-	objectVersion = 63;
+	objectVersion = 77;
 	objects = {
 
 /* Begin PBXBuildFile section */
 		09304E51DC232ACF9D604391 /* CallSummaryCard.swift in Sources */ = {isa = PBXBuildFile; fileRef = C92779B3641C0D2DE6615612 /* CallSummaryCard.swift */; };
+		0EF825BEF32FA479DE65FD79 /* TranscriptParser.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8F826DDC57DEDE773FDE9A90 /* TranscriptParser.swift */; };
+		0F58E997CFCF95535981728E /* TriageView.swift in Sources */ = {isa = PBXBuildFile; fileRef = E79147BC2C70818C0A8A0E84 /* TriageView.swift */; };
 		1092BB6FCB219E4B99B16EDF /* ContactListView.swift in Sources */ = {isa = PBXBuildFile; fileRef = EF9A6045C507E720138741A1 /* ContactListView.swift */; };
 		13531F3AAFCDFA21ECFB9E65 /* ThreadView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 055EAEA048AB6BB4CA4EEE80 /* ThreadView.swift */; };
 		193B96A4F6E1BC3B7A0B3B61 /* GradeIndicator.swift in Sources */ = {isa = PBXBuildFile; fileRef = 595848F3F46DFB87B0C65D55 /* GradeIndicator.swift */; };
 		1C7C72BCA9A6EDFBC2A43B96 /* CorrectionSheet.swift in Sources */ = {isa = PBXBuildFile; fileRef = A3F820DB38BA1EDB02EAE746 /* CorrectionSheet.swift */; };
+		235D7418A5D411C038ECD3C2 /* CallHeaderCard.swift in Sources */ = {isa = PBXBuildFile; fileRef = 6EC042AB1F53DF742C398B88 /* CallHeaderCard.swift */; };
 		2B69E6BF52B2A2AB640CBC77 /* Contact.swift in Sources */ = {isa = PBXBuildFile; fileRef = 93F9EB787CFB3448E1EFC024 /* Contact.swift */; };
+		2D1C18B8BA5D214E003BFCF4 /* AssistantViewModel.swift in Sources */ = {isa = PBXBuildFile; fileRef = A8BE6DA76F1EB530D74A59B5 /* AssistantViewModel.swift */; };
+		318DEDE62A4D9753580B870D /* AssistantContext.swift in Sources */ = {isa = PBXBuildFile; fileRef = 286F14684E47ACD927777E89 /* AssistantContext.swift */; };
 		547C08130F2822252B3296F9 /* ClaimRow.swift in Sources */ = {isa = PBXBuildFile; fileRef = B70C4EA922BE454A904F95BB /* ClaimRow.swift */; };
+		54CEA22722BBC72BA5B92913 /* CallsView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 811F8ECECD49DD28083674CA /* CallsView.swift */; };
 		6810EA3F634A84FCB75E2AB9 /* ContactRow.swift in Sources */ = {isa = PBXBuildFile; fileRef = 64CAF4EB749EF62EB74ED822 /* ContactRow.swift */; };
+		685787AC4387F6EDEE201B93 /* AssistantChatView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 4A00522B1BB908D179B1DB3A /* AssistantChatView.swift */; };
+		6AA54D206A9C4FB91121750A /* AttributionTriageCardsView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 370CFEDE912C1156C1F30EB5 /* AttributionTriageCardsView.swift */; };
+		73DCF539C5D0EB5285CA1AE6 /* AIView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 75C6B7FDB012B57B95706BE7 /* AIView.swift */; };
+		75E8F27A4E113F161D378177 /* DialView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 0AB89A707C416FD7AE32DD9B /* DialView.swift */; };
+		79C3F46D4F79C7EFBC0D426F /* InboxView.swift in Sources */ = {isa = PBXBuildFile; fileRef = FB112EFBB100898B64A8727D /* InboxView.swift */; };
+		7A835FB2FCB68B59619D38B4 /* SettingsView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 911A4F7AE09B7C357D50E794 /* SettingsView.swift */; };
+		7B44853A408C086EF63AB771 /* CardTriageViewModel.swift in Sources */ = {isa = PBXBuildFile; fileRef = 818303E562C5E5945D154CAB /* CardTriageViewModel.swift */; };
+		8677D6B99962EA63BD37567D /* ProjectPickerSheet.swift in Sources */ = {isa = PBXBuildFile; fileRef = A3B6E67F0EDF028F39994C5B /* ProjectPickerSheet.swift */; };
 		87C400F4F3874303B94EB83B /* SMSBubble.swift in Sources */ = {isa = PBXBuildFile; fileRef = C0B838D3F03C0D2CDB76E802 /* SMSBubble.swift */; };
+		8C920331FC246A2DDE612CC4 /* BootstrapService.swift in Sources */ = {isa = PBXBuildFile; fileRef = D46A39E4F7972B1C31B26A79 /* BootstrapService.swift */; };
+		930D6A53BC69DC25D29CBBF0 /* AssistantContextDebugView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 681533D1F455EC70B0983D2E /* AssistantContextDebugView.swift */; };
 		9729A9C737A2F3FB6C1A448C /* ThreadItem.swift in Sources */ = {isa = PBXBuildFile; fileRef = E620CD5610E49C34C8D6DD31 /* ThreadItem.swift */; };
 		986CB6A00F10B14F7508F67B /* Supabase in Frameworks */ = {isa = PBXBuildFile; productRef = 187F6B7C7E102040AC0AAD35 /* Supabase */; };
+		B0A7C6545E6B3F687949F4CD /* SpeakerTurnBubble.swift in Sources */ = {isa = PBXBuildFile; fileRef = 88D0EA435EF93F8F71CDA172 /* SpeakerTurnBubble.swift */; };
 		B4148DF1A17F77A1103A1796 /* SupabaseService.swift in Sources */ = {isa = PBXBuildFile; fileRef = 49A9C46539AA007D7645122A /* SupabaseService.swift */; };
+		C037A4DFA1ABDC2539B274A3 /* ContactInfoView.swift in Sources */ = {isa = PBXBuildFile; fileRef = A801A78FDAAECC420340C609 /* ContactInfoView.swift */; };
+		D21A48D75846B897A735D708 /* ReviewItem.swift in Sources */ = {isa = PBXBuildFile; fileRef = 75E749332DE2AAC4065FBD2C /* ReviewItem.swift */; };
 		D7B89133BD2CD72F5991596D /* ThreadViewModel.swift in Sources */ = {isa = PBXBuildFile; fileRef = 51E44482F637661C85D155F8 /* ThreadViewModel.swift */; };
 		D9002DC58A8E1B0580E9CEAF /* ClaimGrade.swift in Sources */ = {isa = PBXBuildFile; fileRef = E49C0E479C5BF9BBBEA78C7F /* ClaimGrade.swift */; };
+		E490AB5A1C1B56A4430844FE /* Assets.xcassets in Resources */ = {isa = PBXBuildFile; fileRef = D3AC87EECD3CC3F7CBD39A60 /* Assets.xcassets */; };
+		E66ABA2EA8746CB9634B7D93 /* TriageViewModel.swift in Sources */ = {isa = PBXBuildFile; fileRef = E5142F02E2BCC00AA2D0B352 /* TriageViewModel.swift */; };
+		F4526B156028BA0541CBA78C /* ReviewProject.swift in Sources */ = {isa = PBXBuildFile; fileRef = 164D5EB420B7255586578549 /* ReviewProject.swift */; };
 		F74E8AAE36B43E7F30B8CE53 /* CamberRedlineApp.swift in Sources */ = {isa = PBXBuildFile; fileRef = FF5BA52015DDCF6F215FA113 /* CamberRedlineApp.swift */; };
-		AA1B2C3D4E5F6A7B8C9D0E1F /* TranscriptParser.swift in Sources */ = {isa = PBXBuildFile; fileRef = AB2C3D4E5F6A7B8C9D0E1F2A /* TranscriptParser.swift */; };
-		CC3D4E5F6A7B8C9D0E1F2A3B /* SpeakerTurnBubble.swift in Sources */ = {isa = PBXBuildFile; fileRef = CD4E5F6A7B8C9D0E1F2A3B4C /* SpeakerTurnBubble.swift */; };
-		EE5F6A7B8C9D0E1F2A3B4C5D /* CallHeaderCard.swift in Sources */ = {isa = PBXBuildFile; fileRef = EF6A7B8C9D0E1F2A3B4C5D6E /* CallHeaderCard.swift */; };
-		A1B2C3D4E5F60001AABBCC01 /* ReviewItem.swift in Sources */ = {isa = PBXBuildFile; fileRef = A1B2C3D4E5F60002AABBCC01 /* ReviewItem.swift */; };
-		A1B2C3D4E5F60003AABBCC02 /* ReviewProject.swift in Sources */ = {isa = PBXBuildFile; fileRef = A1B2C3D4E5F60004AABBCC02 /* ReviewProject.swift */; };
-		A1B2C3D4E5F60005AABBCC03 /* BootstrapService.swift in Sources */ = {isa = PBXBuildFile; fileRef = A1B2C3D4E5F60006AABBCC03 /* BootstrapService.swift */; };
-		A1B2C3D4E5F60007AABBCC04 /* TriageViewModel.swift in Sources */ = {isa = PBXBuildFile; fileRef = A1B2C3D4E5F60008AABBCC04 /* TriageViewModel.swift */; };
-		A1B2C3D4E5F60009AABBCC05 /* TriageView.swift in Sources */ = {isa = PBXBuildFile; fileRef = A1B2C3D4E5F6000AAABBCC05 /* TriageView.swift */; };
-		B1A2B3C4D5E6F70100112233 /* AttributionTriageCardsView.swift in Sources */ = {isa = PBXBuildFile; fileRef = B1A2B3C4D5E6F70200112233 /* AttributionTriageCardsView.swift */; };
-		B1A2B3C4D5E6F70300112233 /* ProjectPickerSheet.swift in Sources */ = {isa = PBXBuildFile; fileRef = B1A2B3C4D5E6F70400112233 /* ProjectPickerSheet.swift */; };
-		B1A2B3C4D5E6F70500112233 /* CardTriageViewModel.swift in Sources */ = {isa = PBXBuildFile; fileRef = B1A2B3C4D5E6F70600112233 /* CardTriageViewModel.swift */; };
-		D2A1B3C4D5E6F70700998877 /* AssistantChatView.swift in Sources */ = {isa = PBXBuildFile; fileRef = D2A1B3C4D5E6F70800998877 /* AssistantChatView.swift */; };
-		D2A1B3C4D5E6F70900998877 /* AssistantViewModel.swift in Sources */ = {isa = PBXBuildFile; fileRef = D2A1B3C4D5E6F70A00998877 /* AssistantViewModel.swift */; };
-		C1D2E3F4A5B6C70100223344 /* AssistantContext.swift in Sources */ = {isa = PBXBuildFile; fileRef = C1D2E3F4A5B6C70200223344 /* AssistantContext.swift */; };
-		C1D2E3F4A5B6C70300223344 /* AssistantContextDebugView.swift in Sources */ = {isa = PBXBuildFile; fileRef = C1D2E3F4A5B6C70400223344 /* AssistantContextDebugView.swift */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXFileReference section */
 		055EAEA048AB6BB4CA4EEE80 /* ThreadView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ThreadView.swift; sourceTree = "<group>"; };
-		34CB7D73C1D3046EEE6ECAAE /* CamberRedline.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = CamberRedline.app; sourceTree = BUILT_PRODUCTS_DIR; };
+		0AB89A707C416FD7AE32DD9B /* DialView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DialView.swift; sourceTree = "<group>"; };
+		164D5EB420B7255586578549 /* ReviewProject.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ReviewProject.swift; sourceTree = "<group>"; };
+		286F14684E47ACD927777E89 /* AssistantContext.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AssistantContext.swift; sourceTree = "<group>"; };
+		34CB7D73C1D3046EEE6ECAAE /* CamberRedline.app */ = {isa = PBXFileReference; includeInIndex = 0; lastKnownFileType = wrapper.application; path = CamberRedline.app; sourceTree = BUILT_PRODUCTS_DIR; };
+		370CFEDE912C1156C1F30EB5 /* AttributionTriageCardsView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AttributionTriageCardsView.swift; sourceTree = "<group>"; };
 		49A9C46539AA007D7645122A /* SupabaseService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SupabaseService.swift; sourceTree = "<group>"; };
+		4A00522B1BB908D179B1DB3A /* AssistantChatView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AssistantChatView.swift; sourceTree = "<group>"; };
 		51E44482F637661C85D155F8 /* ThreadViewModel.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ThreadViewModel.swift; sourceTree = "<group>"; };
 		595848F3F46DFB87B0C65D55 /* GradeIndicator.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = GradeIndicator.swift; sourceTree = "<group>"; };
 		64CAF4EB749EF62EB74ED822 /* ContactRow.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ContactRow.swift; sourceTree = "<group>"; };
+		681533D1F455EC70B0983D2E /* AssistantContextDebugView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AssistantContextDebugView.swift; sourceTree = "<group>"; };
+		6EC042AB1F53DF742C398B88 /* CallHeaderCard.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CallHeaderCard.swift; sourceTree = "<group>"; };
+		75C6B7FDB012B57B95706BE7 /* AIView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AIView.swift; sourceTree = "<group>"; };
+		75E749332DE2AAC4065FBD2C /* ReviewItem.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ReviewItem.swift; sourceTree = "<group>"; };
+		811F8ECECD49DD28083674CA /* CallsView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CallsView.swift; sourceTree = "<group>"; };
+		818303E562C5E5945D154CAB /* CardTriageViewModel.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CardTriageViewModel.swift; sourceTree = "<group>"; };
+		88D0EA435EF93F8F71CDA172 /* SpeakerTurnBubble.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SpeakerTurnBubble.swift; sourceTree = "<group>"; };
+		8F826DDC57DEDE773FDE9A90 /* TranscriptParser.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TranscriptParser.swift; sourceTree = "<group>"; };
+		911A4F7AE09B7C357D50E794 /* SettingsView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SettingsView.swift; sourceTree = "<group>"; };
 		93F9EB787CFB3448E1EFC024 /* Contact.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Contact.swift; sourceTree = "<group>"; };
+		A3B6E67F0EDF028F39994C5B /* ProjectPickerSheet.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ProjectPickerSheet.swift; sourceTree = "<group>"; };
 		A3F820DB38BA1EDB02EAE746 /* CorrectionSheet.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CorrectionSheet.swift; sourceTree = "<group>"; };
+		A801A78FDAAECC420340C609 /* ContactInfoView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ContactInfoView.swift; sourceTree = "<group>"; };
+		A8BE6DA76F1EB530D74A59B5 /* AssistantViewModel.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AssistantViewModel.swift; sourceTree = "<group>"; };
 		B70C4EA922BE454A904F95BB /* ClaimRow.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ClaimRow.swift; sourceTree = "<group>"; };
 		C0B838D3F03C0D2CDB76E802 /* SMSBubble.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SMSBubble.swift; sourceTree = "<group>"; };
 		C92779B3641C0D2DE6615612 /* CallSummaryCard.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CallSummaryCard.swift; sourceTree = "<group>"; };
+		D3AC87EECD3CC3F7CBD39A60 /* Assets.xcassets */ = {isa = PBXFileReference; lastKnownFileType = folder.assetcatalog; path = Assets.xcassets; sourceTree = "<group>"; };
+		D46A39E4F7972B1C31B26A79 /* BootstrapService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BootstrapService.swift; sourceTree = "<group>"; };
 		E49C0E479C5BF9BBBEA78C7F /* ClaimGrade.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ClaimGrade.swift; sourceTree = "<group>"; };
+		E5142F02E2BCC00AA2D0B352 /* TriageViewModel.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TriageViewModel.swift; sourceTree = "<group>"; };
 		E620CD5610E49C34C8D6DD31 /* ThreadItem.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ThreadItem.swift; sourceTree = "<group>"; };
+		E79147BC2C70818C0A8A0E84 /* TriageView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TriageView.swift; sourceTree = "<group>"; };
 		EF9A6045C507E720138741A1 /* ContactListView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ContactListView.swift; sourceTree = "<group>"; };
+		FB112EFBB100898B64A8727D /* InboxView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = InboxView.swift; sourceTree = "<group>"; };
 		FF5BA52015DDCF6F215FA113 /* CamberRedlineApp.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CamberRedlineApp.swift; sourceTree = "<group>"; };
-		AB2C3D4E5F6A7B8C9D0E1F2A /* TranscriptParser.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TranscriptParser.swift; sourceTree = "<group>"; };
-		CD4E5F6A7B8C9D0E1F2A3B4C /* SpeakerTurnBubble.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SpeakerTurnBubble.swift; sourceTree = "<group>"; };
-		EF6A7B8C9D0E1F2A3B4C5D6E /* CallHeaderCard.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CallHeaderCard.swift; sourceTree = "<group>"; };
-		A1B2C3D4E5F60002AABBCC01 /* ReviewItem.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ReviewItem.swift; sourceTree = "<group>"; };
-		A1B2C3D4E5F60004AABBCC02 /* ReviewProject.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ReviewProject.swift; sourceTree = "<group>"; };
-		A1B2C3D4E5F60006AABBCC03 /* BootstrapService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BootstrapService.swift; sourceTree = "<group>"; };
-		A1B2C3D4E5F60008AABBCC04 /* TriageViewModel.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TriageViewModel.swift; sourceTree = "<group>"; };
-		A1B2C3D4E5F6000AAABBCC05 /* TriageView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TriageView.swift; sourceTree = "<group>"; };
-		B1A2B3C4D5E6F70200112233 /* AttributionTriageCardsView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AttributionTriageCardsView.swift; sourceTree = "<group>"; };
-		B1A2B3C4D5E6F70400112233 /* ProjectPickerSheet.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ProjectPickerSheet.swift; sourceTree = "<group>"; };
-		B1A2B3C4D5E6F70600112233 /* CardTriageViewModel.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CardTriageViewModel.swift; sourceTree = "<group>"; };
-		D2A1B3C4D5E6F70800998877 /* AssistantChatView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AssistantChatView.swift; sourceTree = "<group>"; };
-		D2A1B3C4D5E6F70A00998877 /* AssistantViewModel.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AssistantViewModel.swift; sourceTree = "<group>"; };
-		C1D2E3F4A5B6C70200223344 /* AssistantContext.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AssistantContext.swift; sourceTree = "<group>"; };
-		C1D2E3F4A5B6C70400223344 /* AssistantContextDebugView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AssistantContextDebugView.swift; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
 /* Begin PBXFrameworksBuildPhase section */
@@ -87,21 +101,27 @@
 		46E176F410BCCCB75B44DF99 /* Views */ = {
 			isa = PBXGroup;
 			children = (
-				EF6A7B8C9D0E1F2A3B4C5D6E /* CallHeaderCard.swift */,
+				75C6B7FDB012B57B95706BE7 /* AIView.swift */,
+				4A00522B1BB908D179B1DB3A /* AssistantChatView.swift */,
+				681533D1F455EC70B0983D2E /* AssistantContextDebugView.swift */,
+				370CFEDE912C1156C1F30EB5 /* AttributionTriageCardsView.swift */,
+				6EC042AB1F53DF742C398B88 /* CallHeaderCard.swift */,
 				C92779B3641C0D2DE6615612 /* CallSummaryCard.swift */,
+				811F8ECECD49DD28083674CA /* CallsView.swift */,
 				B70C4EA922BE454A904F95BB /* ClaimRow.swift */,
+				A801A78FDAAECC420340C609 /* ContactInfoView.swift */,
 				EF9A6045C507E720138741A1 /* ContactListView.swift */,
 				64CAF4EB749EF62EB74ED822 /* ContactRow.swift */,
 				A3F820DB38BA1EDB02EAE746 /* CorrectionSheet.swift */,
+				0AB89A707C416FD7AE32DD9B /* DialView.swift */,
 				595848F3F46DFB87B0C65D55 /* GradeIndicator.swift */,
+				FB112EFBB100898B64A8727D /* InboxView.swift */,
+				A3B6E67F0EDF028F39994C5B /* ProjectPickerSheet.swift */,
+				911A4F7AE09B7C357D50E794 /* SettingsView.swift */,
 				C0B838D3F03C0D2CDB76E802 /* SMSBubble.swift */,
-				CD4E5F6A7B8C9D0E1F2A3B4C /* SpeakerTurnBubble.swift */,
+				88D0EA435EF93F8F71CDA172 /* SpeakerTurnBubble.swift */,
 				055EAEA048AB6BB4CA4EEE80 /* ThreadView.swift */,
-				A1B2C3D4E5F6000AAABBCC05 /* TriageView.swift */,
-				B1A2B3C4D5E6F70200112233 /* AttributionTriageCardsView.swift */,
-				B1A2B3C4D5E6F70400112233 /* ProjectPickerSheet.swift */,
-				D2A1B3C4D5E6F70800998877 /* AssistantChatView.swift */,
-				C1D2E3F4A5B6C70400223344 /* AssistantContextDebugView.swift */,
+				E79147BC2C70818C0A8A0E84 /* TriageView.swift */,
 			);
 			path = Views;
 			sourceTree = "<group>";
@@ -109,6 +129,7 @@
 		4CBF2260079024E63D8ABDC0 /* CamberRedline */ = {
 			isa = PBXGroup;
 			children = (
+				D3AC87EECD3CC3F7CBD39A60 /* Assets.xcassets */,
 				FF5BA52015DDCF6F215FA113 /* CamberRedlineApp.swift */,
 				C32672D30BE75E53A0CBB17B /* Models */,
 				99BF2C7EF9F55A8850309EB3 /* Services */,
@@ -121,10 +142,10 @@
 		939AA6BCD9867C76C54DBD7E /* ViewModels */ = {
 			isa = PBXGroup;
 			children = (
-				D2A1B3C4D5E6F70A00998877 /* AssistantViewModel.swift */,
+				A8BE6DA76F1EB530D74A59B5 /* AssistantViewModel.swift */,
+				818303E562C5E5945D154CAB /* CardTriageViewModel.swift */,
 				51E44482F637661C85D155F8 /* ThreadViewModel.swift */,
-				A1B2C3D4E5F60008AABBCC04 /* TriageViewModel.swift */,
-				B1A2B3C4D5E6F70600112233 /* CardTriageViewModel.swift */,
+				E5142F02E2BCC00AA2D0B352 /* TriageViewModel.swift */,
 			);
 			path = ViewModels;
 			sourceTree = "<group>";
@@ -140,7 +161,7 @@
 		99BF2C7EF9F55A8850309EB3 /* Services */ = {
 			isa = PBXGroup;
 			children = (
-				A1B2C3D4E5F60006AABBCC03 /* BootstrapService.swift */,
+				D46A39E4F7972B1C31B26A79 /* BootstrapService.swift */,
 				49A9C46539AA007D7645122A /* SupabaseService.swift */,
 			);
 			path = Services;
@@ -149,13 +170,13 @@
 		C32672D30BE75E53A0CBB17B /* Models */ = {
 			isa = PBXGroup;
 			children = (
+				286F14684E47ACD927777E89 /* AssistantContext.swift */,
 				E49C0E479C5BF9BBBEA78C7F /* ClaimGrade.swift */,
 				93F9EB787CFB3448E1EFC024 /* Contact.swift */,
+				75E749332DE2AAC4065FBD2C /* ReviewItem.swift */,
+				164D5EB420B7255586578549 /* ReviewProject.swift */,
 				E620CD5610E49C34C8D6DD31 /* ThreadItem.swift */,
-				AB2C3D4E5F6A7B8C9D0E1F2A /* TranscriptParser.swift */,
-				A1B2C3D4E5F60002AABBCC01 /* ReviewItem.swift */,
-				A1B2C3D4E5F60004AABBCC02 /* ReviewProject.swift */,
-				C1D2E3F4A5B6C70200223344 /* AssistantContext.swift */,
+				8F826DDC57DEDE773FDE9A90 /* TranscriptParser.swift */,
 			);
 			path = Models;
 			sourceTree = "<group>";
@@ -176,6 +197,7 @@
 			buildConfigurationList = 8FCC5439A471F0FFD3E9A720 /* Build configuration list for PBXNativeTarget "CamberRedline" */;
 			buildPhases = (
 				926888D8F0B8A01F55E0FCF6 /* Sources */,
+				EBD6FDD7FEE4A89072F785CB /* Resources */,
 				56C7ADADFB21BBCBD91D3760 /* Frameworks */,
 			);
 			buildRules = (
@@ -198,6 +220,11 @@
 			attributes = {
 				BuildIndependentTargetsInParallel = YES;
 				LastUpgradeCheck = 1600;
+				TargetAttributes = {
+					B6293C378A63EBC6B48CFBE2 = {
+						DevelopmentTeam = "";
+					};
+				};
 			};
 			buildConfigurationList = 03FB81D1446DD0CD384BA5A0 /* Build configuration list for PBXProject "CamberRedline" */;
 			compatibilityVersion = "Xcode 14.0";
@@ -212,6 +239,7 @@
 			packageReferences = (
 				1325FF3460611FE0F2BEB17C /* XCRemoteSwiftPackageReference "supabase-swift" */,
 			);
+			preferredProjectObjectVersion = 77;
 			projectDirPath = "";
 			projectRoot = "";
 			targets = (
@@ -220,40 +248,57 @@
 		};
 /* End PBXProject section */
 
+/* Begin PBXResourcesBuildPhase section */
+		EBD6FDD7FEE4A89072F785CB /* Resources */ = {
+			isa = PBXResourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				E490AB5A1C1B56A4430844FE /* Assets.xcassets in Resources */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+/* End PBXResourcesBuildPhase section */
+
 /* Begin PBXSourcesBuildPhase section */
 		926888D8F0B8A01F55E0FCF6 /* Sources */ = {
 			isa = PBXSourcesBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
+				73DCF539C5D0EB5285CA1AE6 /* AIView.swift in Sources */,
+				685787AC4387F6EDEE201B93 /* AssistantChatView.swift in Sources */,
+				318DEDE62A4D9753580B870D /* AssistantContext.swift in Sources */,
+				930D6A53BC69DC25D29CBBF0 /* AssistantContextDebugView.swift in Sources */,
+				2D1C18B8BA5D214E003BFCF4 /* AssistantViewModel.swift in Sources */,
+				6AA54D206A9C4FB91121750A /* AttributionTriageCardsView.swift in Sources */,
+				8C920331FC246A2DDE612CC4 /* BootstrapService.swift in Sources */,
+				235D7418A5D411C038ECD3C2 /* CallHeaderCard.swift in Sources */,
 				09304E51DC232ACF9D604391 /* CallSummaryCard.swift in Sources */,
+				54CEA22722BBC72BA5B92913 /* CallsView.swift in Sources */,
 				F74E8AAE36B43E7F30B8CE53 /* CamberRedlineApp.swift in Sources */,
+				7B44853A408C086EF63AB771 /* CardTriageViewModel.swift in Sources */,
 				D9002DC58A8E1B0580E9CEAF /* ClaimGrade.swift in Sources */,
 				547C08130F2822252B3296F9 /* ClaimRow.swift in Sources */,
 				2B69E6BF52B2A2AB640CBC77 /* Contact.swift in Sources */,
+				C037A4DFA1ABDC2539B274A3 /* ContactInfoView.swift in Sources */,
 				1092BB6FCB219E4B99B16EDF /* ContactListView.swift in Sources */,
 				6810EA3F634A84FCB75E2AB9 /* ContactRow.swift in Sources */,
 				1C7C72BCA9A6EDFBC2A43B96 /* CorrectionSheet.swift in Sources */,
+				75E8F27A4E113F161D378177 /* DialView.swift in Sources */,
 				193B96A4F6E1BC3B7A0B3B61 /* GradeIndicator.swift in Sources */,
+				79C3F46D4F79C7EFBC0D426F /* InboxView.swift in Sources */,
+				8677D6B99962EA63BD37567D /* ProjectPickerSheet.swift in Sources */,
+				D21A48D75846B897A735D708 /* ReviewItem.swift in Sources */,
+				F4526B156028BA0541CBA78C /* ReviewProject.swift in Sources */,
 				87C400F4F3874303B94EB83B /* SMSBubble.swift in Sources */,
+				7A835FB2FCB68B59619D38B4 /* SettingsView.swift in Sources */,
+				B0A7C6545E6B3F687949F4CD /* SpeakerTurnBubble.swift in Sources */,
 				B4148DF1A17F77A1103A1796 /* SupabaseService.swift in Sources */,
 				9729A9C737A2F3FB6C1A448C /* ThreadItem.swift in Sources */,
 				13531F3AAFCDFA21ECFB9E65 /* ThreadView.swift in Sources */,
 				D7B89133BD2CD72F5991596D /* ThreadViewModel.swift in Sources */,
-				AA1B2C3D4E5F6A7B8C9D0E1F /* TranscriptParser.swift in Sources */,
-				CC3D4E5F6A7B8C9D0E1F2A3B /* SpeakerTurnBubble.swift in Sources */,
-				EE5F6A7B8C9D0E1F2A3B4C5D /* CallHeaderCard.swift in Sources */,
-				A1B2C3D4E5F60001AABBCC01 /* ReviewItem.swift in Sources */,
-				A1B2C3D4E5F60003AABBCC02 /* ReviewProject.swift in Sources */,
-				A1B2C3D4E5F60005AABBCC03 /* BootstrapService.swift in Sources */,
-				A1B2C3D4E5F60007AABBCC04 /* TriageViewModel.swift in Sources */,
-				A1B2C3D4E5F60009AABBCC05 /* TriageView.swift in Sources */,
-				B1A2B3C4D5E6F70100112233 /* AttributionTriageCardsView.swift in Sources */,
-				B1A2B3C4D5E6F70300112233 /* ProjectPickerSheet.swift in Sources */,
-				B1A2B3C4D5E6F70500112233 /* CardTriageViewModel.swift in Sources */,
-				D2A1B3C4D5E6F70700998877 /* AssistantChatView.swift in Sources */,
-				D2A1B3C4D5E6F70900998877 /* AssistantViewModel.swift in Sources */,
-				C1D2E3F4A5B6C70100223344 /* AssistantContext.swift in Sources */,
-				C1D2E3F4A5B6C70300223344 /* AssistantContextDebugView.swift in Sources */,
+				0EF825BEF32FA479DE65FD79 /* TranscriptParser.swift in Sources */,
+				0F58E997CFCF95535981728E /* TriageView.swift in Sources */,
+				E66ABA2EA8746CB9634B7D93 /* TriageViewModel.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -385,12 +430,11 @@
 				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
 				CODE_SIGN_IDENTITY = "iPhone Developer";
 				CURRENT_PROJECT_VERSION = 1;
-					DEVELOPMENT_TEAM = ABL25FWB6A;
-					GENERATE_INFOPLIST_FILE = YES;
-						INFOPLIST_KEY_UILaunchScreen_Generation = YES;
-						INFOPLIST_KEY_UISupportedInterfaceOrientations_iPhone = "UIInterfaceOrientationPortrait UIInterfaceOrientationPortraitUpsideDown UIInterfaceOrientationLandscapeLeft UIInterfaceOrientationLandscapeRight";
-						INFOPLIST_KEY_UISupportedInterfaceOrientations_iPad = "UIInterfaceOrientationPortrait UIInterfaceOrientationPortraitUpsideDown UIInterfaceOrientationLandscapeLeft UIInterfaceOrientationLandscapeRight";
-					LD_RUNPATH_SEARCH_PATHS = (
+				DEVELOPMENT_TEAM = "";
+				GENERATE_INFOPLIST_FILE = YES;
+				INFOPLIST_KEY_UILaunchScreen_Generation = YES;
+				INFOPLIST_KEY_UISupportedInterfaceOrientations_iPhone = "UIInterfaceOrientationPortrait UIInterfaceOrientationPortraitUpsideDown UIInterfaceOrientationLandscapeLeft UIInterfaceOrientationLandscapeRight";
+				LD_RUNPATH_SEARCH_PATHS = (
 					"$(inherited)",
 					"@executable_path/Frameworks",
 				);
@@ -412,12 +456,11 @@
 				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
 				CODE_SIGN_IDENTITY = "iPhone Developer";
 				CURRENT_PROJECT_VERSION = 1;
-					DEVELOPMENT_TEAM = ABL25FWB6A;
-					GENERATE_INFOPLIST_FILE = YES;
-						INFOPLIST_KEY_UILaunchScreen_Generation = YES;
-						INFOPLIST_KEY_UISupportedInterfaceOrientations_iPhone = "UIInterfaceOrientationPortrait UIInterfaceOrientationPortraitUpsideDown UIInterfaceOrientationLandscapeLeft UIInterfaceOrientationLandscapeRight";
-						INFOPLIST_KEY_UISupportedInterfaceOrientations_iPad = "UIInterfaceOrientationPortrait UIInterfaceOrientationPortraitUpsideDown UIInterfaceOrientationLandscapeLeft UIInterfaceOrientationLandscapeRight";
-					LD_RUNPATH_SEARCH_PATHS = (
+				DEVELOPMENT_TEAM = "";
+				GENERATE_INFOPLIST_FILE = YES;
+				INFOPLIST_KEY_UILaunchScreen_Generation = YES;
+				INFOPLIST_KEY_UISupportedInterfaceOrientations_iPhone = "UIInterfaceOrientationPortrait UIInterfaceOrientationPortraitUpsideDown UIInterfaceOrientationLandscapeLeft UIInterfaceOrientationLandscapeRight";
+				LD_RUNPATH_SEARCH_PATHS = (
 					"$(inherited)",
 					"@executable_path/Frameworks",
 				);

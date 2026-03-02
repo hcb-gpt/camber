@@ -1,0 +1,331 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Redline iOS Parity Report (2026-03-02)</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=Instrument+Serif&family=JetBrains+Mono:wght@400;500;600&display=swap" rel="stylesheet" />
+  <style>
+    :root {
+      --font-body: 'Instrument Serif', 'Georgia', serif;
+      --font-mono: 'JetBrains Mono', 'SF Mono', Consolas, monospace;
+      --font-sans: system-ui, -apple-system, sans-serif;
+
+      --bg: #fff5f5;
+      --surface: #ffffff;
+      --surface2: #fef0ee;
+      --surface-elevated: #fff8f7;
+      --border: rgba(0, 0, 0, 0.07);
+      --border-bright: rgba(0, 0, 0, 0.14);
+      --text: #1c1917;
+      --text-dim: #78716c;
+      --accent: #be123c;
+      --accent-dim: rgba(190, 18, 60, 0.06);
+      --green: #16a34a;
+      --green-dim: rgba(22, 163, 74, 0.08);
+      --red: #dc2626;
+      --red-dim: rgba(220, 38, 38, 0.08);
+      --orange: #d97706;
+      --orange-dim: rgba(217, 119, 6, 0.08);
+    }
+
+    @media (prefers-color-scheme: dark) {
+      :root {
+        --bg: #1a0a0a;
+        --surface: #231414;
+        --surface2: #2e1b1b;
+        --surface-elevated: #351f1f;
+        --border: rgba(255, 255, 255, 0.06);
+        --border-bright: rgba(255, 255, 255, 0.12);
+        --text: #fde2e2;
+        --text-dim: #c9a3a3;
+        --accent: #fb7185;
+        --accent-dim: rgba(251, 113, 133, 0.12);
+        --green: #4ade80;
+        --green-dim: rgba(74, 222, 128, 0.1);
+        --red: #f87171;
+        --red-dim: rgba(248, 113, 113, 0.1);
+        --orange: #fbbf24;
+        --orange-dim: rgba(251, 191, 36, 0.1);
+      }
+    }
+
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+
+    body {
+      background: var(--bg);
+      background-image:
+        radial-gradient(ellipse at 30% 0%, var(--accent-dim) 0%, transparent 50%),
+        radial-gradient(ellipse at 70% 100%, var(--green-dim) 0%, transparent 40%);
+      color: var(--text);
+      font-family: var(--font-sans);
+      padding: 40px;
+      min-height: 100vh;
+    }
+
+    .container {
+      max-width: 1000px;
+      margin: 0 auto;
+    }
+
+    h1 {
+      font-family: var(--font-body);
+      font-size: 32px;
+      font-weight: 400;
+      letter-spacing: -0.3px;
+      margin-bottom: 6px;
+    }
+
+    .subtitle {
+      color: var(--text-dim);
+      font-family: var(--font-mono);
+      font-size: 12px;
+      margin-bottom: 18px;
+    }
+
+    .kpis {
+      display: grid;
+      grid-template-columns: repeat(3, minmax(0, 1fr));
+      gap: 12px;
+      margin-bottom: 18px;
+    }
+
+    .kpi {
+      background: var(--surface-elevated);
+      border: 1px solid var(--border);
+      border-radius: 12px;
+      padding: 12px 14px;
+    }
+
+    .kpi-label {
+      font-family: var(--font-mono);
+      font-size: 10px;
+      text-transform: uppercase;
+      letter-spacing: 1.1px;
+      color: var(--text-dim);
+      margin-bottom: 8px;
+    }
+
+    .kpi-value {
+      font-size: 26px;
+      font-weight: 650;
+      line-height: 1;
+    }
+
+    .kpi-hint {
+      margin-top: 6px;
+      font-size: 12px;
+      color: var(--text-dim);
+      line-height: 1.45;
+    }
+
+    .table-wrap {
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: 12px;
+      overflow: hidden;
+      margin-bottom: 18px;
+    }
+
+    .table-scroll {
+      overflow-x: auto;
+      -webkit-overflow-scrolling: touch;
+    }
+
+    table {
+      width: 100%;
+      border-collapse: collapse;
+      font-size: 13px;
+      line-height: 1.55;
+    }
+
+    thead {
+      position: sticky;
+      top: 0;
+      z-index: 2;
+    }
+
+    th {
+      background: var(--surface2);
+      font-family: var(--font-mono);
+      font-size: 10px;
+      font-weight: 600;
+      text-transform: uppercase;
+      letter-spacing: 1.2px;
+      color: var(--text-dim);
+      text-align: left;
+      padding: 14px 16px;
+      border-bottom: 2px solid var(--border-bright);
+      white-space: nowrap;
+    }
+
+    td {
+      padding: 14px 16px;
+      border-bottom: 1px solid var(--border);
+      vertical-align: top;
+    }
+
+    tbody tr:nth-child(even) {
+      background: var(--accent-dim);
+    }
+
+    code {
+      font-family: var(--font-mono);
+      font-size: 11px;
+      background: var(--accent-dim);
+      color: var(--accent);
+      padding: 1px 5px;
+      border-radius: 3px;
+    }
+
+    .wide { min-width: 260px; max-width: 520px; }
+
+    .badge {
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+      font-family: var(--font-mono);
+      font-size: 11px;
+      padding: 3px 8px;
+      border-radius: 999px;
+      border: 1px solid var(--border);
+      white-space: nowrap;
+    }
+
+    .dot {
+      width: 8px;
+      height: 8px;
+      border-radius: 50%;
+      display: inline-block;
+    }
+
+    .done { background: var(--green-dim); color: var(--green); border-color: rgba(22,163,74,0.25); }
+    .done .dot { background: var(--green); }
+    .partial { background: var(--orange-dim); color: var(--orange); border-color: rgba(217,119,6,0.25); }
+    .partial .dot { background: var(--orange); }
+    .todo { background: var(--red-dim); color: var(--red); border-color: rgba(220,38,38,0.25); }
+    .todo .dot { background: var(--red); }
+
+    details {
+      background: var(--surface-elevated);
+      border: 1px solid var(--border);
+      border-radius: 12px;
+      padding: 12px 14px;
+    }
+
+    summary {
+      cursor: pointer;
+      list-style: none;
+      font-family: var(--font-mono);
+      font-size: 12px;
+      color: var(--text);
+    }
+
+    summary::-webkit-details-marker { display: none; }
+
+    .details-body {
+      margin-top: 10px;
+      color: var(--text-dim);
+      font-size: 13px;
+      line-height: 1.55;
+    }
+
+    .details-body ul { padding-left: 18px; margin-top: 6px; }
+    .details-body li { margin: 6px 0; }
+
+    @media (max-width: 860px) {
+      body { padding: 22px; }
+      .kpis { grid-template-columns: 1fr; }
+    }
+  </style>
+</head>
+<body>
+  <div class="container">
+    <h1>Redline iOS Parity Report</h1>
+    <div class="subtitle">Date: 2026-03-02 · Scope: Beside-like shell + truth surface UX</div>
+
+    <div class="kpis">
+      <div class="kpi">
+        <div class="kpi-label">Done</div>
+        <div class="kpi-value" style="color: var(--green);">3</div>
+        <div class="kpi-hint">5-tab shell, Inbox upgrades, Thread call/info wired</div>
+      </div>
+      <div class="kpi">
+        <div class="kpi-label">Partial</div>
+        <div class="kpi-value" style="color: var(--orange);">1</div>
+        <div class="kpi-hint">Parity report references wireframe/code (screenshot-driven diff still pending)</div>
+      </div>
+      <div class="kpi">
+        <div class="kpi-label">Todo</div>
+        <div class="kpi-value" style="color: var(--red);">1</div>
+        <div class="kpi-hint">Truth Graph hydration/status card in Thread</div>
+      </div>
+    </div>
+
+    <div class="table-wrap">
+      <div class="table-scroll">
+        <table>
+          <thead>
+            <tr>
+              <th>Requirement</th>
+              <th>Status</th>
+              <th class="wide">Evidence</th>
+              <th class="wide">Notes / Next</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr>
+              <td>5-tab nav: Inbox / Calls / AI / Dial / Settings</td>
+              <td><span class="badge done"><span class="dot"></span>DONE</span></td>
+              <td class="wide"><code>ios/CamberRedline/CamberRedline/CamberRedlineApp.swift</code> (TabView)</td>
+              <td class="wide">Tabs render with Beside-like tint + dark tab bar.</td>
+            </tr>
+            <tr>
+              <td>Triage reachable from Inbox and AI</td>
+              <td><span class="badge done"><span class="dot"></span>DONE</span></td>
+              <td class="wide"><code>ios/CamberRedline/CamberRedline/CamberRedlineApp.swift</code> (sheet)<br/><code>ios/CamberRedline/CamberRedline/Views/AIView.swift</code> (toolbar)</td>
+              <td class="wide">Presented as a sheet (<code>AttributionTriageCardsView</code>).</td>
+            </tr>
+            <tr>
+              <td>Inbox list: prompt + filter pills + pinned Ask AI row</td>
+              <td><span class="badge done"><span class="dot"></span>DONE</span></td>
+              <td class="wide"><code>ios/CamberRedline/CamberRedline/Views/ContactListView.swift</code></td>
+              <td class="wide">Includes search prompt, horizontal pill row, and a pinned “Ask Redline AI” row.</td>
+            </tr>
+            <tr>
+              <td>Thread: Call + Info actions wired</td>
+              <td><span class="badge done"><span class="dot"></span>DONE</span></td>
+              <td class="wide"><code>ios/CamberRedline/CamberRedline/Views/ThreadView.swift</code><br/><code>ios/CamberRedline/CamberRedline/Views/ContactInfoView.swift</code></td>
+              <td class="wide">Call opens <code>tel://</code> when a phone number is present; Info opens a sheet with IDs + counts.</td>
+            </tr>
+            <tr>
+              <td>Thread: Truth Graph status card (hydration + repairs)</td>
+              <td><span class="badge todo"><span class="dot"></span>TODO</span></td>
+              <td class="wide">Team 2 backend contract needed (<code>redline-thread?action=truth_graph</code>)</td>
+              <td class="wide">Once backend payload stabilizes, add a top-of-thread card showing missing evidence + suggested repairs.</td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+    </div>
+
+    <details>
+      <summary>Acceptance / Next Steps</summary>
+      <div class="details-body">
+        <div>Acceptance checklist (Team 3 charter):</div>
+        <ul>
+          <li>App launches; all 5 tabs render; dark mode; no crashes.</li>
+          <li>Smoke drive still works: Inbox renders; Triage reachable; AI reachable.</li>
+        </ul>
+        <div style="margin-top:10px;">Next:</div>
+        <ul>
+          <li>Coordinate with backend Team 2 on Truth Graph payload + repair contract; then add the Truth Graph status card to Thread.</li>
+        </ul>
+      </div>
+    </details>
+  </div>
+</body>
+</html>
+
