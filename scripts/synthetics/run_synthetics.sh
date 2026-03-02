@@ -534,8 +534,14 @@ echo "════════════════════════�
 echo "  RESULTS: $PASS passed, $FAIL failed, $SKIP skipped"
 echo "══════════════════════════════════════════════════════════════"
 
-# Output the interaction IDs created so the gate script can find them
-echo "INTERACTION_IDS=$(IFS=,; echo "${RUN_INTERACTION_IDS[*]}")"
+# Output the interaction IDs created so the gate script can find them.
+# Guard empty array expansion to avoid unbound-variable errors under set -u.
+if [[ ${#RUN_INTERACTION_IDS[@]} -gt 0 ]]; then
+  INTERACTION_IDS_CSV="$(IFS=,; echo "${RUN_INTERACTION_IDS[*]}")"
+else
+  INTERACTION_IDS_CSV=""
+fi
+echo "INTERACTION_IDS=${INTERACTION_IDS_CSV}"
 
 if [[ $FAIL -gt 0 ]]; then
   exit 1
