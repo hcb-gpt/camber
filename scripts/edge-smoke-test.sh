@@ -54,6 +54,7 @@ PIPELINE_FUNCTIONS=(
   "chain-detect|POST|{\"interaction_id\":\"cll_SMOKE_TEST\"}|401"
   "admin-reseed|POST|{\"interaction_id\":\"cll_SMOKE_TEST\",\"reason\":\"smoke\",\"idempotency_key\":\"smoke_test\"}|401"
   "shadow-replay|POST|{\"interaction_id\":\"cll_SMOKE_TEST\"}|401"
+  "sms-beside-batch-ingest|POST|[]|401"
 )
 
 # ── Helpers ─────────────────────────────────────────────────────
