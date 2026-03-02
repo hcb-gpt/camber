@@ -98,12 +98,16 @@ struct AssistantChatView: View {
                 .foregroundStyle(.white)
             
             VStack(spacing: 12) {
-                suggestionButton("What is going on recently?")
-                if contactId != nil {
-                    suggestionButton("Summarize our recent interactions")
-                }
                 if projectId != nil {
-                    suggestionButton("Any open loops for this project?")
+                    suggestionButton("Tell me about this project")
+                    suggestionButton("Who's coming tomorrow?")
+                    suggestionButton("What's stuck / what's the holdup?")
+                    suggestionButton("Any open loops?")
+                } else if contactId != nil {
+                    suggestionButton("What's the latest with this person?")
+                    suggestionButton("Did they call back?")
+                } else {
+                    suggestionButton("What is going on recently?")
                 }
             }
             .padding(.horizontal, 40)
