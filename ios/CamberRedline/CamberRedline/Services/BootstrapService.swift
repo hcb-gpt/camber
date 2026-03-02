@@ -127,6 +127,7 @@ final class BootstrapService {
             account: InternalModeConfig.keychainAccount,
             accessibility: .afterFirstUnlockThisDeviceOnly
         )
+        clearWriteLock()
     }
 
     func wipeStoredEdgeSecret() throws {

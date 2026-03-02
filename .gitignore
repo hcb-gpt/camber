@@ -44,6 +44,11 @@ artifacts/*
 .scratch/
 proofs/
 
+# Committed proofs (VP visibility directive)
+!docs/proofs/
+!docs/proofs/ios/
+!docs/proofs/ios/**
+
 # Claude Code local settings
 .claude/
 

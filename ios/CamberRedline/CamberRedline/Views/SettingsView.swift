@@ -53,7 +53,7 @@ struct SettingsView: View {
                                 do {
                                     try BootstrapService.shared.storeEdgeSecret(secret)
                                     hasStoredEdgeSecret = BootstrapService.shared.hasStoredEdgeSecret()
-                                    internalModeStatusMessage = "Saved to Keychain."
+                                    internalModeStatusMessage = "Saved to Keychain (write lock cleared)."
                                 } catch {
                                     internalModeStatusMessage = error.localizedDescription
                                 }
@@ -66,6 +66,7 @@ struct SettingsView: View {
                                 BootstrapService.shared.clearWriteLock()
                                 internalModeStatusMessage = "Write lock cleared."
                             }
+                            .disabled(BootstrapService.shared.writeLockState == nil)
                         }
 
                         Button("Wipe Secret", role: .destructive) {
@@ -85,15 +86,19 @@ struct SettingsView: View {
                             .font(.caption)
                             .foregroundStyle(.secondary)
 
-                        if let banner = BootstrapService.shared.writesLockedBannerText {
-                            Text(banner)
-                                .font(.caption)
-                                .foregroundStyle(.orange)
-                        } else {
-                            Text("Attribution writes unlocked (no lock observed).")
-                                .font(.caption)
-                                .foregroundStyle(.secondary)
+                        Group {
+                            if let banner = BootstrapService.shared.writesLockedBannerText {
+                                Text(banner)
+                            } else if !internalModeEnabled {
+                                Text("Privileged attribution writes disabled (Internal Mode off).")
+                            } else if !hasStoredEdgeSecret {
+                                Text("Privileged attribution writes enabled, but no X-Edge-Secret is stored; write actions will be rejected (403 invalid_auth).")
+                            } else {
+                                Text("Privileged attribution writes enabled.")
+                            }
                         }
+                        .font(.caption)
+                        .foregroundStyle((internalModeEnabled && !hasStoredEdgeSecret) ? .orange : .secondary)
 
                         if let internalModeStatusMessage {
                             Text(internalModeStatusMessage)
