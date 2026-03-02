@@ -1,0 +1,3 @@
+command: xcodebuild -project CamberRedline.xcodeproj -scheme CamberRedline -destination 'platform=iOS Simulator,name=iPhone 17 Pro' CODE_SIGNING_ALLOWED=NO build
+source_log: /Users/chadbarlow/gh/hcb-gpt/camber-devfix-ios-inbox/artifacts/ios_simulator_smoke/2026-03-02/prepr_buildproof/xcodebuild.log
+3281:** BUILD SUCCEEDED **
