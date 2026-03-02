@@ -118,7 +118,7 @@ function withTimeout<T>(promise: Promise<T>, ms: number): Promise<T> {
 }
 
 async function checkAliasUniqueness(
-  db: any,
+  db: SupabaseClient,
   params: { alias: string },
 ): Promise<{ rows: any[]; count: number }> {
   const { data, error } = await db
@@ -131,7 +131,7 @@ async function checkAliasUniqueness(
 }
 
 async function fetchContactProjects(
-  db: any,
+  db: SupabaseClient,
   params: { contact_id: string },
 ): Promise<{ rows: any[]; count: number }> {
   const { data: contacts, error: contactErr } = await db
@@ -157,7 +157,7 @@ async function fetchContactProjects(
 }
 
 async function fetchJournalClaims(
-  db: any,
+  db: SupabaseClient,
   params: { project_id: string },
 ): Promise<{ rows: any[]; count: number }> {
   const { data, error } = await db
@@ -172,7 +172,7 @@ async function fetchJournalClaims(
 }
 
 async function fetchOpenLoops(
-  db: any,
+  db: SupabaseClient,
   params: { project_id: string },
 ): Promise<{ rows: any[]; count: number }> {
   const { data, error } = await db
@@ -186,7 +186,7 @@ async function fetchOpenLoops(
 }
 
 async function fetchChainHistory(
-  db: any,
+  db: SupabaseClient,
   params: { contact_id: string },
 ): Promise<{ rows: any[]; count: number }> {
   const cutoff = new Date(Date.now() - 48 * 60 * 60 * 1000).toISOString();
@@ -202,7 +202,7 @@ async function fetchChainHistory(
 }
 
 async function fetchPriorAttributions(
-  db: any,
+  db: SupabaseClient,
   params: { contact_id: string },
 ): Promise<{ rows: any[]; count: number }> {
   const cutoff = new Date(Date.now() - 48 * 60 * 60 * 1000).toISOString();
@@ -227,7 +227,7 @@ async function fetchPriorAttributions(
 }
 
 async function fetchProjectFacts(
-  db: any,
+  db: SupabaseClient,
   params: { project_id: string; as_of: string },
 ): Promise<{ rows: any[]; count: number }> {
   const { data, error } = await db
@@ -242,7 +242,7 @@ async function fetchProjectFacts(
 }
 
 async function scanTranscriptProjects(
-  db: any,
+  db: SupabaseClient,
   params: { transcript: string },
 ): Promise<{ rows: any[]; count: number }> {
   const { data, error } = await db.rpc("scan_transcript_for_projects", {
@@ -285,7 +285,7 @@ async function fetchEmailContext(
 }
 
 async function checkContactFanout(
-  db: any,
+  db: SupabaseClient,
   params: { contact_id: string },
 ): Promise<{ rows: any[]; count: number }> {
   const { data, error } = await db
@@ -304,7 +304,7 @@ async function checkContactFanout(
 function dispatchTool(
   name: string,
   params: any,
-  db: any,
+  db: SupabaseClient,
 ): Promise<{ rows: any[]; count: number }> {
   if (!SAFE_TOOL_WHITELIST.has(name)) {
     throw new Error(`BLOCKED: tool "${name}" not in assembler whitelist`);
