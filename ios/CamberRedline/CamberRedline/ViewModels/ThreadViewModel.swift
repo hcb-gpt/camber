@@ -39,6 +39,14 @@ final class ThreadViewModel {
     var isTruthGraphLoading = false
     var truthGraphError: String?
 
+    var isAttributionWritesLocked: Bool {
+        bootstrapService.writeLockState != nil
+    }
+
+    var attributionWritesLockedBannerText: String? {
+        bootstrapService.writesLockedBannerText
+    }
+
     // MARK: - Dependencies
 
     private let service = SupabaseService.shared
@@ -426,6 +434,11 @@ final class ThreadViewModel {
         notes: String? = nil,
         reloadAfterResolve: Bool = true
     ) async -> Bool {
+        if let banner = bootstrapService.writesLockedBannerText {
+            showTransientError(banner, clearAfter: .seconds(4))
+            return false
+        }
+
         error = nil
         do {
             _ = try await bootstrapService.resolve(
@@ -439,13 +452,22 @@ final class ThreadViewModel {
             }
             return true
         } catch {
-            showTransientError("Attribution update failed: \(error.localizedDescription)")
+            if let banner = bootstrapService.writesLockedBannerText {
+                showTransientError(banner, clearAfter: .seconds(4))
+            } else {
+                showTransientError("Attribution update failed: \(error.localizedDescription)")
+            }
             return false
         }
     }
 
     @discardableResult
     func resolveAttributions(reviewQueueIds: [String], projectId: String, notes: String? = nil) async -> Bool {
+        if let banner = bootstrapService.writesLockedBannerText {
+            showTransientError(banner, clearAfter: .seconds(4))
+            return false
+        }
+
         var seen = Set<String>()
         let uniqueQueueIds = reviewQueueIds.filter { seen.insert($0).inserted }
         guard !uniqueQueueIds.isEmpty else { return true }
@@ -462,7 +484,11 @@ final class ThreadViewModel {
             schedulePostResolveSync()
             return true
         } catch {
-            showTransientError("Attribution update failed: \(error.localizedDescription)")
+            if let banner = bootstrapService.writesLockedBannerText {
+                showTransientError(banner, clearAfter: .seconds(4))
+            } else {
+                showTransientError("Attribution update failed: \(error.localizedDescription)")
+            }
             return false
         }
     }
@@ -474,6 +500,11 @@ final class ThreadViewModel {
         notes: String? = nil,
         reloadAfterResolve: Bool = true
     ) async -> Bool {
+        if let banner = bootstrapService.writesLockedBannerText {
+            showTransientError(banner, clearAfter: .seconds(4))
+            return false
+        }
+
         error = nil
         do {
             _ = try await bootstrapService.dismiss(
@@ -487,13 +518,22 @@ final class ThreadViewModel {
             }
             return true
         } catch {
-            showTransientError("Attribution update failed: \(error.localizedDescription)")
+            if let banner = bootstrapService.writesLockedBannerText {
+                showTransientError(banner, clearAfter: .seconds(4))
+            } else {
+                showTransientError("Attribution update failed: \(error.localizedDescription)")
+            }
             return false
         }
     }
 
     @discardableResult
     func dismissAttributions(reviewQueueIds: [String], reason: String? = nil, notes: String? = nil) async -> Bool {
+        if let banner = bootstrapService.writesLockedBannerText {
+            showTransientError(banner, clearAfter: .seconds(4))
+            return false
+        }
+
         var seen = Set<String>()
         let uniqueQueueIds = reviewQueueIds.filter { seen.insert($0).inserted }
         guard !uniqueQueueIds.isEmpty else { return true }
@@ -510,7 +550,11 @@ final class ThreadViewModel {
             schedulePostResolveSync()
             return true
         } catch {
-            showTransientError("Attribution update failed: \(error.localizedDescription)")
+            if let banner = bootstrapService.writesLockedBannerText {
+                showTransientError(banner, clearAfter: .seconds(4))
+            } else {
+                showTransientError("Attribution update failed: \(error.localizedDescription)")
+            }
             return false
         }
     }
