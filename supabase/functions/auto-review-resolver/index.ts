@@ -16,7 +16,7 @@ import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
 import { authErrorResponse, requireEdgeSecret } from "../_shared/auth.ts";
 import { emitLineage } from "../_shared/lineage.ts";
 
-const VERSION = "auto-review-resolver_v1.1.1";
+const VERSION = "auto-review-resolver_v1.2.0";
 const DEFAULT_HIGH_CONF = 0.85;
 const DEFAULT_LOW_CONF = 0.20;
 const DEFAULT_LIMIT = 500;
