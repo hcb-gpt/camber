@@ -10,8 +10,8 @@ final class SupabaseService {
     private enum Config {
         static let supabaseURLKey = "SUPABASE_URL"
         static let supabaseAnonKeyKey = "SUPABASE_ANON_KEY"
-        static let defaultSupabaseURL = URL(string: "https://rjhdwidddtfetbwqolof.supabase.co")!
-        static let defaultAnonKey = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InJqaGR3aWRkZHRmZXRid3FvbG9mIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NjUxMTYwNDQsImV4cCI6MjA4MDY5MjA0NH0.m0BArfDxAMQrX2-50_IgircX_SwWLe5VccxewGmuWio"
+        static let fallbackSupabaseURL = URL(string: "https://example.invalid")!
+        static let fallbackAnonKey = "invalid-anon-key"
     }
 
     private struct ThreadCacheKey: Hashable {
@@ -46,12 +46,12 @@ final class SupabaseService {
             ?? "")
             .trimmingCharacters(in: .whitespacesAndNewlines)
 
-        let supabaseURL = URL(string: supabaseUrlString) ?? Config.defaultSupabaseURL
-        let resolvedAnonKey = anonKey.isEmpty ? Config.defaultAnonKey : anonKey
+        let supabaseURL = URL(string: supabaseUrlString) ?? Config.fallbackSupabaseURL
+        let resolvedAnonKey = anonKey.isEmpty ? Config.fallbackAnonKey : anonKey
 
-        if supabaseUrlString.isEmpty || anonKey.isEmpty {
+        if supabaseURL == Config.fallbackSupabaseURL || anonKey.isEmpty {
             #if DEBUG
-            print("[SupabaseService] Missing \(Config.supabaseURLKey) / \(Config.supabaseAnonKeyKey) in Info.plist; using defaults for local dev.")
+            print("[SupabaseService] Missing/invalid \(Config.supabaseURLKey) / \(Config.supabaseAnonKeyKey); check Info.plist or env vars.")
             #endif
         }
 
