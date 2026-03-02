@@ -22,7 +22,7 @@ export interface FtsFactResult {
   fact_id: string;
   project_id: string;
   fact_kind: string;
-  fact_payload: any;
+  fact_payload: Record<string, unknown>;
   as_of_at: string;
   observed_at: string;
   fts_rank: number;

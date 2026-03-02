@@ -95,6 +95,7 @@
  */
 import "jsr:@supabase/functions-js/edge-runtime.d.ts";
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
+import { validateEdgeSecret } from "../_shared/auth.ts";
 import { computeClaimCrossref } from "./claim_crossref.ts";
 import { findHomeownerOverrideConflict, isHomeownerRoleLabel } from "./homeowner_override.ts";
 
@@ -477,7 +478,7 @@ interface ProjectFactRow {
   as_of_at: string;
   observed_at: string;
   fact_kind: string;
-  fact_payload: any;
+  fact_payload: Record<string, unknown>;
   evidence_event_id: string | null;
   interaction_id: string | null;
 }
@@ -595,7 +596,13 @@ function findTermInText(textLower: string, termLower: string): number {
     const before = idx === 0 ? " " : textLower[idx - 1];
     const afterIdx = idx + termLower.length;
     const after = afterIdx >= textLower.length ? " " : textLower[afterIdx];
-    if (!isWordChar(before) && !isWordChar(after)) return idx;
+    if (
+      !isWordChar(before) && !isWordChar(after) &&
+      before !== "'" && before !== "\u2019" &&
+      after !== "'" && after !== "\u2019"
+    ) {
+      return idx;
+    }
     // Handle possessive 's / \u2019s — treat as valid word boundary
     if (!isWordChar(before) && (after === "'" || after === "\u2019")) {
       const nextIdx = afterIdx + 1;
@@ -1134,32 +1141,42 @@ Deno.serve(async (req: Request) => {
   const t0 = Date.now();
 
   if (req.method !== "POST") {
-    return new Response(JSON.stringify({ error: "POST only" }), {
-      status: 405,
-      headers: { "Content-Type": "application/json" },
-    });
+    return new Response(
+      JSON.stringify({
+        ok: false,
+        error_code: "method_not_allowed",
+        error: "POST only",
+        version: ASSEMBLY_VERSION,
+      }),
+      { status: 405, headers: { "Content-Type": "application/json" } },
+    );
   }
 
   // ========================================
   // AUTH GATE: X-Edge-Secret (internal) OR JWT (external)
   // v1.4.1: Added X-Edge-Secret path for function-to-function calls
   //         (segment-call sends X-Edge-Secret, not JWT)
+  // v2.2.1: Uses _shared/auth.ts validateEdgeSecret (constant-time comparison)
   // ========================================
-  const edgeSecretHeader = req.headers.get("X-Edge-Secret");
   const expectedSecret = Deno.env.get("EDGE_SHARED_SECRET");
   const authHeader = req.headers.get("Authorization");
 
-  // Path 1: Internal function-to-function via X-Edge-Secret
-  const hasValidEdgeSecret = !!(expectedSecret && edgeSecretHeader && edgeSecretHeader === expectedSecret);
+  // Path 1: Internal function-to-function via X-Edge-Secret (constant-time)
+  const hasValidEdgeSecret = validateEdgeSecret(req);
 
   let body: any;
   try {
     body = await req.json();
   } catch {
-    return new Response(JSON.stringify({ error: "Invalid JSON" }), {
-      status: 400,
-      headers: { "Content-Type": "application/json" },
-    });
+    return new Response(
+      JSON.stringify({
+        ok: false,
+        error_code: "bad_request",
+        error: "Invalid JSON",
+        version: ASSEMBLY_VERSION,
+      }),
+      { status: 400, headers: { "Content-Type": "application/json" } },
+    );
   }
 
   const db = createClient(
@@ -1171,11 +1188,13 @@ Deno.serve(async (req: Request) => {
   if (!hasValidEdgeSecret) {
     if (!authHeader || !authHeader.startsWith("Bearer ")) {
       return new Response(
-        JSON.stringify({ error: "missing_auth", hint: "X-Edge-Secret or Authorization: Bearer <token> required" }),
-        {
-          status: 401,
-          headers: { "Content-Type": "application/json" },
-        },
+        JSON.stringify({
+          ok: false,
+          error_code: "missing_auth",
+          error: "X-Edge-Secret or Authorization: Bearer <token> required",
+          version: ASSEMBLY_VERSION,
+        }),
+        { status: 401, headers: { "Content-Type": "application/json" } },
       );
     }
 
@@ -1187,10 +1206,15 @@ Deno.serve(async (req: Request) => {
     );
     const { data: { user }, error: authErr } = await anonClient.auth.getUser();
     if (authErr || !user) {
-      return new Response(JSON.stringify({ error: "invalid_token", detail: authErr?.message }), {
-        status: 401,
-        headers: { "Content-Type": "application/json" },
-      });
+      return new Response(
+        JSON.stringify({
+          ok: false,
+          error_code: "invalid_token",
+          error: authErr?.message ?? "Token verification failed",
+          version: ASSEMBLY_VERSION,
+        }),
+        { status: 401, headers: { "Content-Type": "application/json" } },
+      );
     }
 
     // ========================================
@@ -1212,17 +1236,27 @@ Deno.serve(async (req: Request) => {
     // At least one gate must be configured
     if (ADMIN_USER_IDS.length === 0 && allowedEmails.length === 0) {
       return new Response(
-        JSON.stringify({ error: "config_error", hint: "Neither ADMIN_USER_IDS nor ALLOWED_EMAILS configured" }),
+        JSON.stringify({
+          ok: false,
+          error_code: "config_error",
+          error: "Neither ADMIN_USER_IDS nor ALLOWED_EMAILS configured",
+          version: ASSEMBLY_VERSION,
+        }),
         { status: 500, headers: { "Content-Type": "application/json" } },
       );
     }
 
     // User must pass at least one gate
     if (!isAdmin && !isAllowedEmail) {
-      return new Response(JSON.stringify({ error: "forbidden", hint: "User not authorized" }), {
-        status: 403,
-        headers: { "Content-Type": "application/json" },
-      });
+      return new Response(
+        JSON.stringify({
+          ok: false,
+          error_code: "forbidden",
+          error: "User not authorized",
+          version: ASSEMBLY_VERSION,
+        }),
+        { status: 403, headers: { "Content-Type": "application/json" } },
+      );
     }
   }
 
@@ -2094,8 +2128,9 @@ Deno.serve(async (req: Request) => {
               return new Response(
                 JSON.stringify({
                   ok: false,
-                  error: "span_place_mentions_upsert_failed",
-                  detail: upsertErr.message,
+                  error_code: "span_place_mentions_upsert_failed",
+                  error: upsertErr.message,
+                  version: ASSEMBLY_VERSION,
                   ms: Date.now() - t0,
                 }),
                 { status: 500, headers: { "Content-Type": "application/json" } },
@@ -3392,13 +3427,12 @@ Deno.serve(async (req: Request) => {
     return new Response(
       JSON.stringify({
         ok: false,
+        error_code: "internal_error",
         error: e.message,
+        version: ASSEMBLY_VERSION,
         ms: Date.now() - t0,
       }),
-      {
-        status: 500,
-        headers: { "Content-Type": "application/json" },
-      },
+      { status: 500, headers: { "Content-Type": "application/json" } },
     );
   }
 });

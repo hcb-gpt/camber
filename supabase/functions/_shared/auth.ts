@@ -62,6 +62,21 @@ export function requireEdgeSecret(
 }
 
 /**
+ * Validate X-Edge-Secret header without source check.
+ * Pattern A-lite: for functions that accept both edge-secret and JWT paths.
+ * Uses constant-time comparison to prevent timing attacks.
+ *
+ * @param req - Incoming request
+ * @returns true if X-Edge-Secret is present and matches EDGE_SHARED_SECRET
+ */
+export function validateEdgeSecret(req: Request): boolean {
+  const edgeSecret = req.headers.get("X-Edge-Secret");
+  const expectedSecret = Deno.env.get("EDGE_SHARED_SECRET");
+  if (!expectedSecret || !edgeSecret) return false;
+  return constantTimeEqual(edgeSecret, expectedSecret);
+}
+
+/**
  * Constant-time string comparison to prevent timing attacks.
  */
 function constantTimeEqual(a: string, b: string): boolean {

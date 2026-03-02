@@ -1,0 +1,59 @@
+name: iOS Synthetics E2E Gate
+
+on:
+  schedule:
+    - cron: "0 * * * *"
+  push:
+    branches:
+      - master
+      - main
+    paths:
+      - "scripts/ios_synthetics_e2e_gate.sh"
+      - "scripts/ios_simulator_smoke_drive.sh"
+      - "scripts/synthetics/**"
+      - "ios/CamberRedline/**"
+      - ".github/workflows/ios-synthetics-e2e.yml"
+  workflow_dispatch:
+
+jobs:
+  ios-synthetics-e2e:
+    runs-on: macos-latest
+    timeout-minutes: 60
+    env:
+      SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+      SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
+      EDGE_SHARED_SECRET: ${{ secrets.EDGE_SHARED_SECRET }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Verify required secrets
+        run: |
+          for var in SUPABASE_URL SUPABASE_SERVICE_ROLE_KEY EDGE_SHARED_SECRET; do
+            if [[ -z "${!var}" ]]; then
+              echo "::error::Missing required secret: ${var}"
+              exit 1
+            fi
+          done
+
+      - name: Verify tooling
+        run: |
+          command -v jq >/dev/null 2>&1 || { echo "::error::jq not found"; exit 1; }
+          command -v xcodebuild >/dev/null 2>&1 || { echo "::error::xcodebuild not found"; exit 1; }
+
+      - name: Run iOS + synthetics E2E gate
+        run: |
+          chmod +x ./scripts/ios_synthetics_e2e_gate.sh
+          chmod +x ./scripts/ios_simulator_smoke_drive.sh
+          chmod +x ./scripts/synthetics/run_synthetics.sh
+          ./scripts/ios_synthetics_e2e_gate.sh --scenario-count 5 --poll-timeout 300 --poll-interval 10
+
+      - name: Upload E2E artifacts
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: ios-synthetics-e2e-${{ github.run_id }}
+          path: |
+            artifacts/ios_synthetics_e2e/
+            artifacts/ios_simulator_smoke/
+          retention-days: 14

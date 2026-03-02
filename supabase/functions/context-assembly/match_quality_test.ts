@@ -52,7 +52,13 @@ function findTermInText(textLower: string, termLower: string): number {
   const afterIdx = idx + termLower.length;
   const after = afterIdx >= textLower.length ? " " : textLower[afterIdx];
   const isWordChar = (ch: string) => /[a-z0-9]/i.test(ch);
-  if (isWordChar(before) || isWordChar(after)) return -1;
+  if (
+    (isWordChar(before) || isWordChar(after)) &&
+    before !== "'" && before !== "\u2019" &&
+    after !== "'" && after !== "\u2019"
+  ) {
+    return -1;
+  }
   return idx;
 }
 

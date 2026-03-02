@@ -1,8 +1,5 @@
 import "jsr:@supabase/functions-js/edge-runtime.d.ts";
-import {
-  createClient,
-  type SupabaseClient,
-} from "https://esm.sh/@supabase/supabase-js@2";
+import { createClient, type SupabaseClient } from "https://esm.sh/@supabase/supabase-js@2";
 import { getModelConfigCached } from "../_shared/model_config.ts";
 
 const FUNCTION_VERSION = "redline-assistant_v0.5.0";
@@ -35,8 +32,7 @@ type ResolutionOutcome = {
 function corsHeaders(): Record<string, string> {
   return {
     "Access-Control-Allow-Origin": "*",
-    "Access-Control-Allow-Headers":
-      "authorization, x-client-info, apikey, content-type, x-edge-secret, x-request-id",
+    "Access-Control-Allow-Headers": "authorization, x-client-info, apikey, content-type, x-edge-secret, x-request-id",
     "Access-Control-Allow-Methods": "POST, OPTIONS",
     "Access-Control-Expose-Headers":
       "x-request-id,x-contract-version,x-function-version,x-model-id,x-model-config-source",
@@ -77,9 +73,28 @@ function normalizeText(value: string): string {
 
 function tokenizeProjectQuery(value: string): string[] {
   const stopwords = new Set([
-    "what", "where", "when", "which", "this", "that", "with", "from", "about",
-    "have", "recent", "recently", "going", "today", "update", "status",
-    "projects", "project", "for", "the", "and", "you",
+    "what",
+    "where",
+    "when",
+    "which",
+    "this",
+    "that",
+    "with",
+    "from",
+    "about",
+    "have",
+    "recent",
+    "recently",
+    "going",
+    "today",
+    "update",
+    "status",
+    "projects",
+    "project",
+    "for",
+    "the",
+    "and",
+    "you",
   ]);
   return normalizeText(value)
     .split(" ")
@@ -233,7 +248,15 @@ async function fetchProjectsFallback(
       .limit(100);
 
     if (error || !Array.isArray(projectRows)) {
-      return { payload: null, source: "projects_fallback", error: `rpc: ${rpcError}; fallback: ${error?.message ?? "no_data"}` };
+      return {
+        payload: null,
+        source: "projects_fallback",
+        error: `rpc: ${rpcError}; fallback: ${error?.message ?? "no_data"}`,
+      };
+    }
+
+    if (projectRows.length === 0) {
+      return { payload: null, source: "projects_fallback", error: `rpc: ${rpcError}; fallback: projects_table_empty` };
     }
 
     return {
@@ -327,8 +350,8 @@ async function fetchDirectHighlights(
 
         const phones = Array.isArray(contactPhoneRows)
           ? (contactPhoneRows as Array<Record<string, unknown>>)
-              .map((r) => toStringOrNull(r.phone))
-              .filter((p): p is string => p !== null)
+            .map((r) => toStringOrNull(r.phone))
+            .filter((p): p is string => p !== null)
           : [];
 
         if (phones.length > 0) {
@@ -348,9 +371,7 @@ async function fetchDirectHighlights(
                 event_at_utc: toStringOrNull(row.sent_at),
                 channel: "sms",
                 contact_name: toStringOrNull(row.contact_name),
-                summary_text: toStringOrNull(row.content)
-                  ? String(row.content).slice(0, 280)
-                  : null,
+                summary_text: toStringOrNull(row.content) ? String(row.content).slice(0, 280) : null,
               });
             }
           }
@@ -359,16 +380,18 @@ async function fetchDirectHighlights(
     }
   } catch (err: unknown) {
     console.warn(
-      `[redline-assistant] direct highlights query failed: ${
-        err instanceof Error ? err.message : "unknown"
-      }`,
+      "[redline-assistant] fetchDirectHighlights failed",
+      {
+        fn: "fetchDirectHighlights",
+        projectId,
+        error: err instanceof Error ? err.message : "unknown",
+        stack: err instanceof Error ? err.stack : undefined,
+      },
     );
   }
 
   // Sort by event time descending, limit to 10
-  highlights.sort((a, b) =>
-    (b.event_at_utc ?? "").localeCompare(a.event_at_utc ?? "")
-  );
+  highlights.sort((a, b) => (b.event_at_utc ?? "").localeCompare(a.event_at_utc ?? ""));
   return highlights.slice(0, 10);
 }
 
@@ -429,13 +452,15 @@ Deno.serve(async (req: Request): Promise<Response> => {
     if (!supabaseUrl || !supabaseKey) {
       return json(
         { ok: false, error: "missing_supabase_config", request_id: requestId, function_version: FUNCTION_VERSION },
-        500, requestId,
+        500,
+        requestId,
       );
     }
     if (!openAiKey) {
       return json(
         { ok: false, error: "missing_openai_key", request_id: requestId, function_version: FUNCTION_VERSION },
-        500, requestId,
+        500,
+        requestId,
       );
     }
 
@@ -445,7 +470,8 @@ Deno.serve(async (req: Request): Promise<Response> => {
     } catch {
       return json(
         { ok: false, error: "invalid_json", request_id: requestId, function_version: FUNCTION_VERSION },
-        400, requestId,
+        400,
+        requestId,
       );
     }
 
@@ -453,7 +479,8 @@ Deno.serve(async (req: Request): Promise<Response> => {
     if (!userMessage) {
       return json(
         { ok: false, error: "message_required", request_id: requestId, function_version: FUNCTION_VERSION },
-        400, requestId,
+        400,
+        requestId,
       );
     }
 
@@ -479,10 +506,10 @@ Deno.serve(async (req: Request): Promise<Response> => {
     // Extract projects roster from grounded context
     const projectsRoster: RosterProject[] = Array.isArray(groundedPayload?.projects_roster)
       ? (groundedPayload!.projects_roster as Array<Record<string, unknown>>).map((r) => ({
-          id: String(r.id ?? ""),
-          name: String(r.name ?? "Unknown Project"),
-          status: toStringOrNull(r.status),
-        })).filter((r) => r.id.length > 0)
+        id: String(r.id ?? ""),
+        name: String(r.name ?? "Unknown Project"),
+        status: toStringOrNull(r.status),
+      })).filter((r) => r.id.length > 0)
       : [];
 
     // Project resolution: explicit > message-inferred > contact-based
@@ -570,8 +597,7 @@ Deno.serve(async (req: Request): Promise<Response> => {
       contact_project_candidates: contactCandidates,
     };
 
-    const systemPrompt =
-      `You are the HCB Redline Assistant for Heartwood Custom Builders.
+    const systemPrompt = `You are the HCB Redline Assistant for Heartwood Custom Builders.
 You answer project questions for operators with concise, factual guidance.
 
 DATA GROUNDING RULES (strict):
@@ -601,15 +627,26 @@ ${JSON.stringify(contextPacket, null, 2)}
 
     if (provider !== "openai") {
       return json(
-        { ok: false, error: "unsupported_model_provider", provider, request_id: requestId, function_version: FUNCTION_VERSION },
-        500, requestId,
+        {
+          ok: false,
+          error: "unsupported_model_provider",
+          provider,
+          request_id: requestId,
+          function_version: FUNCTION_VERSION,
+        },
+        500,
+        requestId,
       );
     }
 
     let activeModel = primaryModel;
     let openAiResponse = await openAiChatCompletionsStream(
-      openAiKey, primaryModel, modelConfig.maxTokens, modelConfig.temperature,
-      systemPrompt, userMessage,
+      openAiKey,
+      primaryModel,
+      modelConfig.maxTokens,
+      modelConfig.temperature,
+      systemPrompt,
+      userMessage,
     );
 
     if (!openAiResponse.ok && fallbackModel && fallbackModel !== primaryModel) {
@@ -619,8 +656,12 @@ ${JSON.stringify(contextPacket, null, 2)}
       );
       activeModel = fallbackModel;
       openAiResponse = await openAiChatCompletionsStream(
-        openAiKey, fallbackModel, modelConfig.maxTokens, modelConfig.temperature,
-        systemPrompt, userMessage,
+        openAiKey,
+        fallbackModel,
+        modelConfig.maxTokens,
+        modelConfig.temperature,
+        systemPrompt,
+        userMessage,
       );
     }
 
@@ -628,13 +669,16 @@ ${JSON.stringify(contextPacket, null, 2)}
       const errorText = await openAiResponse.text();
       return json(
         {
-          ok: false, error: "llm_error", details: errorText,
+          ok: false,
+          error: "llm_error",
+          details: errorText,
           status: openAiResponse.status,
           request_id: requestId,
           function_version: FUNCTION_VERSION,
           contract_version: CONTRACT_VERSION,
         },
-        500, requestId,
+        500,
+        requestId,
       );
     }
 
@@ -656,12 +700,15 @@ ${JSON.stringify(contextPacket, null, 2)}
     console.error("[redline-assistant] Error:", message);
     return json(
       {
-        ok: false, error: "internal_error", details: message,
+        ok: false,
+        error: "internal_error",
+        details: message,
         request_id: requestId,
         function_version: FUNCTION_VERSION,
         contract_version: CONTRACT_VERSION,
       },
-      500, requestId,
+      500,
+      requestId,
     );
   }
 });

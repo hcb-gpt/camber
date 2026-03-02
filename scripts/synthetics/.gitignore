@@ -1,0 +1,5 @@
+# Transient results from synthetic test runs
+results/*.json
+results/*.raw
+results/*.normalized
+!results/.gitkeep

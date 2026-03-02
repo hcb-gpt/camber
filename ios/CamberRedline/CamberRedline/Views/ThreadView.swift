@@ -102,6 +102,7 @@ struct ThreadView: View {
     @State private var spanOverrides: [UUID: SMSProjectAssignment] = [:]
     @State private var activeNoteContext: ThreadNoteContext?
     @State private var noteDraft = ""
+    @State private var isContactInfoPresented = false
     private let bottomAnchorID = "thread-bottom-anchor"
     private let topLoadThreshold: CGFloat = -80
     private static let smsStripeColors: [Color] = [
@@ -109,6 +110,7 @@ struct ThreadView: View {
         Color(red: 0.18, green: 0.26, blue: 0.40),
         Color(red: 0.38, green: 0.24, blue: 0.18),
     ]
+    @Environment(\.openURL) private var openURL
     private var reviewProjectOptions: [SMSProjectAssignment] {
         let mapped = viewModel.reviewProjects.enumerated().map { index, project in
             SMSProjectAssignment(projectId: project.id, name: project.name, colorIndex: index)
@@ -241,10 +243,21 @@ struct ThreadView: View {
                         unreadCount: contact.ungradedCount,
                         phone: contact.phone,
                         onCall: {
-                            viewModel.showTransientError("Call action not wired in Redline yet.")
+                            guard let phone = contact.phone, !phone.isEmpty else {
+                                viewModel.showTransientError("No phone number on file.")
+                                return
+                            }
+
+                            let sanitized = phone.filter { $0.isNumber || $0 == "+" }
+                            guard !sanitized.isEmpty, let url = URL(string: "tel://\(sanitized)") else {
+                                viewModel.showTransientError("Invalid phone number.")
+                                return
+                            }
+
+                            openURL(url)
                         },
                         onInfo: {
-                            viewModel.showTransientError("Contact details panel is coming soon.")
+                            isContactInfoPresented = true
                         }
                     )
                     .padding(.horizontal, 16)
@@ -385,6 +398,9 @@ struct ThreadView: View {
                     await viewModel.stopInteractionsSubscription()
                 }
             }
+        }
+        .sheet(isPresented: $isContactInfoPresented) {
+            ContactInfoView(contact: contact)
         }
         .sheet(item: $activeNoteContext) { context in
             NoteEditorSheet(

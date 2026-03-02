@@ -33,6 +33,9 @@ verify_jwt = false
 [functions.zapier-call-ingest]
 verify_jwt = false
 
+[functions.sms-beside-batch-ingest]
+verify_jwt = false
+
 [functions.striking-detect]
 verify_jwt = false
 
@@ -58,6 +61,15 @@ verify_jwt = false
 verify_jwt = false
 
 [functions.bootstrap-review]
+verify_jwt = false
+
+[functions.truth-graph-probe]
+verify_jwt = false
+
+[functions.scheduler-backfill]
+verify_jwt = false
+
+[functions.time-resolver]
 verify_jwt = false
 
 [functions.redline-assistant]

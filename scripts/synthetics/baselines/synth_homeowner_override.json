@@ -1,0 +1,17 @@
+{
+  "scenario_id": "synth_homeowner_override",
+  "expected_decision": "assign",
+  "expected_must_not_be": ["none"],
+  "expected_guardrails": [],
+  "baseline_snapshot": {
+    "decision": "assign",
+    "confidence_range": [0.70, 1.00],
+    "project_id": "00000000-0000-0000-0000-000000000401",
+    "applied_project_id": "00000000-0000-0000-0000-000000000401",
+    "candidates_snapshot_min_length": 1,
+    "guardrail_flags": {
+      "homeowner_override": true,
+      "homeowner_override_project_id": "00000000-0000-0000-0000-000000000401"
+    }
+  }
+}
