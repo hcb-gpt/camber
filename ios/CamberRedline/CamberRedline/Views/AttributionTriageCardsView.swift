@@ -117,9 +117,22 @@ struct AttributionTriageCardsView: View {
                         projects: viewModel.projectOptions(for: card),
                         onSelect: { projectId in
                             selectedProjectIdByCardId[card.id] = projectId
+                            let notes = pendingResolveNoteByCardId[card.id]
+                            let shouldResolveNow = pickerMode == .commentOnly
+
                             pickerCard = nil
                             pickerMode = .project
                             showProjectPicker = false
+
+                            if shouldResolveNow {
+                                Task {
+                                    await viewModel.resolve(card, to: projectId, notes: notes)
+                                    if !viewModel.queue.contains(where: { $0.id == card.id }) {
+                                        selectedProjectIdByCardId[card.id] = nil
+                                        pendingResolveNoteByCardId[card.id] = nil
+                                    }
+                                }
+                            }
                         },
                         onDismissItem: {
                             Task {
@@ -161,7 +174,16 @@ struct AttributionTriageCardsView: View {
                             let trimmed = note.trimmingCharacters(in: .whitespacesAndNewlines)
                             let finalNote = trimmed.isEmpty ? nil : trimmed
                             pendingResolveNoteByCardId[card.id] = finalNote
-                            if selectedProjectIdByCardId[card.id] == nil {
+
+                            if let selectedProjectId = selectedProjectIdByCardId[card.id] {
+                                Task {
+                                    await viewModel.resolve(card, to: selectedProjectId, notes: finalNote)
+                                    if !viewModel.queue.contains(where: { $0.id == card.id }) {
+                                        selectedProjectIdByCardId[card.id] = nil
+                                        pendingResolveNoteByCardId[card.id] = nil
+                                    }
+                                }
+                            } else {
                                 pickerMode = .commentOnly
                                 pickerCard = card
                                 showProjectPicker = true
