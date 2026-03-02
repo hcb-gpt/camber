@@ -4,7 +4,7 @@ import { computeTruthGraph, type TruthGraphHydration, type TruthGraphRepairActio
 import { requireEdgeSecret } from "../_shared/auth.ts";
 import { checkTopLevelEdgeSecret, checkTopLevelEdgeSecretOrAnonKey } from "./auth_gate.ts";
 
-const FUNCTION_VERSION = "redline-thread_v3.4.2";
+const FUNCTION_VERSION = "redline-thread_v3.4.3";
 /**
  * v3.2.1 - Fix typo interactionClaims -> _interactionClaims
  * v3.1.2 - iOS Contract Fix (P0 Unbrick)
@@ -14,6 +14,7 @@ const FUNCTION_VERSION = "redline-thread_v3.4.2";
  * v3.4.0 - Truth Graph endpoint + idempotent repair hooks (truth-forcing surface)
  * v3.4.1 - Hotfix: require auth for non-health routes (edge secret or iOS anon key on iOS routes)
  * v3.4.2 - Hotfix: accept any Bearer token on iOS routes (prevent headerless unauth 200s)
+ * v3.4.3 - Hotfix: validate iOS Bearer/apikey against SUPABASE_ANON_KEY (reject junk tokens)
  */
 const OWNER_SMS_USER_IDS = ["+17066889158", "usr_4PCSTDQ8N161KAC4GG7AF9CR94"];
 const OUTBOUND_INFERENCE_WINDOW_MS = 30 * 60 * 1000;
@@ -3044,7 +3045,9 @@ Deno.serve(async (req: Request) => {
       // Allow anon-key auth only on iOS-known routes; require X-Edge-Secret everywhere else.
       if (req.method === "GET") {
         if (action === "contacts" || action === "reset_clock") return true;
-        if (contactIdParam) return true;
+        // Only allow query-param thread fetches (iOS) when no action is present.
+        // Prevent `contact_id`/`contact_key` from becoming a blanket bypass for other `action=*` GET routes.
+        if (!action && contactIdParam) return true;
         if (apiRoute && (apiRoute.kind === "contacts" || apiRoute.kind === "thread" || apiRoute.kind === "spans")) {
           return true;
         }
