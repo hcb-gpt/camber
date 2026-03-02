@@ -48,9 +48,30 @@ IDS_FILE=""
 while [[ $# -gt 0 ]]; do
   case "$1" in
     --dry-run)     DRY_RUN=true; shift ;;
-    --batch-size)  BATCH_SIZE="$2"; shift 2 ;;
-    --ids-file)    IDS_FILE="$2"; shift 2 ;;
-    --delay-ms)    BATCH_DELAY_MS="$2"; shift 2 ;;
+    --batch-size)
+      if [[ $# -lt 2 ]] || [[ -z "${2:-}" ]] || [[ "${2:-}" == --* ]]; then
+        echo "ERROR: --batch-size requires a numeric value" >&2
+        exit 2
+      fi
+      BATCH_SIZE="$2"
+      shift 2
+      ;;
+    --ids-file)
+      if [[ $# -lt 2 ]] || [[ -z "${2:-}" ]] || [[ "${2:-}" == --* ]]; then
+        echo "ERROR: --ids-file requires a file path" >&2
+        exit 2
+      fi
+      IDS_FILE="$2"
+      shift 2
+      ;;
+    --delay-ms)
+      if [[ $# -lt 2 ]] || [[ -z "${2:-}" ]] || [[ "${2:-}" == --* ]]; then
+        echo "ERROR: --delay-ms requires a numeric value" >&2
+        exit 2
+      fi
+      BATCH_DELAY_MS="$2"
+      shift 2
+      ;;
     *)             echo "Unknown arg: $1"; exit 1 ;;
   esac
 done
