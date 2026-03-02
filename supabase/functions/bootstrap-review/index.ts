@@ -1,7 +1,8 @@
 import "jsr:@supabase/functions-js/edge-runtime.d.ts";
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
+import { checkTopLevelEdgeSecretOrAnonKey } from "./auth_gate.ts";
 
-const FUNCTION_VERSION = "bootstrap-review_v1.2.0";
+const FUNCTION_VERSION = "bootstrap-review_v1.3.0";
 type ReviewQueueSource = "pipeline" | "redline";
 
 // ─── Helpers ─────────────────────────────────────────────────────────
@@ -1686,6 +1687,30 @@ Deno.serve(async (req: Request) => {
 
   const t0 = Date.now();
   const url = new URL(req.url);
+
+  // Auth gate
+  // Health check — fast path, no auth
+  if (url.searchParams.get("mode") === "health") {
+    const db = createClient(
+      Deno.env.get("SUPABASE_URL")!,
+      Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!,
+    );
+    return json({ ok: true, version: FUNCTION_VERSION, ms: Date.now() - t0 });
+  }
+
+  const topLevelAuthResult = await checkTopLevelEdgeSecretOrAnonKey(req);
+  if (!topLevelAuthResult.ok) {
+    return json(
+      {
+        ok: false,
+        error_code: topLevelAuthResult.error_code,
+        error: topLevelAuthResult.error,
+        function_version: FUNCTION_VERSION,
+      },
+      topLevelAuthResult.status,
+    );
+  }
+
   const db = createClient(
     Deno.env.get("SUPABASE_URL")!,
     Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!,

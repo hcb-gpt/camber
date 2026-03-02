@@ -20,6 +20,8 @@ final class BootstrapService {
         string: "https://rjhdwidddtfetbwqolof.supabase.co/functions/v1/bootstrap-review"
     )!
 
+    private let anonKey = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InJqaGR3aWRkZHRmZXRid3FvbG9mIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NjUxMTYwNDQsImV4cCI6MjA4MDY5MjA0NH0.m0BArfDxAMQrX2-50_IgircX_SwWLe5VccxewGmuWio"
+
     private let session: URLSession
     private let decoder: JSONDecoder
     private let encoder: JSONEncoder
@@ -46,7 +48,10 @@ final class BootstrapService {
             throw BootstrapServiceError.invalidURL
         }
 
-        let (data, response) = try await session.data(from: url)
+        var request = URLRequest(url: url)
+        request.setValue("Bearer \(anonKey)", forHTTPHeaderField: "Authorization")
+
+        let (data, response) = try await session.data(for: request)
         try validateHTTPResponse(response)
 
         let decoded = try decoder.decode(ReviewQueueResponse.self, from: data)
@@ -150,7 +155,10 @@ final class BootstrapService {
             throw BootstrapServiceError.invalidURL
         }
 
-        let (data, response) = try await session.data(from: url)
+        var request = URLRequest(url: url)
+        request.setValue("Bearer \(anonKey)", forHTTPHeaderField: "Authorization")
+
+        let (data, response) = try await session.data(for: request)
         try validateHTTPResponse(response)
         do {
             let decoded = try decoder.decode(AssistantContextPacket.self, from: data)
@@ -203,6 +211,7 @@ final class BootstrapService {
         var request = URLRequest(url: assistantChatURL)
         request.httpMethod = "POST"
         request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        request.setValue("Bearer \(anonKey)", forHTTPHeaderField: "Authorization")
 
         let body: [String: Any?] = [
             "message": message,
@@ -290,6 +299,7 @@ final class BootstrapService {
         var request = URLRequest(url: assistantFeedbackURL)
         request.httpMethod = "POST"
         request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        request.setValue("Bearer \(anonKey)", forHTTPHeaderField: "Authorization")
         request.httpBody = try encoder.encode(payload)
 
         let (data, response) = try await session.data(for: request)
@@ -315,6 +325,7 @@ final class BootstrapService {
         var request = URLRequest(url: url)
         request.httpMethod = "POST"
         request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        request.setValue("Bearer \(anonKey)", forHTTPHeaderField: "Authorization")
         request.httpBody = try encoder.encode(body)
 
         let (data, response) = try await session.data(for: request)
