@@ -94,6 +94,7 @@ struct ThreadView: View {
     var viewModel: ThreadViewModel
     let contact: Contact
     let orderedContacts: [Contact]
+    @AppStorage("internal_truth_graph_status_card_enabled") private var isTruthGraphStatusCardEnabled = true
     @State private var hasScrolledToLatest = false
     @State private var didTriggerTopPagination = false
     @State private var hasUserScrolledThread = false
@@ -103,6 +104,7 @@ struct ThreadView: View {
     @State private var activeNoteContext: ThreadNoteContext?
     @State private var noteDraft = ""
     @State private var isContactInfoPresented = false
+    @State private var isRunningTruthGraphRepair = false
     private let bottomAnchorID = "thread-bottom-anchor"
     private let topLoadThreshold: CGFloat = -80
     private static let smsStripeColors: [Color] = [
@@ -272,19 +274,15 @@ struct ThreadView: View {
 
                     let missingCount = missingAttributions(in: groups)
                     if missingCount > 0 {
-                        HStack(spacing: 8) {
-                            Image(systemName: "exclamationmark.triangle.fill")
-                            Text("\(missingCount) attribution\(missingCount == 1 ? "" : "s") still missing in this thread")
-                                .font(.caption)
-                                .fontWeight(.semibold)
-                            Spacer()
+                        if isTruthGraphStatusCardEnabled {
+                            truthGraphStatusCard(missingCount: missingCount)
+                                .padding(.horizontal, 16)
+                                .padding(.bottom, 10)
+                        } else {
+                            legacyMissingAttributionBanner(missingCount: missingCount)
+                                .padding(.horizontal, 16)
+                                .padding(.bottom, 10)
                         }
-                        .foregroundStyle(Color(red: 0.95, green: 0.62, blue: 0.23))
-                        .padding(.horizontal, 12)
-                        .padding(.vertical, 8)
-                        .background(Color(red: 0.20, green: 0.12, blue: 0.05), in: RoundedRectangle(cornerRadius: 10))
-                        .padding(.horizontal, 16)
-                        .padding(.bottom, 10)
                     }
 
                     ForEach(Array(groups.enumerated()), id: \.element.id) { index, group in
@@ -571,6 +569,111 @@ struct ThreadView: View {
                 return partial + max(0, pendingQueueIds.count - optimisticResolvedQueueIds.count)
             case .voicemail, .aiSummary:
                 return partial
+            }
+        }
+    }
+
+    @ViewBuilder
+    private func legacyMissingAttributionBanner(missingCount: Int) -> some View {
+        HStack(spacing: 8) {
+            Image(systemName: "exclamationmark.triangle.fill")
+            Text("\(missingCount) attribution\(missingCount == 1 ? "" : "s") still missing in this thread")
+                .font(.caption)
+                .fontWeight(.semibold)
+            Spacer()
+        }
+        .foregroundStyle(Color(red: 0.95, green: 0.62, blue: 0.23))
+        .padding(.horizontal, 12)
+        .padding(.vertical, 8)
+        .background(Color(red: 0.20, green: 0.12, blue: 0.05), in: RoundedRectangle(cornerRadius: 10))
+    }
+
+    @ViewBuilder
+    private func truthGraphStatusCard(missingCount: Int) -> some View {
+        VStack(alignment: .leading, spacing: 10) {
+            HStack(spacing: 8) {
+                Image(systemName: "point.3.connected.trianglepath.dotted")
+                    .font(.subheadline)
+                    .foregroundStyle(Color(red: 0.95, green: 0.62, blue: 0.23))
+                Text("Truth Graph status")
+                    .font(.caption)
+                    .fontWeight(.semibold)
+                    .foregroundStyle(.white)
+                Text("INTERNAL")
+                    .font(.caption2)
+                    .fontWeight(.bold)
+                    .foregroundStyle(Color.black.opacity(0.85))
+                    .padding(.horizontal, 6)
+                    .padding(.vertical, 2)
+                    .background(Color(red: 0.95, green: 0.62, blue: 0.23), in: Capsule())
+                Spacer()
+                if isRunningTruthGraphRepair {
+                    ProgressView()
+                        .tint(Color(red: 0.95, green: 0.62, blue: 0.23))
+                        .scaleEffect(0.8)
+                }
+            }
+
+            Text("\(missingCount) attribution\(missingCount == 1 ? "" : "s") still missing. Evidence is visible and repairable from this thread.")
+                .font(.caption)
+                .foregroundStyle(Color(.systemGray2))
+
+            Text("Repair routes: refresh thread state, refresh project candidates, then resolve missing items in call cards below.")
+                .font(.caption2)
+                .foregroundStyle(Color(.systemGray3))
+
+            HStack(spacing: 8) {
+                Button {
+                    runTruthGraphRepair(refreshProjects: false)
+                } label: {
+                    Label("Refresh Thread", systemImage: "arrow.clockwise")
+                        .font(.caption2)
+                        .fontWeight(.semibold)
+                }
+                .buttonStyle(.borderedProminent)
+                .tint(Color(red: 0.95, green: 0.62, blue: 0.23))
+                .disabled(isRunningTruthGraphRepair)
+
+                Button {
+                    runTruthGraphRepair(refreshProjects: true)
+                } label: {
+                    Label("Refresh + Projects", systemImage: "wand.and.stars")
+                        .font(.caption2)
+                        .fontWeight(.semibold)
+                }
+                .buttonStyle(.bordered)
+                .tint(Color(red: 0.95, green: 0.62, blue: 0.23))
+                .disabled(isRunningTruthGraphRepair)
+            }
+        }
+        .padding(12)
+        .background(
+            LinearGradient(
+                colors: [
+                    Color(red: 0.14, green: 0.10, blue: 0.06),
+                    Color(red: 0.09, green: 0.08, blue: 0.12),
+                ],
+                startPoint: .topLeading,
+                endPoint: .bottomTrailing
+            ),
+            in: RoundedRectangle(cornerRadius: 12)
+        )
+        .overlay(
+            RoundedRectangle(cornerRadius: 12)
+                .stroke(Color(red: 0.95, green: 0.62, blue: 0.23).opacity(0.35), lineWidth: 1)
+        )
+    }
+
+    private func runTruthGraphRepair(refreshProjects: Bool) {
+        guard !isRunningTruthGraphRepair else { return }
+        isRunningTruthGraphRepair = true
+        Task {
+            await viewModel.loadThread(contactId: contact.contactId)
+            if refreshProjects {
+                await viewModel.loadReviewProjectsIfNeeded()
+            }
+            await MainActor.run {
+                isRunningTruthGraphRepair = false
             }
         }
     }
