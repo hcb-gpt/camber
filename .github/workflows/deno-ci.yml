@@ -27,6 +27,14 @@ jobs:
         run: |
           deno lint supabase/functions || (echo "deno lint failed" && exit 1)
 
+      - name: Deno test (redline-thread auth/runtime probes)
+        run: |
+          deno test \
+            --allow-read=supabase/functions/redline-thread/index.ts \
+            supabase/functions/redline-thread/auth_gate_test.ts \
+            supabase/functions/redline-thread/truth_graph_test.ts \
+            || (echo "deno tests failed" && exit 1)
+
       # Typecheck disabled until TS errors in legacy code are fixed
       # - name: Deno check (typecheck entrypoints)
       #   run: |
