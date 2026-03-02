@@ -1,8 +1,9 @@
 import SwiftUI
+import Observation
 
 struct InboxView: View {
-    var contactListViewModel: ContactListViewModel
-    var threadViewModel: ThreadViewModel
+    @Bindable var contactListViewModel: ContactListViewModel
+    @Bindable var threadViewModel: ThreadViewModel
     @Binding var selectedTab: RedlineTab
     @Binding var isTriagePresented: Bool
 
@@ -15,4 +16,3 @@ struct InboxView: View {
         )
     }
 }
-
