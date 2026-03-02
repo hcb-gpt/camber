@@ -21,6 +21,7 @@ struct ReviewItem: Codable, Identifiable {
 
     enum CodingKeys: String, CodingKey {
         case id
+        case reviewQueueId = "review_queue_id"
         case spanId = "span_id"
         case interactionId = "interaction_id"
         case createdAt = "created_at"
@@ -40,10 +41,25 @@ struct ReviewItem: Codable, Identifiable {
     init(from decoder: Decoder) throws {
         let container = try decoder.container(keyedBy: CodingKeys.self)
 
-        id = try container.decode(String.self, forKey: .id)
         interactionId = try container.decode(String.self, forKey: .interactionId)
 
         spanId = (try container.decodeIfPresent(String.self, forKey: .spanId))?.trimmedOrNil ?? ""
+
+        // Some backends return `review_queue_id` instead of `id` (or omit `id` entirely).
+        // For read-only degraded mode, fall back to `span_id` so cards still render.
+        let idCandidate = (try? container.decode(String.self, forKey: .id))
+            ?? (try? container.decode(String.self, forKey: .reviewQueueId))
+            ?? spanId
+        let trimmedId = idCandidate.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmedId.isEmpty else {
+            throw DecodingError.dataCorruptedError(
+                forKey: .id,
+                in: container,
+                debugDescription: "Missing id/review_queue_id/span_id"
+            )
+        }
+        id = trimmedId
+
         transcriptSegment = (try container.decodeIfPresent(String.self, forKey: .transcriptSegment))?.trimmedOrNil ?? ""
 
         createdAt = try container.decodeIfPresent(String.self, forKey: .createdAt)
@@ -57,6 +73,25 @@ struct ReviewItem: Codable, Identifiable {
         reasons = Self.decodeLossyStringArray(from: container, key: .reasons)
         reasonCodes = Self.decodeLossyStringArray(from: container, key: .reasonCodes)
         decision = try container.decodeIfPresent(String.self, forKey: .decision)
+    }
+
+    func encode(to encoder: Encoder) throws {
+        var container = encoder.container(keyedBy: CodingKeys.self)
+        try container.encode(id, forKey: .id)
+        try container.encode(spanId, forKey: .spanId)
+        try container.encode(interactionId, forKey: .interactionId)
+        try container.encodeIfPresent(createdAt, forKey: .createdAt)
+        try container.encodeIfPresent(eventAt, forKey: .eventAt)
+        try container.encode(transcriptSegment, forKey: .transcriptSegment)
+        try container.encodeIfPresent(confidence, forKey: .confidence)
+        try container.encodeIfPresent(aiGuessProjectId, forKey: .aiGuessProjectId)
+        try container.encodeIfPresent(contactName, forKey: .contactName)
+        try container.encodeIfPresent(humanSummary, forKey: .humanSummary)
+        try container.encodeIfPresent(fullTranscript, forKey: .fullTranscript)
+        try container.encodeIfPresent(contextPayload, forKey: .contextPayload)
+        try container.encodeIfPresent(reasons, forKey: .reasons)
+        try container.encodeIfPresent(reasonCodes, forKey: .reasonCodes)
+        try container.encodeIfPresent(decision, forKey: .decision)
     }
 
     var sortDate: Date {

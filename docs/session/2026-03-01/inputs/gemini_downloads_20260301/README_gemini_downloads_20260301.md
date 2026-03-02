@@ -16,6 +16,8 @@ They are included verbatim for traceability; **do not treat them as engineering 
 - `inputs/gemini_downloads_20260301/GEMINI_Math_included.md`
 - `inputs/gemini_downloads_20260301/GEMINI_Math_included_copy.md`
 - `inputs/gemini_downloads_20260301/camber_evidential_inference_weak_supervision_brief_for_gemini31.docx`
+- `inputs/gemini_downloads_20260301/gemini_peer_review_index.md`
+- `inputs/gemini_downloads_20260301/old_specs_and_contracts/` (archive)
 - `inputs/gemini_downloads_20260301/targeted_response_to_required_recon_for_gemini31.md`
 
 ## How these are used

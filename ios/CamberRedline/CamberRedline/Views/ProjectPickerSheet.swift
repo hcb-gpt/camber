@@ -9,6 +9,8 @@ struct ProjectPickerSheet: View {
     let onDismissItem: () -> Void
     let onBizDevNoProject: () -> Void
     var showsDismissAction: Bool = true
+    var writesLocked: Bool = false
+    var writesLockedBannerText: String? = nil
 
     @State private var searchText = ""
 
@@ -21,6 +23,22 @@ struct ProjectPickerSheet: View {
     var body: some View {
         NavigationStack {
             List {
+                if writesLocked, let writesLockedBannerText {
+                    Section {
+                        HStack(alignment: .top, spacing: 10) {
+                            Image(systemName: "lock.fill")
+                                .font(.caption)
+                                .foregroundStyle(.secondary)
+                                .padding(.top, 1)
+                            Text(writesLockedBannerText)
+                                .font(.caption)
+                                .foregroundStyle(.secondary)
+                                .fixedSize(horizontal: false, vertical: true)
+                        }
+                        .padding(.vertical, 4)
+                    }
+                }
+
                 Section {
                     ForEach(filtered) { project in
                         Button {
@@ -38,6 +56,7 @@ struct ProjectPickerSheet: View {
                                 }
                             }
                         }
+                        .disabled(writesLocked)
                     }
                 } header: {
                     Text("Pick a project")
@@ -51,6 +70,7 @@ struct ProjectPickerSheet: View {
                         } label: {
                             Label("BizDev / No Project", systemImage: "briefcase")
                         }
+                        .disabled(writesLocked)
 
                         Button(role: .destructive) {
                             dismiss()
@@ -58,6 +78,7 @@ struct ProjectPickerSheet: View {
                         } label: {
                             Label("Dismiss this item", systemImage: "xmark.circle")
                         }
+                        .disabled(writesLocked)
                     }
                 }
             }

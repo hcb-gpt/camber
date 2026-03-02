@@ -34,6 +34,18 @@ final class ThreadViewModel {
     var notesByTarget: [String: NoteEntry] = [:]
     var reviewProjects: [ReviewProject] = []
     var contactSequence: [Contact] = []
+    var truthGraphStatus: TruthGraphResponse?
+    var truthGraphInteractionId: String?
+    var isTruthGraphLoading = false
+    var truthGraphError: String?
+
+    var isAttributionWritesLocked: Bool {
+        bootstrapService.writeLockState != nil
+    }
+
+    var attributionWritesLockedBannerText: String? {
+        bootstrapService.writesLockedBannerText
+    }
 
     // MARK: - Dependencies
 
@@ -98,6 +110,9 @@ final class ThreadViewModel {
         guard !isLoading else { return }
         isLoading = true
         error = nil
+        truthGraphStatus = nil
+        truthGraphInteractionId = nil
+        truthGraphError = nil
         defer { isLoading = false }
 
         currentThreadOffset = 0
@@ -105,6 +120,30 @@ final class ThreadViewModel {
         hasOlderThreadItems = false
         await loadThreadPage(contactId: contactId, offset: 0, resetItems: true)
         prefetchNextContact(after: contactId)
+    }
+
+    func loadTruthGraphStatusIfNeeded(interactionId: String, force: Bool = false) async {
+        let trimmed = interactionId.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { return }
+
+        if !force,
+           truthGraphInteractionId == trimmed,
+           truthGraphStatus != nil
+        {
+            return
+        }
+
+        guard !isTruthGraphLoading else { return }
+        isTruthGraphLoading = true
+        truthGraphError = nil
+        truthGraphInteractionId = trimmed
+        defer { isTruthGraphLoading = false }
+
+        do {
+            truthGraphStatus = try await service.fetchTruthGraph(interactionId: trimmed)
+        } catch {
+            truthGraphError = error.localizedDescription
+        }
     }
 
     func loadOlderThreadPageIfNeeded() async {
@@ -392,39 +431,64 @@ final class ThreadViewModel {
     func resolveAttribution(
         reviewQueueId: String,
         projectId: String,
+        notes: String? = nil,
         reloadAfterResolve: Bool = true
     ) async -> Bool {
+        if let banner = bootstrapService.writesLockedBannerText {
+            showTransientError(banner, clearAfter: .seconds(4))
+            return false
+        }
+
         error = nil
         do {
-            _ = try await service.resolveReviewQueueItem(
-                reviewQueueId: reviewQueueId,
-                chosenProjectId: projectId
+            _ = try await bootstrapService.resolve(
+                queueId: reviewQueueId,
+                projectId: projectId,
+                notes: notes,
+                userId: "ios_redline"
             )
             if reloadAfterResolve {
                 schedulePostResolveSync()
             }
             return true
         } catch {
-            showTransientError("Attribution update failed: \(error.localizedDescription)")
+            if let banner = bootstrapService.writesLockedBannerText {
+                showTransientError(banner, clearAfter: .seconds(4))
+            } else {
+                showTransientError("Attribution update failed: \(error.localizedDescription)")
+            }
             return false
         }
     }
 
     @discardableResult
-    func resolveAttributions(reviewQueueIds: [String], projectId: String) async -> Bool {
+    func resolveAttributions(reviewQueueIds: [String], projectId: String, notes: String? = nil) async -> Bool {
+        if let banner = bootstrapService.writesLockedBannerText {
+            showTransientError(banner, clearAfter: .seconds(4))
+            return false
+        }
+
         var seen = Set<String>()
         let uniqueQueueIds = reviewQueueIds.filter { seen.insert($0).inserted }
         guard !uniqueQueueIds.isEmpty else { return true }
 
         do {
-            _ = try await service.resolveReviewQueueItemsBatch(
-                reviewQueueIds: uniqueQueueIds,
-                chosenProjectId: projectId
-            )
+            for queueId in uniqueQueueIds {
+                _ = try await bootstrapService.resolve(
+                    queueId: queueId,
+                    projectId: projectId,
+                    notes: notes,
+                    userId: "ios_redline"
+                )
+            }
             schedulePostResolveSync()
             return true
         } catch {
-            showTransientError("Attribution update failed: \(error.localizedDescription)")
+            if let banner = bootstrapService.writesLockedBannerText {
+                showTransientError(banner, clearAfter: .seconds(4))
+            } else {
+                showTransientError("Attribution update failed: \(error.localizedDescription)")
+            }
             return false
         }
     }
@@ -432,35 +496,91 @@ final class ThreadViewModel {
     @discardableResult
     func dismissAttribution(
         reviewQueueId: String,
+        reason: String? = nil,
+        notes: String? = nil,
         reloadAfterResolve: Bool = true
     ) async -> Bool {
+        if let banner = bootstrapService.writesLockedBannerText {
+            showTransientError(banner, clearAfter: .seconds(4))
+            return false
+        }
+
         error = nil
         do {
-            try await bootstrapService.dismiss(queueId: reviewQueueId, userId: "ios_redline")
+            _ = try await bootstrapService.dismiss(
+                queueId: reviewQueueId,
+                reason: reason,
+                notes: notes,
+                userId: "ios_redline"
+            )
             if reloadAfterResolve {
                 schedulePostResolveSync()
             }
             return true
         } catch {
-            showTransientError("Attribution update failed: \(error.localizedDescription)")
+            if let banner = bootstrapService.writesLockedBannerText {
+                showTransientError(banner, clearAfter: .seconds(4))
+            } else {
+                showTransientError("Attribution update failed: \(error.localizedDescription)")
+            }
             return false
         }
     }
 
     @discardableResult
-    func dismissAttributions(reviewQueueIds: [String]) async -> Bool {
+    func dismissAttributions(reviewQueueIds: [String], reason: String? = nil, notes: String? = nil) async -> Bool {
+        if let banner = bootstrapService.writesLockedBannerText {
+            showTransientError(banner, clearAfter: .seconds(4))
+            return false
+        }
+
         var seen = Set<String>()
         let uniqueQueueIds = reviewQueueIds.filter { seen.insert($0).inserted }
         guard !uniqueQueueIds.isEmpty else { return true }
 
         do {
             for queueId in uniqueQueueIds {
-                try await bootstrapService.dismiss(queueId: queueId, userId: "ios_redline")
+                _ = try await bootstrapService.dismiss(
+                    queueId: queueId,
+                    reason: reason,
+                    notes: notes,
+                    userId: "ios_redline"
+                )
             }
             schedulePostResolveSync()
             return true
         } catch {
-            showTransientError("Attribution update failed: \(error.localizedDescription)")
+            if let banner = bootstrapService.writesLockedBannerText {
+                showTransientError(banner, clearAfter: .seconds(4))
+            } else {
+                showTransientError("Attribution update failed: \(error.localizedDescription)")
+            }
+            return false
+        }
+    }
+
+    // MARK: - Attribution Undo
+
+    @discardableResult
+    func undoAttribution(reviewQueueId: String, reloadAfterUndo: Bool = true) async -> Bool {
+        if let banner = bootstrapService.writesLockedBannerText {
+            showTransientError(banner, clearAfter: .seconds(4))
+            return false
+        }
+
+        error = nil
+        do {
+            try await bootstrapService.undo(queueId: reviewQueueId)
+            if reloadAfterUndo {
+                schedulePostResolveSync()
+            }
+            return true
+        } catch {
+            if let banner = bootstrapService.writesLockedBannerText {
+                showTransientError(banner, clearAfter: .seconds(4))
+            } else {
+                showTransientError("Undo failed: \(error.localizedDescription)")
+            }
             return false
         }
     }

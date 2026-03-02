@@ -49,6 +49,7 @@ PIPELINE_FUNCTIONS=(
   "ai-router|POST|{\"context_package\":{}}|401"
   "journal-extract|POST|{\"span_id\":\"00000000-0000-0000-0000-000000000000\"}|401"
   "generate-summary|POST|{\"interaction_id\":\"cll_SMOKE_TEST\"}|401"
+  "sms-beside-batch-ingest|POST|{\"messages\":[{\"message_id\":\"msg_smoke_sms_beside\",\"created_at\":\"2026-01-01T00:00:00Z\",\"from_name\":\"Smoke\",\"from_phone\":\"+15555550100\",\"to_name\":\"Zack Sittler\",\"to_phone\":\"+17066889158\",\"direction\":\"inbound\",\"text\":\"smoke\"}],\"count\":1}|401"
   "striking-detect|POST|{\"span_id\":\"00000000-0000-0000-0000-000000000000\"}|401"
   "chain-detect|POST|{\"interaction_id\":\"cll_SMOKE_TEST\"}|401"
   "admin-reseed|POST|{\"interaction_id\":\"cll_SMOKE_TEST\",\"reason\":\"smoke\",\"idempotency_key\":\"smoke_test\"}|401"

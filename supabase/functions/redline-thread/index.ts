@@ -1,13 +1,22 @@
 import "jsr:@supabase/functions-js/edge-runtime.d.ts";
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
+import { computeTruthGraph, type TruthGraphHydration, type TruthGraphRepairAction } from "./truth_graph.ts";
+import { requireEdgeSecret } from "../_shared/auth.ts";
+import { checkTopLevelEdgeSecret, checkTopLevelEdgeSecretOrAnonKey } from "./auth_gate.ts";
 
-const FUNCTION_VERSION = "redline-thread_v3.3.0";
+const FUNCTION_VERSION = "redline-thread_v3.4.5";
 /**
  * v3.2.1 - Fix typo interactionClaims -> _interactionClaims
  * v3.1.2 - iOS Contract Fix (P0 Unbrick)
  * - Map DB 'id' to 'span_id' and 'claim_id' for iOS compatibility
  * - Closes visibility gap for beside_threads
  * v3.3.0 - Contacts payload: add last_interaction_id instrumentation + keep beside_thread rows
+ * v3.4.0 - Truth Graph endpoint + idempotent repair hooks (truth-forcing surface)
+ * v3.4.1 - Hotfix: require auth for non-health routes (edge secret or iOS anon key on iOS routes)
+ * v3.4.2 - Hotfix: accept any Bearer token on iOS routes (prevent headerless unauth 200s)
+ * v3.4.3 - Hotfix: validate iOS Bearer/apikey against SUPABASE_ANON_KEY (reject junk tokens)
+ * v3.4.4 - Hotfix: validate iOS Bearer/apikey via Supabase REST probe (avoid env-key mismatch)
+ * v3.4.5 - Hotfix: increase REST probe timeout + avoid negative-caching transient failures
  */
 const OWNER_SMS_USER_IDS = ["+17066889158", "usr_4PCSTDQ8N161KAC4GG7AF9CR94"];
 const OUTBOUND_INFERENCE_WINDOW_MS = 30 * 60 * 1000;
@@ -26,7 +35,7 @@ type RedlineApiRoute =
   | { kind: "thread"; contactId: string }
   | { kind: "spans"; contactId: string }
   | { kind: "verdict" }
-  | { kind: "unknown"; path: string[] };
+  | { kind: "unknown"; base: string; path: string[] };
 
 function corsHeaders(): Record<string, string> {
   return {
@@ -79,6 +88,34 @@ function groupBy<T>(arr: T[], keyFn: (item: T) => string): Map<string, T[]> {
   return map;
 }
 
+function isDuplicateKeyError(err: any): boolean {
+  const msg = String(err?.message || "").toLowerCase();
+  const code = String(err?.code || "");
+  return code === "23505" || msg.includes("duplicate") || msg.includes("23505");
+}
+
+async function fetchJsonWithTimeout(
+  url: string,
+  init: RequestInit,
+  timeoutMs: number,
+): Promise<{ ok: boolean; status: number; text: string; json: any | null }> {
+  const controller = new AbortController();
+  const id = setTimeout(() => controller.abort(), timeoutMs);
+  try {
+    const resp = await fetch(url, { ...init, signal: controller.signal });
+    const text = await resp.text().catch(() => "");
+    let json: any | null = null;
+    try {
+      json = text ? JSON.parse(text) : null;
+    } catch {
+      json = null;
+    }
+    return { ok: resp.ok, status: resp.status, text, json };
+  } finally {
+    clearTimeout(id);
+  }
+}
+
 async function batchIn<T>(
   values: string[],
   fetchChunk: (chunk: string[]) => Promise<{ data: T[] | null; error: any }>,
@@ -101,6 +138,399 @@ async function batchIn<T>(
   }
 
   return { data: merged, error: null };
+}
+
+// ============================================================
+// Truth Graph endpoint (v0)
+// GET /functions/v1/redline-thread?action=truth_graph&interaction_id=<id>
+// ============================================================
+async function handleTruthGraph(db: any, url: URL, t0: number): Promise<Response> {
+  const interactionId = String(url.searchParams.get("interaction_id") || "").trim();
+  if (!interactionId) {
+    return json({
+      ok: false,
+      error_code: "missing_interaction_id",
+      error: "interaction_id required",
+      function_version: FUNCTION_VERSION,
+      ms: Date.now() - t0,
+    }, 400);
+  }
+
+  const stageMs: Record<string, number> = {};
+  const timeDb = async (stage: string, fn: () => Promise<any>): Promise<any> => {
+    const start = performance.now();
+    const result = await fn();
+    stageMs[stage] = (stageMs[stage] || 0) + (performance.now() - start);
+    return result;
+  };
+
+  const warnings: string[] = [];
+
+  const { data: interactionRow, error: interactionErr } = await timeDb(
+    "db_interactions",
+    () => db.from("interactions").select("interaction_id, channel").eq("interaction_id", interactionId).maybeSingle(),
+  );
+  if (interactionErr) warnings.push(`interactions_lookup_failed:${interactionErr.message}`);
+
+  const channel = String(interactionRow?.channel || "").trim().toLowerCase();
+  const looksLikeSms = interactionId.startsWith("sms_thread_") || interactionId.startsWith("sms_thread__") ||
+    channel === "sms" || channel === "text" || channel === "sms_thread";
+
+  const [callsRawRes, spansRes, evidenceRes, claimsRes, reviewRes] = await Promise.all([
+    looksLikeSms
+      ? Promise.resolve({ data: [], error: null })
+      : timeDb("db_calls_raw", () =>
+        db.from("calls_raw").select("interaction_id").eq("interaction_id", interactionId).limit(1)),
+    timeDb("db_conversation_spans", () =>
+      db.from("conversation_spans")
+        .select("id")
+        .eq("interaction_id", interactionId)
+        .eq("is_superseded", false)
+        .order("span_index", { ascending: true })
+        .limit(50)),
+    looksLikeSms
+      ? Promise.resolve({ data: [], error: null })
+      : timeDb("db_evidence_events", () =>
+        db.from("evidence_events")
+          .select("evidence_event_id")
+          .eq("source_type", "call")
+          .eq("source_id", interactionId)
+          .limit(1)),
+    looksLikeSms
+      ? Promise.resolve({ data: [], error: null })
+      : timeDb("db_journal_claims", () =>
+        db.from("journal_claims")
+          .select("id")
+          .eq("call_id", interactionId)
+          .limit(1)),
+    timeDb("db_review_queue", () =>
+      db.from("review_queue")
+        .select("id")
+        .eq("interaction_id", interactionId)
+        .eq("status", "pending")
+        .limit(1)),
+  ]);
+
+  if (callsRawRes?.error) warnings.push(`calls_raw_query_failed:${callsRawRes.error.message}`);
+  if (spansRes?.error) warnings.push(`conversation_spans_query_failed:${spansRes.error.message}`);
+  if (evidenceRes?.error) warnings.push(`evidence_events_query_failed:${evidenceRes.error.message}`);
+  if (claimsRes?.error) warnings.push(`journal_claims_query_failed:${claimsRes.error.message}`);
+  if (reviewRes?.error) warnings.push(`review_queue_query_failed:${reviewRes.error.message}`);
+
+  const spanIds: string[] = Array.isArray(spansRes?.data)
+    ? spansRes.data.map((row: any) => String(row?.id || "")).filter((id: string) => id.length > 0)
+    : [];
+
+  let hasAttributions = false;
+  if (spanIds.length > 0) {
+    const { data: attrRows, error: attrErr } = await timeDb(
+      "db_span_attributions",
+      () => db.from("span_attributions").select("span_id").in("span_id", spanIds).limit(1),
+    );
+    if (attrErr) warnings.push(`span_attributions_query_failed:${attrErr.message}`);
+    hasAttributions = Array.isArray(attrRows) && attrRows.length > 0;
+  }
+
+  const hydration: TruthGraphHydration = {
+    calls_raw: Array.isArray(callsRawRes?.data) && callsRawRes.data.length > 0,
+    interactions: Boolean(interactionRow?.interaction_id),
+    conversation_spans: spanIds.length > 0,
+    evidence_events: Array.isArray(evidenceRes?.data) && evidenceRes.data.length > 0,
+    span_attributions: hasAttributions,
+    journal_claims: Array.isArray(claimsRes?.data) && claimsRes.data.length > 0,
+    review_queue: Array.isArray(reviewRes?.data) && reviewRes.data.length > 0,
+  };
+
+  const computed = computeTruthGraph(interactionId, hydration, {
+    interaction_channel: interactionRow?.channel ?? null,
+  });
+
+  const totalMs = Date.now() - t0;
+  const serverTiming = buildServerTimingHeader(stageMs, totalMs);
+
+  return json(
+    {
+      ok: true,
+      interaction_id: interactionId,
+      hydration,
+      lane: computed.lane,
+      suggested_repairs: computed.suggested_repairs,
+      warnings: [...warnings, ...computed.warnings].filter(Boolean),
+      function_version: FUNCTION_VERSION,
+      ms: totalMs,
+    },
+    200,
+    serverTiming ? { "Server-Timing": serverTiming } : {},
+  );
+}
+
+// ============================================================
+// Repair hooks (v0)
+// POST /functions/v1/redline-thread?action=repair
+// Body: { interaction_id, repair_action, idempotency_key, requested_by? }
+// ============================================================
+async function handleRepair(db: any, req: Request, t0: number): Promise<Response> {
+  const authResult = requireEdgeSecret(req, ["redline_ios"]);
+  if (!authResult.ok) {
+    return json({
+      ok: false,
+      error_code: "unauthorized",
+      error: "Missing or invalid X-Edge-Secret",
+      function_version: FUNCTION_VERSION,
+    }, 401);
+  }
+  let body: any;
+  try {
+    body = await req.json();
+  } catch {
+    return json({
+      ok: false,
+      error_code: "invalid_json",
+      error: "Invalid JSON body",
+      function_version: FUNCTION_VERSION,
+      ms: Date.now() - t0,
+    }, 400);
+  }
+
+  const interactionId = String(body?.interaction_id || "").trim();
+  const repairAction = String(body?.repair_action || "").trim() as TruthGraphRepairAction;
+  const idempotencyKey = String(body?.idempotency_key || "").trim();
+  const requestedBy = String(body?.requested_by || "").trim() || "redline_ios";
+
+  const allowedActions: TruthGraphRepairAction[] = ["repair_process_call", "repair_ai_router"];
+
+  if (!interactionId) {
+    return json({ ok: false, error_code: "missing_interaction_id", function_version: FUNCTION_VERSION }, 400);
+  }
+  if (!repairAction || !allowedActions.includes(repairAction)) {
+    return json({
+      ok: false,
+      error_code: "invalid_repair_action",
+      valid: allowedActions,
+      function_version: FUNCTION_VERSION,
+      ms: Date.now() - t0,
+    }, 400);
+  }
+  if (!idempotencyKey) {
+    return json({ ok: false, error_code: "missing_idempotency_key", function_version: FUNCTION_VERSION }, 400);
+  }
+
+  const startedAt = new Date().toISOString();
+
+  const { data: eventRow, error: eventErr } = await db
+    .from("redline_repair_events")
+    .insert({
+      interaction_id: interactionId,
+      repair_action: repairAction,
+      idempotency_key: idempotencyKey,
+      requested_by: requestedBy,
+      status: "started",
+      started_at_utc: startedAt,
+      function_version: FUNCTION_VERSION,
+    })
+    .select("id, status, started_at_utc, completed_at_utc")
+    .single();
+
+  if (eventErr) {
+    if (isDuplicateKeyError(eventErr)) {
+      const { data: existing, error: existingErr } = await db
+        .from("redline_repair_events")
+        .select("id, status, started_at_utc, completed_at_utc")
+        .eq("idempotency_key", idempotencyKey)
+        .maybeSingle();
+      if (existingErr) {
+        return json({
+          ok: false,
+          error_code: "idempotency_lookup_failed",
+          error: existingErr.message,
+          function_version: FUNCTION_VERSION,
+          ms: Date.now() - t0,
+        }, 500);
+      }
+
+      return json({
+        ok: existing?.status === "succeeded" || existing?.status === "started",
+        idempotent_replay: true,
+        request_id: existing?.id || null,
+        status: existing?.status || null,
+        started_at_utc: existing?.started_at_utc || null,
+        completed_at_utc: existing?.completed_at_utc || null,
+        function_version: FUNCTION_VERSION,
+        ms: Date.now() - t0,
+      }, 200);
+    }
+
+    return json({
+      ok: false,
+      error_code: "repair_event_insert_failed",
+      error: eventErr.message,
+      function_version: FUNCTION_VERSION,
+      ms: Date.now() - t0,
+    }, 500);
+  }
+
+  const requestId = String(eventRow?.id || "");
+  const supabaseUrl = String(Deno.env.get("SUPABASE_URL") || "").trim();
+  const serviceRoleKey = String(Deno.env.get("SUPABASE_SERVICE_ROLE_KEY") || "").trim();
+  const edgeSecret = String(Deno.env.get("EDGE_SHARED_SECRET") || "").trim();
+
+  if (!supabaseUrl || !serviceRoleKey || !edgeSecret) {
+    const detail = {
+      missing: {
+        SUPABASE_URL: !supabaseUrl,
+        SUPABASE_SERVICE_ROLE_KEY: !serviceRoleKey,
+        EDGE_SHARED_SECRET: !edgeSecret,
+      },
+    };
+    await db.from("redline_repair_events").update({
+      status: "failed",
+      completed_at_utc: new Date().toISOString(),
+      detail,
+      error_code: "server_misconfigured",
+    }).eq("id", requestId);
+    return json({
+      ok: false,
+      error_code: "server_misconfigured",
+      detail,
+      request_id: requestId,
+      function_version: FUNCTION_VERSION,
+      ms: Date.now() - t0,
+    }, 500);
+  }
+
+  let ok = false;
+  let repairDetail: any = null;
+  let errorCode: string | null = null;
+
+  try {
+    if (repairAction === "repair_process_call") {
+      const { error: deleteErr } = await db.from("idempotency_keys").delete().eq("key", interactionId);
+      if (deleteErr) {
+        repairDetail = { ...(repairDetail || {}), idempotency_key_delete_error: deleteErr.message };
+      }
+
+      const { data: callRow, error: callErr } = await db
+        .from("calls_raw")
+        .select(
+          "interaction_id, direction, transcript, event_at_utc, owner_phone, other_party_phone, recording_url, is_shadow",
+        )
+        .eq("interaction_id", interactionId)
+        .maybeSingle();
+
+      if (callErr) {
+        errorCode = "calls_raw_lookup_failed";
+        repairDetail = { error: callErr.message };
+      } else if (!callRow) {
+        errorCode = "calls_raw_not_found";
+        repairDetail = { hint: "calls_raw row required to reconstruct process-call payload" };
+      } else {
+        const payload = {
+          interaction_id: interactionId,
+          call_id: interactionId,
+          event_at_utc: callRow.event_at_utc || null,
+          call_start_utc: callRow.event_at_utc || null,
+          direction: callRow.direction || null,
+          transcript: callRow.transcript || null,
+          from_phone: callRow.owner_phone || null,
+          to_phone: callRow.other_party_phone || null,
+          owner_phone: callRow.owner_phone || null,
+          other_party_phone: callRow.other_party_phone || null,
+          recording_url: callRow.recording_url || null,
+          source: "redline_repair",
+          is_shadow: Boolean(callRow.is_shadow),
+          _redline_repair_meta: {
+            requested_by: requestedBy,
+            idempotency_key: idempotencyKey,
+            requested_at_utc: startedAt,
+          },
+        };
+
+        const processUrl = `${supabaseUrl}/functions/v1/process-call`;
+        const processResp = await fetchJsonWithTimeout(
+          processUrl,
+          {
+            method: "POST",
+            headers: {
+              "Content-Type": "application/json",
+              Authorization: `Bearer ${serviceRoleKey}`,
+              apikey: serviceRoleKey,
+              "X-Edge-Secret": edgeSecret,
+            },
+            body: JSON.stringify(payload),
+          },
+          25_000,
+        );
+
+        ok = processResp.ok;
+        repairDetail = {
+          called: "process-call",
+          http_status: processResp.status,
+          body: processResp.json ?? processResp.text.slice(0, 1200),
+        };
+        if (!ok) errorCode = `process_call_http_${processResp.status}`;
+      }
+    }
+
+    if (repairAction === "repair_ai_router") {
+      const reseedUrl = `${supabaseUrl}/functions/v1/admin-reseed`;
+      const reseedResp = await fetchJsonWithTimeout(
+        reseedUrl,
+        {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+            Authorization: `Bearer ${serviceRoleKey}`,
+            apikey: serviceRoleKey,
+            "X-Edge-Secret": edgeSecret,
+            "X-Source": "system",
+          },
+          body: JSON.stringify({
+            interaction_id: interactionId,
+            reason: "redline_repair_ai_router",
+            idempotency_key: idempotencyKey,
+            mode: "resegment_and_reroute",
+            requested_by: requestedBy,
+            force: false,
+          }),
+        },
+        30_000,
+      );
+
+      ok = reseedResp.ok;
+      repairDetail = {
+        called: "admin-reseed",
+        http_status: reseedResp.status,
+        body: reseedResp.json ?? reseedResp.text.slice(0, 1200),
+      };
+      if (!ok) errorCode = `admin_reseed_http_${reseedResp.status}`;
+    }
+  } catch (err: any) {
+    ok = false;
+    errorCode = "repair_exception";
+    repairDetail = { error: err?.message || String(err) };
+  }
+
+  const completedAt = new Date().toISOString();
+  await db.from("redline_repair_events").update({
+    status: ok ? "succeeded" : "failed",
+    completed_at_utc: completedAt,
+    detail: repairDetail,
+    error_code: errorCode,
+  }).eq("id", requestId);
+
+  return json({
+    ok,
+    request_id: requestId,
+    interaction_id: interactionId,
+    repair_action: repairAction,
+    status: ok ? "succeeded" : "failed",
+    started_at_utc: eventRow?.started_at_utc || startedAt,
+    completed_at_utc: completedAt,
+    error_code: ok ? null : errorCode,
+    detail: repairDetail,
+    function_version: FUNCTION_VERSION,
+    ms: Date.now() - t0,
+  }, ok ? 200 : 502);
 }
 
 async function fetchReviewQueueMetaByIds(
@@ -360,23 +790,27 @@ function parseRedlineApiRoute(url: URL): RedlineApiRoute | null {
   if (redlineIndex === -1) return null;
 
   const tail = parts.slice(redlineIndex + 1);
-  if (tail.length === 0) return { kind: "unknown", path: tail };
+  const base = parts[redlineIndex];
+  if (tail.length === 0) {
+    if (base === "redline-thread") return { kind: "contacts" };
+    return { kind: "unknown", base, path: tail };
+  }
   if (tail[0] === "contacts" && tail.length === 1) return { kind: "contacts" };
   if (tail[0] === "thread" && tail.length >= 2) return { kind: "thread", contactId: decodeURIComponent(tail[1]) };
   if (tail[0] === "spans" && tail.length >= 2) return { kind: "spans", contactId: decodeURIComponent(tail[1]) };
   if (tail[0] === "verdict" && tail.length === 1) return { kind: "verdict" };
-  return { kind: "unknown", path: tail };
+  return { kind: "unknown", base, path: tail };
 }
 
 // Parse synthetic SMS-only contact keys like "sms:7065551234" → digits, or null
-function parseSmsOnlyContactDigits(contactId: string): string | null {
+export function parseSmsOnlyContactDigits(contactId: string): string | null {
   if (!contactId) return null;
   const match = contactId.match(/^sms:(\d{7,15})$/);
   return match ? match[1] : null;
 }
 
 // Generate a deterministic UUID from a phone string so iOS can decode contact.id
-function deterministicUUID(input: string): string {
+export function deterministicUUID(input: string): string {
   let hash = 0;
   for (let i = 0; i < input.length; i++) {
     hash = ((hash << 5) - hash + input.charCodeAt(i)) | 0;
@@ -386,9 +820,9 @@ function deterministicUUID(input: string): string {
   return [
     padded.slice(0, 8),
     padded.slice(8, 12),
-    "4" + padded.slice(13, 16),
-    "8" + padded.slice(17, 20),
-    padded.slice(20, 32),
+    "4" + padded.slice(12, 15),
+    "8" + padded.slice(15, 18),
+    padded.slice(18, 30),
   ].join("-");
 }
 
@@ -615,23 +1049,31 @@ async function handleContacts(db: any, url: URL, t0: number): Promise<Response> 
   }
 
   const mapped = (data || [])
-    .filter((row: any) => row.contact_id != null)
-    .map((row: any) => ({
-      contact_id: row.contact_id,
-      contact_key: row.contact_id ?? `sms:${(row.contact_phone || "").replace(/\D/g, "").slice(-10)}`,
-      name: row.contact_name,
-      phone: row.contact_phone,
-      call_count: Number(row.call_count ?? 0),
-      sms_count: Number(row.sms_count ?? 0),
-      claim_count: Number(row.claim_count ?? 0),
-      ungraded_count: Number(row.ungraded_count ?? 0),
-      last_activity: row.last_activity || "",
-      last_summary: deriveContactLastSummary(row) || "",
-      last_direction: row.last_direction || "",
-      last_interaction_type: row.last_interaction_type || "",
-      last_interaction_id: "",
-      source: String(row.source || "").trim() || "contacts",
-    }));
+    // `redline_contacts_unified_matview` includes beside_thread rows where `contact_id` is NULL.
+    // Preserve those rows as long as they have a phone, and let the client synthesize a stable UUID.
+    .filter((row: any) => row.contact_id != null || String(row.contact_phone || "").trim() !== "")
+    .map((row: any) => {
+      const phone = String(row.contact_phone || "").trim();
+      const phoneDigits = phone.replace(/\D/g, "").slice(-10);
+      const contactKey = row.contact_id ??
+        (phoneDigits ? `sms:${phoneDigits}` : `unknown:${String(row.contact_name || "").trim() || "contact"}`);
+      return {
+        contact_id: row.contact_id ?? deterministicUUID(contactKey),
+        contact_key: contactKey,
+        name: row.contact_name,
+        phone: row.contact_phone,
+        call_count: Number(row.call_count ?? 0),
+        sms_count: Number(row.sms_count ?? 0),
+        claim_count: Number(row.claim_count ?? 0),
+        ungraded_count: Number(row.ungraded_count ?? 0),
+        last_activity: row.last_activity || "",
+        last_summary: deriveContactLastSummary(row) || "",
+        last_direction: row.last_direction || "",
+        last_interaction_type: row.last_interaction_type || "",
+        last_interaction_id: "",
+        source: String(row.source || "").trim() || "contacts",
+      };
+    });
 
   // Filter ghost rows: contact exists but has zero activity (no calls, no SMS, no last_activity)
   const liveRows = mapped.filter((row: any) =>
@@ -1284,10 +1726,9 @@ async function handleThread(
       let from = 0;
       while (results.length < scanWindow) {
         const to = from + queryPageSize - 1;
-        const { data, error } = await db
+        let query = db
           .from("interactions")
           .select("id, interaction_id, event_at_utc, human_summary, contact_name, is_shadow")
-          .eq("contact_id", contactId)
           .or("channel.eq.call,channel.eq.phone,channel.is.null")
           .or("is_shadow.is.false,is_shadow.is.null")
           .not("interaction_id", "like", "cll_SHADOW_%")
@@ -1295,6 +1736,18 @@ async function handleThread(
           .not("event_at_utc", "is", null)
           .order("event_at_utc", { ascending: false })
           .range(from, to);
+
+        if (smsOnlyDigits) {
+          if (contactPhoneVariants.length === 1) {
+            query = query.eq("contact_phone", contactPhoneVariants[0]);
+          } else {
+            query = query.in("contact_phone", contactPhoneVariants);
+          }
+        } else {
+          query = query.eq("contact_id", contactId);
+        }
+
+        const { data, error } = await query;
         if (error) throw error;
         if (!data || data.length === 0) break;
         results = results.concat(data);
@@ -1605,15 +2058,17 @@ async function handleSpansApi(db: any, contactId: string, url: URL, t0: number):
   const scanWindow = Math.min(Math.max(offset + limit + 200, 300), 2000);
   const queryPageSize = 200;
 
+  const smsOnlyDigits = parseSmsOnlyContactDigits(contactId);
+  const contactPhoneVariants = buildPhoneVariants(contact.contact_phone);
+
   let allInteractions: any[] = [];
   let interactionsFrom = 0;
   let hasMoreInteractions = false;
   while (allInteractions.length < scanWindow) {
     const interactionsTo = interactionsFrom + queryPageSize - 1;
-    const { data: page, error: intErr } = await db
+    let query = db
       .from("interactions")
       .select("id, interaction_id, event_at_utc, contact_name, is_shadow")
-      .eq("contact_id", contactId)
       .or("channel.eq.call,channel.eq.phone,channel.is.null")
       .or("is_shadow.is.false,is_shadow.is.null")
       .not("interaction_id", "like", "cll_SHADOW_%")
@@ -1621,6 +2076,18 @@ async function handleSpansApi(db: any, contactId: string, url: URL, t0: number):
       .not("event_at_utc", "is", null)
       .order("event_at_utc", { ascending: false })
       .range(interactionsFrom, interactionsTo);
+
+    if (smsOnlyDigits) {
+      if (contactPhoneVariants.length === 1) {
+        query = query.eq("contact_phone", contactPhoneVariants[0]);
+      } else {
+        query = query.in("contact_phone", contactPhoneVariants);
+      }
+    } else {
+      query = query.eq("contact_id", contactId);
+    }
+
+    const { data: page, error: intErr } = await query;
 
     if (intErr) {
       return json({ ok: false, error_code: "interactions_query_failed", error: intErr.message }, 500);
@@ -2589,17 +3056,57 @@ Deno.serve(async (req: Request) => {
 
   const t0 = Date.now();
   const url = new URL(req.url);
-  const db = createClient(Deno.env.get("SUPABASE_URL")!, Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!);
 
   try {
     // Health check — fast path, no auth, no cache
     if (url.searchParams.get("mode") === "health") {
+      const db = createClient(Deno.env.get("SUPABASE_URL")!, Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!);
       return await handleHealth(db, t0);
     }
 
     const action = url.searchParams.get("action");
-
     const apiRoute = parseRedlineApiRoute(url);
+    const contactIdParam = url.searchParams.get("contact_id") || url.searchParams.get("contact_key");
+    const allowAnonKey = (() => {
+      // iOS client uses Authorization: Bearer <anonKey>
+      // Allow anon-key auth only on iOS-known routes; require X-Edge-Secret everywhere else.
+      if (req.method === "GET") {
+        if (action === "contacts" || action === "reset_clock" || action === "truth_graph") return true;
+        // Only allow query-param thread fetches (iOS) when no action is present.
+        // Prevent `contact_id`/`contact_key` from becoming a blanket bypass for other `action=*` GET routes.
+        if (!action && contactIdParam) return true;
+        if (apiRoute && (apiRoute.kind === "contacts" || apiRoute.kind === "thread" || apiRoute.kind === "spans")) {
+          return true;
+        }
+      }
+
+      if (req.method === "POST") {
+        if (apiRoute?.kind === "verdict") return true;
+        if (!action) return true; // default POST route (gradeClaimViaAPI)
+      }
+
+      return false;
+    })();
+
+    const topLevelAuthResult = allowAnonKey
+      ? await checkTopLevelEdgeSecretOrAnonKey(req)
+      : checkTopLevelEdgeSecret(req);
+    if (!topLevelAuthResult.ok) {
+      return json(
+        {
+          ok: false,
+          error_code: topLevelAuthResult.error_code,
+          error: topLevelAuthResult.error,
+          function_version: FUNCTION_VERSION,
+          ms: Date.now() - t0,
+        },
+        topLevelAuthResult.status,
+      );
+    }
+
+    // Create service-role client only after auth has passed for non-health routes.
+    const db = createClient(Deno.env.get("SUPABASE_URL")!, Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!);
+
     if (apiRoute) {
       if (apiRoute.kind === "contacts" && req.method === "GET") {
         return await handleContacts(db, url, t0);
@@ -2617,7 +3124,7 @@ Deno.serve(async (req: Request) => {
         return json({
           ok: false,
           error_code: "unknown_redline_route",
-          error: `Unsupported redline API path: /redline/${apiRoute.path.join("/")}`,
+          error: `Unsupported redline API path: /${apiRoute.base}/${apiRoute.path.join("/")}`,
           function_version: FUNCTION_VERSION,
         }, 404);
       }
@@ -2631,6 +3138,9 @@ Deno.serve(async (req: Request) => {
 
     if (action === "undo_verdict" && req.method === "POST") {
       return await handleUndoVerdict(db, req, t0);
+    }
+    if (action === "repair" && req.method === "POST") {
+      return await handleRepair(db, req, t0);
     }
     if (req.method === "POST") {
       return await handleGrade(db, req, t0);
@@ -2646,6 +3156,9 @@ Deno.serve(async (req: Request) => {
     }
     if (action === "contacts") {
       return await handleContacts(db, url, t0);
+    }
+    if (action === "truth_graph") {
+      return await handleTruthGraph(db, url, t0);
     }
     if (action === "projects") {
       return await handleProjects(db, t0);
