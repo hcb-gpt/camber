@@ -637,30 +637,18 @@ async function handleUndo(
     }, 500);
   }
 
-  // Revert span_attributions: clear applied_project_id, set needs_review back, revert lock
-  if (item.span_id) {
-    const { error: attrErr } = await db
-      .from("span_attributions")
-      .update({
-        applied_project_id: null,
-        needs_review: true,
-        attribution_lock: "ai",
-      })
-      .eq("span_id", item.span_id)
-      .eq("attribution_lock", "human");
-
-    if (attrErr) {
-      console.error(
-        `[bootstrap-review] undo attribution revert warning: ${attrErr.message}`,
-      );
-    }
-  }
+  // span_attributions.needs_review is kept consistent with review_queue.status by
+  // a DB trigger (sync_span_needs_review_for_span). We intentionally do not
+  // attempt to downgrade attribution_lock (human→ai) or clear applied_project_id
+  // here because the DB enforces lock monotonicity and anchored-contact
+  // auto-attribution can repopulate applied_project_id.
 
   console.log(`[bootstrap-review] Undone ${review_queue_id}`);
 
   return json({
     ok: true,
     undone: review_queue_id,
+    undo_scope: "review_queue",
     function_version: FUNCTION_VERSION,
     ms: Date.now() - t0,
   });
