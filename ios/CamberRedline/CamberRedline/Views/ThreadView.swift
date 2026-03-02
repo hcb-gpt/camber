@@ -121,7 +121,7 @@ struct ThreadView: View {
         if hasUnknown {
             return mapped
         }
-        return [SMSProjectAssignment(projectId: nil, name: "Unknown Project", colorIndex: nil)] + mapped
+        return [SMSProjectAssignment(projectId: nil, name: "Unassigned", colorIndex: nil)] + mapped
     }
 
     // MARK: - Derived display groups
@@ -1109,7 +1109,7 @@ private struct CallTranscriptCard: View {
                 HStack(spacing: 6) {
                     Image(systemName: "exclamationmark.triangle.fill")
                         .font(.caption2)
-                    Text("\(unresolvedCount) missing attribution\(unresolvedCount == 1 ? "" : "s")")
+                    Text("\(unresolvedCount) unassigned item\(unresolvedCount == 1 ? "" : "s")")
                         .font(.caption)
                         .fontWeight(.semibold)
                     if projectOptions.isEmpty {
@@ -1343,7 +1343,7 @@ private struct SpanBlock: View {
         if span.needsAttribution {
             return SMSProjectAssignment(projectId: nil, name: "Unassigned", colorIndex: nil)
         }
-        return SMSProjectAssignment(projectId: nil, name: "Unknown Project", colorIndex: nil)
+        return SMSProjectAssignment(projectId: nil, name: "Unassigned", colorIndex: nil)
     }
 
     private var displayProjectName: String? {
@@ -1565,7 +1565,7 @@ private struct SMSStripeGroup: View {
                     HStack(spacing: 6) {
                         Image(systemName: "exclamationmark.triangle.fill")
                             .font(.caption2)
-                        Text("\(unresolvedCount) unassigned")
+                        Text("\(unresolvedCount) unassigned item\(unresolvedCount == 1 ? "" : "s")")
                             .font(.caption2)
                             .fontWeight(.semibold)
 
