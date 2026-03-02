@@ -48,20 +48,21 @@ pick_simulator_udid() {
 
   # Prefer newest iPhones (common CI/dev defaults).
   for pref in "iPhone 17" "iPhone 16" "iPhone 15"; do
-    udid="$(simctl list devices available | awk -F '[()]' -v pref="${pref}" '$0 ~ pref {print $2; exit}')"
+    udid="$(simctl list devices | awk -F '[()]' "/${pref}/{print \$2; exit}")"
     if [[ -n "${udid}" ]]; then
       echo "${udid}"
       return 0
     fi
   done
 
-  # Fallback: first available iPhone.
-  udid="$(simctl list devices available | awk -F '[()]' '/iPhone/{print $2; exit}')"
+  # Fallback to first available iPhone.
+  udid="$(simctl list devices | awk -F '[()]' '/iPhone/{print $2; exit}')"
   if [[ -n "${udid}" ]]; then
     echo "${udid}"
     return 0
   fi
 
+  echo ""
   return 1
 }
 
