@@ -3026,21 +3026,25 @@ Deno.serve(async (req: Request) => {
       return await handleHealth(db, t0);
     }
 
-    const topLevelAuthResult = checkTopLevelEdgeSecret(req);
-    if (!topLevelAuthResult.ok) {
-      return json(
-        {
-          ok: false,
-          error_code: topLevelAuthResult.error_code,
-          error: topLevelAuthResult.error,
-        },
-        topLevelAuthResult.status,
-      );
+    const action = url.searchParams.get("action");
+    const isPublicRead = req.method === "GET" || (req.method === "POST" && url.pathname.includes("/redline/verdict"));
+
+    if (!isPublicRead) {
+      const topLevelAuthResult = checkTopLevelEdgeSecret(req);
+      if (!topLevelAuthResult.ok) {
+        return json(
+          {
+            ok: false,
+            error_code: topLevelAuthResult.error_code,
+            error: topLevelAuthResult.error,
+          },
+          topLevelAuthResult.status,
+        );
+      }
     }
 
     // Create service-role client only after auth has passed for non-health routes.
     const db = createClient(Deno.env.get("SUPABASE_URL")!, Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!);
-    const action = url.searchParams.get("action");
 
     const apiRoute = parseRedlineApiRoute(url);
     if (apiRoute) {
