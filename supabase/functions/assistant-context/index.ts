@@ -51,8 +51,7 @@ const PROJECT_CONTEXT_SELECT_COLUMNS = [
 function corsHeaders(): Record<string, string> {
   return {
     "Access-Control-Allow-Origin": "*",
-    "Access-Control-Allow-Headers":
-      "authorization, x-edge-secret, content-type, x-request-id, apikey",
+    "Access-Control-Allow-Headers": "authorization, x-edge-secret, content-type, x-request-id, apikey",
     "Access-Control-Allow-Methods": "GET, OPTIONS",
     "Access-Control-Expose-Headers":
       "x-request-id,x-assistant-context-function-version,x-assistant-context-contract-version",

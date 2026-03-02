@@ -10,10 +10,8 @@ const DEFAULT_MAX_TOKENS = Number(
 const DEFAULT_TEMPERATURE = Number(
   Deno.env.get("REDLINE_ASSISTANT_TEMPERATURE") || "0.2",
 );
-const DEFAULT_PROVIDER =
-  (Deno.env.get("REDLINE_ASSISTANT_PROVIDER") || "openai").toLowerCase();
-const DEFAULT_ANTHROPIC_MODEL =
-  Deno.env.get("REDLINE_ASSISTANT_ANTHROPIC_MODEL") ||
+const DEFAULT_PROVIDER = (Deno.env.get("REDLINE_ASSISTANT_PROVIDER") || "openai").toLowerCase();
+const DEFAULT_ANTHROPIC_MODEL = Deno.env.get("REDLINE_ASSISTANT_ANTHROPIC_MODEL") ||
   "claude-3-5-sonnet-latest";
 const ROSTER_LIMIT = 50;
 const RECENT_INTERACTIONS_LIMIT = 150;
@@ -56,8 +54,7 @@ type ResolutionOutcome =
 function corsHeaders(): Record<string, string> {
   return {
     "Access-Control-Allow-Origin": "*",
-    "Access-Control-Allow-Headers":
-      "authorization, x-client-info, apikey, content-type, x-edge-secret",
+    "Access-Control-Allow-Headers": "authorization, x-client-info, apikey, content-type, x-edge-secret",
     "Access-Control-Allow-Methods": "POST, OPTIONS",
   };
 }
@@ -205,12 +202,8 @@ function renderAmbiguousProjectResponse(
   matches: ProjectRosterItem[],
 ): string {
   const top = matches.slice(0, 5);
-  const lines = top.map((project, index) =>
-    `${index + 1}. ${project.project_name}`
-  );
-  return `I found multiple project matches for "${message}". Which one do you mean?\n${
-    lines.join("\n")
-  }`;
+  const lines = top.map((project, index) => `${index + 1}. ${project.project_name}`);
+  return `I found multiple project matches for "${message}". Which one do you mean?\n${lines.join("\n")}`;
 }
 
 function renderNoMatchProjectResponse(
@@ -218,19 +211,13 @@ function renderNoMatchProjectResponse(
   roster: ProjectRosterItem[],
 ): string {
   const suggestions = roster
-    .filter((project) =>
-      normalizeText(project.project_name).includes(token.slice(0, 3))
-    )
+    .filter((project) => normalizeText(project.project_name).includes(token.slice(0, 3)))
     .slice(0, 5);
   if (suggestions.length === 0) {
     return `I do not see a project matching "${token}" in the current roster.`;
   }
-  const suggestionLines = suggestions.map((project, index) =>
-    `${index + 1}. ${project.project_name}`
-  );
-  return `I do not see a project matching "${token}". Closest matches:\n${
-    suggestionLines.join("\n")
-  }`;
+  const suggestionLines = suggestions.map((project, index) => `${index + 1}. ${project.project_name}`);
+  return `I do not see a project matching "${token}". Closest matches:\n${suggestionLines.join("\n")}`;
 }
 
 function buildSSEChunk(content: string): Uint8Array {
@@ -362,9 +349,7 @@ async function fetchProjectsRoster(
         project_name: String(row.project_name || "Unknown Project"),
         status: row.project_status ? String(row.project_status) : null,
         risk_flag: row.risk_flag ? String(row.risk_flag) : null,
-        last_interaction_at: row.last_interaction_at
-          ? String(row.last_interaction_at)
-          : null,
+        last_interaction_at: row.last_interaction_at ? String(row.last_interaction_at) : null,
       }))
       .filter((row: ProjectRosterItem) => row.project_id && row.project_name);
     if (roster.length > 0) return roster;
@@ -431,9 +416,7 @@ async function fetchRecentInteractions(
     new Set(
       data
         .map((row: any) => String(row.project_id || ""))
-        .filter((projectId: string) =>
-          projectId.length > 0 && !namesByProjectId.has(projectId)
-        ),
+        .filter((projectId: string) => projectId.length > 0 && !namesByProjectId.has(projectId)),
     ),
   );
 
@@ -455,9 +438,7 @@ async function fetchRecentInteractions(
   return data.map((row: any) => ({
     interaction_id: row.interaction_id,
     project_id: row.project_id ?? null,
-    project_name: row.project_id
-      ? namesByProjectId.get(String(row.project_id)) ?? null
-      : null,
+    project_name: row.project_id ? namesByProjectId.get(String(row.project_id)) ?? null : null,
     event_at_utc: row.event_at_utc ?? null,
     channel: row.channel ?? null,
     contact_name: row.contact_name ?? null,
@@ -487,8 +468,7 @@ Deno.serve(async (req) => {
       });
     }
 
-    const { message, contact_id, project_id, model: requestedModel } =
-      requestBody;
+    const { message, contact_id, project_id, model: requestedModel } = requestBody;
 
     if (!message) {
       return new Response(JSON.stringify({ error: "message_required" }), {
@@ -502,10 +482,7 @@ Deno.serve(async (req) => {
       String(message),
       projectsRoster,
     );
-    const explicitProjectId =
-      typeof project_id === "string" && project_id.trim().length > 0
-        ? project_id.trim()
-        : null;
+    const explicitProjectId = typeof project_id === "string" && project_id.trim().length > 0 ? project_id.trim() : null;
     const resolvedProjectId = explicitProjectId ?? resolution.resolvedProjectId;
 
     if (isProjectsRosterQuery(String(message))) {
@@ -684,16 +661,14 @@ Deno.serve(async (req) => {
 
     let runtimeProvider = String(modelConfig.provider || DEFAULT_PROVIDER)
       .toLowerCase();
-    const runtimeModelId =
-      typeof requestedModel === "string" && requestedModel.trim().length > 0
-        ? requestedModel.trim()
-        : modelConfig.modelId;
+    const runtimeModelId = typeof requestedModel === "string" && requestedModel.trim().length > 0
+      ? requestedModel.trim()
+      : modelConfig.modelId;
     let providerWarning: string | null = null;
 
     if (runtimeProvider === "anthropic" && !anthropicKey) {
       runtimeProvider = "openai";
-      providerWarning =
-        "anthropic_configured_but_missing_key_fell_back_to_openai";
+      providerWarning = "anthropic_configured_but_missing_key_fell_back_to_openai";
       console.warn(
         "[redline-assistant] ANTHROPIC_API_KEY missing; falling back to OpenAI.",
       );
@@ -729,9 +704,7 @@ ${JSON.stringify(context, null, 2)}
 `;
 
     if (runtimeProvider === "anthropic") {
-      const anthropicModel = runtimeModelId.toLowerCase().includes("claude")
-        ? runtimeModelId
-        : DEFAULT_ANTHROPIC_MODEL;
+      const anthropicModel = runtimeModelId.toLowerCase().includes("claude") ? runtimeModelId : DEFAULT_ANTHROPIC_MODEL;
 
       const anthropicBody = {
         model: anthropicModel,

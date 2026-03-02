@@ -159,8 +159,9 @@ async function handleTruthGraph(db: any, url: URL, t0: number): Promise<Response
 
   const warnings: string[] = [];
 
-  const { data: interactionRow, error: interactionErr } = await timeDb("db_interactions", () =>
-    db.from("interactions").select("interaction_id, channel").eq("interaction_id", interactionId).maybeSingle()
+  const { data: interactionRow, error: interactionErr } = await timeDb(
+    "db_interactions",
+    () => db.from("interactions").select("interaction_id, channel").eq("interaction_id", interactionId).maybeSingle(),
   );
   if (interactionErr) warnings.push(`interactions_lookup_failed:${interactionErr.message}`);
 
@@ -215,8 +216,9 @@ async function handleTruthGraph(db: any, url: URL, t0: number): Promise<Response
 
   let hasAttributions = false;
   if (spanIds.length > 0) {
-    const { data: attrRows, error: attrErr } = await timeDb("db_span_attributions", () =>
-      db.from("span_attributions").select("span_id").in("span_id", spanIds).limit(1)
+    const { data: attrRows, error: attrErr } = await timeDb(
+      "db_span_attributions",
+      () => db.from("span_attributions").select("span_id").in("span_id", spanIds).limit(1),
     );
     if (attrErr) warnings.push(`span_attributions_query_failed:${attrErr.message}`);
     hasAttributions = Array.isArray(attrRows) && attrRows.length > 0;
@@ -239,16 +241,20 @@ async function handleTruthGraph(db: any, url: URL, t0: number): Promise<Response
   const totalMs = Date.now() - t0;
   const serverTiming = buildServerTimingHeader(stageMs, totalMs);
 
-  return json({
-    ok: true,
-    interaction_id: interactionId,
-    hydration,
-    lane: computed.lane,
-    suggested_repairs: computed.suggested_repairs,
-    warnings: [...warnings, ...computed.warnings].filter(Boolean),
-    function_version: FUNCTION_VERSION,
-    ms: totalMs,
-  }, 200, serverTiming ? { "Server-Timing": serverTiming } : {});
+  return json(
+    {
+      ok: true,
+      interaction_id: interactionId,
+      hydration,
+      lane: computed.lane,
+      suggested_repairs: computed.suggested_repairs,
+      warnings: [...warnings, ...computed.warnings].filter(Boolean),
+      function_version: FUNCTION_VERSION,
+      ms: totalMs,
+    },
+    200,
+    serverTiming ? { "Server-Timing": serverTiming } : {},
+  );
 }
 
 // ============================================================
@@ -526,7 +532,9 @@ async function fetchReviewQueueMetaByIds(
   for (let start = 0; start < uniqueIds.length; start += chunkSize) {
     const chunk = uniqueIds.slice(start, start + chunkSize);
     const inClause = `(${chunk.join(",")})`;
-    const endpoint = `${supabaseUrl}/rest/v1/review_queue?select=id,module,reason_codes,reasons&id=in.${encodeURIComponent(inClause)}`;
+    const endpoint = `${supabaseUrl}/rest/v1/review_queue?select=id,module,reason_codes,reasons&id=in.${
+      encodeURIComponent(inClause)
+    }`;
     const resp = await fetch(endpoint, {
       method: "GET",
       headers: {
@@ -1106,7 +1114,9 @@ async function handleContacts(db: any, url: URL, t0: number): Promise<Response> 
   }
 
   const contacts = liveRowsWithIds
-    .filter((row: any) => String(row.source || "") !== "contacts" || validIdSet === null || validIdSet.has(row.contact_id))
+    .filter((row: any) =>
+      String(row.source || "") !== "contacts" || validIdSet === null || validIdSet.has(row.contact_id)
+    )
     .sort((a: any, b: any) => {
       const aTime = Date.parse(a.last_activity || "") || 0;
       const bTime = Date.parse(b.last_activity || "") || 0;
