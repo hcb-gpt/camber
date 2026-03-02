@@ -1110,6 +1110,8 @@ ${JSON.stringify(contextPacket, null, 2)}
         "x-contract-version": CONTRACT_VERSION,
         "x-model-id": activeModel,
         "x-model-config-source": modelConfig.source,
+        "x-assistant-style": responseStyle,
+        "x-assistant-intent": intent,
       },
     });
   } catch (error: unknown) {
