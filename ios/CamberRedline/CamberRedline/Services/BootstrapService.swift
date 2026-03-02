@@ -79,6 +79,7 @@ final class BootstrapService {
 
     private func applyAuthHeaders(to request: inout URLRequest) {
         request.setValue("Bearer \(anonKey)", forHTTPHeaderField: "Authorization")
+        request.setValue(anonKey, forHTTPHeaderField: "apikey")
         if let edgeSharedSecret {
             request.setValue(edgeSharedSecret, forHTTPHeaderField: "X-Edge-Secret")
         }
