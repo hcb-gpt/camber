@@ -60,6 +60,9 @@ verify_jwt = false
 [functions.bootstrap-review]
 verify_jwt = false
 
+[functions.sms-beside-batch-ingest]
+verify_jwt = false
+
 [functions.redline-assistant]
 enabled = true
 verify_jwt = true
