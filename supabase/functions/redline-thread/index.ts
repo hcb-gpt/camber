@@ -1,4 +1,5 @@
 import "jsr:@supabase/functions-js/edge-runtime.d.ts";
+import type { SupabaseClient } from "https://esm.sh/@supabase/supabase-js@2";
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
 
 const FUNCTION_VERSION = "redline-thread_v3.3.0";
@@ -228,7 +229,9 @@ function sameLocalDay(
   return lhs.year === rhs.year && lhs.month === rhs.month && lhs.day === rhs.day;
 }
 
-async function maybeAutoResetGradingCutoff(db: any): Promise<{ resetApplied: boolean; cutoff: string | null }> {
+async function maybeAutoResetGradingCutoff(
+  db: SupabaseClient,
+): Promise<{ resetApplied: boolean; cutoff: string | null }> {
   const { data, error } = await db
     .from("redline_settings")
     .select("value_timestamptz")
@@ -299,7 +302,7 @@ function isMissingReviewQueueSourceColumnError(message: string): boolean {
 }
 
 async function tagReviewQueueSource(
-  db: any,
+  db: SupabaseClient,
   reviewQueueId: string,
   source: ReviewQueueSource,
   ctx: string,
@@ -350,20 +353,28 @@ function parseLimitOffset(
   return { limit, offset, cursor: null };
 }
 
+function safeDecodeURIComponent(input: string): string {
+  try {
+    return decodeURIComponent(input);
+  } catch {
+    return input;
+  }
+}
+
 function parseRedlineApiRoute(url: URL): RedlineApiRoute | null {
   const parts = url.pathname
     .split("/")
     .map((part) => part.trim())
     .filter((part) => part.length > 0);
 
-  const redlineIndex = parts.lastIndexOf("redline");
+  const redlineIndex = Math.max(parts.lastIndexOf("redline"), parts.lastIndexOf("redline-thread"));
   if (redlineIndex === -1) return null;
 
   const tail = parts.slice(redlineIndex + 1);
   if (tail.length === 0) return { kind: "unknown", path: tail };
   if (tail[0] === "contacts" && tail.length === 1) return { kind: "contacts" };
-  if (tail[0] === "thread" && tail.length >= 2) return { kind: "thread", contactId: decodeURIComponent(tail[1]) };
-  if (tail[0] === "spans" && tail.length >= 2) return { kind: "spans", contactId: decodeURIComponent(tail[1]) };
+  if (tail[0] === "thread" && tail.length >= 2) return { kind: "thread", contactId: safeDecodeURIComponent(tail[1]) };
+  if (tail[0] === "spans" && tail.length >= 2) return { kind: "spans", contactId: safeDecodeURIComponent(tail[1]) };
   if (tail[0] === "verdict" && tail.length === 1) return { kind: "verdict" };
   return { kind: "unknown", path: tail };
 }
@@ -484,7 +495,7 @@ function shouldAssignOutboundToInboundWindow(sentAt: unknown, inboundMs: number[
 // contact's inbound messages.  We scope by contact_phone so that outbound
 // messages sent to *other* contacts within the same time window are excluded.
 async function inferMissingOutboundSms(
-  db: any,
+  db: SupabaseClient,
   inboundMs: number[],
   existingSmsIds: Set<string>,
   contactPhoneVariants: string[],
@@ -529,7 +540,7 @@ async function inferMissingOutboundSms(
 }
 
 // reset grading clock endpoint
-async function handleResetClock(db: any, t0: number): Promise<Response> {
+async function handleResetClock(db: SupabaseClient, t0: number): Promise<Response> {
   const { data, error } = await db
     .from("redline_settings")
     .update({ value_timestamptz: new Date().toISOString(), updated_at: new Date().toISOString() })
@@ -550,7 +561,7 @@ async function handleResetClock(db: any, t0: number): Promise<Response> {
 }
 
 // get grading cutoff endpoint
-async function handleGetCutoff(db: any, t0: number): Promise<Response> {
+async function handleGetCutoff(db: SupabaseClient, t0: number): Promise<Response> {
   const { data, error } = await db
     .from("redline_settings")
     .select("value_timestamptz")
@@ -570,7 +581,7 @@ async function handleGetCutoff(db: any, t0: number): Promise<Response> {
 }
 
 // contacts endpoint
-async function handleContacts(db: any, url: URL, t0: number): Promise<Response> {
+async function handleContacts(db: SupabaseClient, url: URL, t0: number): Promise<Response> {
   const stageMs: Record<string, number> = {};
   const timeDb = async (stage: string, fn: () => Promise<any>): Promise<any> => {
     const start = performance.now();
@@ -749,7 +760,7 @@ async function handleContacts(db: any, url: URL, t0: number): Promise<Response> 
 }
 
 // projects endpoint
-async function handleProjects(db: any, t0: number): Promise<Response> {
+async function handleProjects(db: SupabaseClient, t0: number): Promise<Response> {
   const { data, error } = await db
     .from("projects")
     .select("id, name, status, job_type")
@@ -771,7 +782,7 @@ async function handleProjects(db: any, t0: number): Promise<Response> {
 }
 
 // top candidates endpoint
-async function handleTopCandidates(db: any, url: URL, t0: number): Promise<Response> {
+async function handleTopCandidates(db: SupabaseClient, url: URL, t0: number): Promise<Response> {
   const rawLimit = parseInt(url.searchParams.get("limit") || "50", 10);
   const limit = Math.min(Math.max(Number.isNaN(rawLimit) ? 50 : rawLimit, 1), 500);
   const shouldRefresh = isTruthy(url.searchParams.get("refresh"));
@@ -820,7 +831,7 @@ async function handleTopCandidates(db: any, url: URL, t0: number): Promise<Respo
   });
 }
 
-async function handleTriageQueue(db: any, url: URL, t0: number): Promise<Response> {
+async function handleTriageQueue(db: SupabaseClient, url: URL, t0: number): Promise<Response> {
   const stageMs: Record<string, number> = {};
   const timeDb = async (stage: string, fn: () => Promise<any>): Promise<any> => {
     const start = performance.now();
@@ -885,7 +896,7 @@ async function handleTriageQueue(db: any, url: URL, t0: number): Promise<Respons
   ) as string[];
 
   const { data: spanRows, error: spanErr } = await timeDb("db_spans", () =>
-    batchIn<any>(
+    batchIn<Record<string, unknown>>(
       spanIds,
       (chunk: string[]) =>
         db
@@ -907,15 +918,18 @@ async function handleTriageQueue(db: any, url: URL, t0: number): Promise<Respons
     ]),
   ];
 
-  const { data: interactionRows, error: interactionErr } = await timeDb("db_interactions", () =>
-    batchIn<any>(
-      interactionIds,
-      (chunk: string[]) =>
-        db
-          .from("interactions")
-          .select("interaction_id, contact_id, contact_name, event_at_utc, channel")
-          .in("interaction_id", chunk),
-    ));
+  const { data: interactionRows, error: interactionErr } = await timeDb(
+    "db_interactions",
+    () =>
+      batchIn<Record<string, unknown>>(
+        interactionIds,
+        (chunk: string[]) =>
+          db
+            .from("interactions")
+            .select("interaction_id, contact_id, contact_name, event_at_utc, channel")
+            .in("interaction_id", chunk),
+      ),
+  );
   if (interactionErr) {
     return json({ ok: false, error_code: "triage_interactions_query_failed", error: interactionErr.message }, 500);
   }
@@ -923,16 +937,19 @@ async function handleTriageQueue(db: any, url: URL, t0: number): Promise<Respons
     (interactionRows || []).map((row: any) => [String(row?.interaction_id || ""), row]),
   );
 
-  const { data: attributionRows, error: attributionErr } = await timeDb("db_attributions", () =>
-    batchIn<any>(
-      spanIds,
-      (chunk: string[]) =>
-        db
-          .from("span_attributions")
-          .select("span_id, project_id, applied_project_id, confidence, attributed_at")
-          .in("span_id", chunk)
-          .order("attributed_at", { ascending: false }),
-    ));
+  const { data: attributionRows, error: attributionErr } = await timeDb(
+    "db_attributions",
+    () =>
+      batchIn<Record<string, unknown>>(
+        spanIds,
+        (chunk: string[]) =>
+          db
+            .from("span_attributions")
+            .select("span_id, project_id, applied_project_id, confidence, attributed_at")
+            .in("span_id", chunk)
+            .order("attributed_at", { ascending: false }),
+      ),
+  );
   if (attributionErr) {
     return json({ ok: false, error_code: "triage_attributions_query_failed", error: attributionErr.message }, 500);
   }
@@ -951,7 +968,7 @@ async function handleTriageQueue(db: any, url: URL, t0: number): Promise<Respons
     ),
   ];
   const { data: projectRows, error: projectErr } = await timeDb("db_projects", () =>
-    batchIn<any>(
+    batchIn<Record<string, unknown>>(
       projectIds,
       (chunk: string[]) =>
         db
@@ -1029,7 +1046,7 @@ async function handleTriageQueue(db: any, url: URL, t0: number): Promise<Respons
   );
 }
 
-async function handleUndoVerdict(db: any, req: Request, t0: number): Promise<Response> {
+async function handleUndoVerdict(db: SupabaseClient, req: Request, t0: number): Promise<Response> {
   let body: any;
   try {
     body = await req.json();
@@ -1095,7 +1112,7 @@ async function handleUndoVerdict(db: any, req: Request, t0: number): Promise<Res
 }
 
 // sanity endpoint
-async function handleSanity(db: any, t0: number): Promise<Response> {
+async function handleSanity(db: SupabaseClient, t0: number): Promise<Response> {
   const startOfUtcDay = new Date();
   startOfUtcDay.setUTCHours(0, 0, 0, 0);
 
@@ -1208,7 +1225,7 @@ async function handleSanity(db: any, t0: number): Promise<Response> {
 
 // thread endpoint
 async function handleThread(
-  db: any,
+  db: SupabaseClient,
   contactId: string,
   limit: number,
   offset: number,
@@ -1400,7 +1417,7 @@ async function handleThread(
       ? timeDb(
         "db_conversation_spans",
         () =>
-          batchIn<any>(pagedCallIds, (chunk) =>
+          batchIn<Record<string, unknown>>(pagedCallIds, (chunk) =>
             db.from("conversation_spans").select("id, interaction_id, span_index, transcript_segment, word_count").in(
               "interaction_id",
               chunk,
@@ -1411,7 +1428,7 @@ async function handleThread(
       ? timeDb(
         "db_journal_claims",
         () =>
-          batchIn<any>(pagedCallIds, (chunk) =>
+          batchIn<Record<string, unknown>>(pagedCallIds, (chunk) =>
             db.from("journal_claims").select("id, call_id, source_span_id, claim_type, claim_text, speaker_label").in(
               "call_id",
               chunk,
@@ -1438,7 +1455,7 @@ async function handleThread(
       ? timeDb(
         "db_span_attributions",
         () =>
-          batchIn<any>(spanIds, (chunk) =>
+          batchIn<Record<string, unknown>>(spanIds, (chunk) =>
             db.from("span_attributions").select("span_id, project_id, applied_project_id, confidence").in(
               "span_id",
               chunk,
@@ -1449,7 +1466,7 @@ async function handleThread(
       ? timeDb(
         "db_pending_span_reviews",
         () =>
-          batchIn<any>(spanIds, (chunk) =>
+          batchIn<Record<string, unknown>>(spanIds, (chunk) =>
             db.from("review_queue").select("id, span_id, interaction_id, created_at").eq("status", "pending").in(
               "span_id",
               chunk,
@@ -1460,7 +1477,7 @@ async function handleThread(
       ? timeDb(
         "db_claim_grades",
         () =>
-          batchIn<any>(claimIds, (chunk) =>
+          batchIn<Record<string, unknown>>(claimIds, (chunk) =>
             db.from("claim_grades").select("claim_id, grade, correction_text, graded_by").in("claim_id", chunk)),
       )
       : { data: [] },
@@ -1554,7 +1571,7 @@ async function handleThread(
   );
 }
 
-async function handleThreadApi(db: any, contactId: string, url: URL, t0: number): Promise<Response> {
+async function handleThreadApi(db: SupabaseClient, contactId: string, url: URL, t0: number): Promise<Response> {
   const { limit, offset, cursor } = parseLimitOffset(url, { limit: 50, maxLimit: 200, offset: 0 });
   const response = await handleThread(db, contactId, limit, offset, t0);
   if (!response.ok) return response;
@@ -1589,7 +1606,7 @@ async function handleThreadApi(db: any, contactId: string, url: URL, t0: number)
   });
 }
 
-async function handleSpansApi(db: any, contactId: string, url: URL, t0: number): Promise<Response> {
+async function handleSpansApi(db: SupabaseClient, contactId: string, url: URL, t0: number): Promise<Response> {
   const { limit, offset, cursor } = parseLimitOffset(url, { limit: 100, maxLimit: 500, offset: 0 });
 
   const { data: contact, error: contactErr } = await db
@@ -1667,7 +1684,7 @@ async function handleSpansApi(db: any, contactId: string, url: URL, t0: number):
       .map((row: any) => [String(row.interaction_id), row]),
   );
 
-  const { data: callRows, error: callErr } = await batchIn<any>(
+  const { data: callRows, error: callErr } = await batchIn<Record<string, unknown>>(
     interactionIds,
     (chunk: string[]) =>
       db
@@ -1682,7 +1699,7 @@ async function handleSpansApi(db: any, contactId: string, url: URL, t0: number):
     (callRows || []).map((row: any) => [String(row?.interaction_id || ""), row?.direction || null]),
   );
 
-  const { data: spansRaw, error: spansErr } = await batchIn<any>(
+  const { data: spansRaw, error: spansErr } = await batchIn<Record<string, unknown>>(
     interactionIds,
     (chunk: string[]) =>
       db
@@ -1700,7 +1717,7 @@ async function handleSpansApi(db: any, contactId: string, url: URL, t0: number):
     .map((span: any) => String(span?.id || ""))
     .filter((value: string) => value.length > 0);
 
-  const { data: spanAttributions, error: attributionErr } = await batchIn<any>(
+  const { data: spanAttributions, error: attributionErr } = await batchIn<Record<string, unknown>>(
     spanIds,
     (chunk: string[]) =>
       db
@@ -1722,7 +1739,7 @@ async function handleSpansApi(db: any, contactId: string, url: URL, t0: number):
         .filter((value: string) => value.length > 0),
     ),
   ];
-  const { data: projectRows, error: projectErr } = await batchIn<any>(
+  const { data: projectRows, error: projectErr } = await batchIn<Record<string, unknown>>(
     projectIds,
     (chunk: string[]) =>
       db
@@ -1737,7 +1754,7 @@ async function handleSpansApi(db: any, contactId: string, url: URL, t0: number):
     (projectRows || []).map((row: any) => [String(row?.id || ""), String(row?.name || "")]),
   );
 
-  const { data: pendingRows, error: pendingErr } = await batchIn<any>(
+  const { data: pendingRows, error: pendingErr } = await batchIn<Record<string, unknown>>(
     spanIds,
     (chunk: string[]) =>
       db
@@ -1757,7 +1774,7 @@ async function handleSpansApi(db: any, contactId: string, url: URL, t0: number):
     pendingBySpan.set(spanId, row);
   }
 
-  const { data: claimRows, error: claimsErr } = await batchIn<any>(
+  const { data: claimRows, error: claimsErr } = await batchIn<Record<string, unknown>>(
     spanIds,
     (chunk: string[]) =>
       db
@@ -1845,7 +1862,7 @@ async function handleSpansApi(db: any, contactId: string, url: URL, t0: number):
   });
 }
 
-async function handleVerdict(db: any, req: Request, t0: number): Promise<Response> {
+async function handleVerdict(db: SupabaseClient, req: Request, t0: number): Promise<Response> {
   let body: any;
   try {
     body = await req.json();
@@ -1978,7 +1995,7 @@ async function handleVerdict(db: any, req: Request, t0: number): Promise<Respons
 }
 
 // grade endpoint
-async function handleGrade(db: any, req: Request, t0: number): Promise<Response> {
+async function handleGrade(db: SupabaseClient, req: Request, t0: number): Promise<Response> {
   let body: any;
   try {
     body = await req.json();
@@ -2511,7 +2528,7 @@ const HTML = `<!DOCTYPE html>
 </html>`;
 
 // Health check — pipeline freshness (skips contacts cache, always queries fresh)
-async function handleHealth(db: any, t0: number): Promise<Response> {
+async function handleHealth(db: SupabaseClient, t0: number): Promise<Response> {
   const nowMs = Date.now();
 
   const [lastCallRes, lastSmsRes, lastInteractionRes, pendingRes, lastErrorRes] = await Promise.all([
