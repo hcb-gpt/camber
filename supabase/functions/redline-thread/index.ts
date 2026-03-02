@@ -1044,23 +1044,32 @@ async function handleContacts(db: any, url: URL, t0: number): Promise<Response> 
   }
 
   const mapped = (data || [])
-    .filter((row: any) => row.contact_id != null)
-    .map((row: any) => ({
-      contact_id: row.contact_id,
-      contact_key: row.contact_id ?? `sms:${(row.contact_phone || "").replace(/\D/g, "").slice(-10)}`,
-      name: row.contact_name,
-      phone: row.contact_phone,
-      call_count: Number(row.call_count ?? 0),
-      sms_count: Number(row.sms_count ?? 0),
-      claim_count: Number(row.claim_count ?? 0),
-      ungraded_count: Number(row.ungraded_count ?? 0),
-      last_activity: row.last_activity || "",
-      last_summary: deriveContactLastSummary(row) || "",
-      last_direction: row.last_direction || "",
-      last_interaction_type: row.last_interaction_type || "",
-      last_interaction_id: "",
-      source: String(row.source || "").trim() || "contacts",
-    }));
+    // `redline_contacts_unified_matview` includes beside_thread rows where `contact_id` is NULL.
+    // Preserve those rows as long as they have a phone, and let the client synthesize a stable UUID.
+    .filter((row: any) => row.contact_id != null || String(row.contact_phone || "").trim() !== "")
+    .map((row: any) => {
+      const phone = String(row.contact_phone || "").trim();
+      const phoneDigits = phone.replace(/\D/g, "").slice(-10);
+      const contactKey =
+        row.contact_id ??
+        (phoneDigits ? `sms:${phoneDigits}` : `unknown:${String(row.contact_name || "").trim() || "contact"}`);
+      return {
+        contact_id: row.contact_id,
+        contact_key: contactKey,
+        name: row.contact_name,
+        phone: row.contact_phone,
+        call_count: Number(row.call_count ?? 0),
+        sms_count: Number(row.sms_count ?? 0),
+        claim_count: Number(row.claim_count ?? 0),
+        ungraded_count: Number(row.ungraded_count ?? 0),
+        last_activity: row.last_activity || "",
+        last_summary: deriveContactLastSummary(row) || "",
+        last_direction: row.last_direction || "",
+        last_interaction_type: row.last_interaction_type || "",
+        last_interaction_id: "",
+        source: String(row.source || "").trim() || "contacts",
+      };
+    });
 
   // Filter ghost rows: contact exists but has zero activity (no calls, no SMS, no last_activity)
   const liveRows = mapped.filter((row: any) =>
