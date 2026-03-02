@@ -3049,9 +3049,7 @@ Deno.serve(async (req: Request) => {
       return false;
     })();
 
-    const topLevelAuthResult = allowAnonKey
-      ? checkTopLevelEdgeSecretOrAnonKey(req)
-      : checkTopLevelEdgeSecret(req);
+    const topLevelAuthResult = allowAnonKey ? checkTopLevelEdgeSecretOrAnonKey(req) : checkTopLevelEdgeSecret(req);
     if (!topLevelAuthResult.ok) {
       return json(
         {
