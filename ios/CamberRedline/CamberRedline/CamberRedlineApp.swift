@@ -30,6 +30,15 @@ private enum TriageStaticAutomation {
     }
 }
 
+private enum TriageSmokeProofHoldAutomation {
+    static let keepUndoFlag = "--smoke-triage-keep-undo"
+    static let holdSeconds: Int = 6
+
+    static var isEnabled: Bool {
+        ProcessInfo.processInfo.arguments.contains(keepUndoFlag)
+    }
+}
+
 private enum TruthGraphDemoAutomation {
     static let launchFlag = "--truth-graph-demo"
     static let interactionIdEnv = "TRUTH_GRAPH_DEMO_INTERACTION_ID"
@@ -258,6 +267,14 @@ struct CamberRedlineApp: App {
         // Wait for triage to signal completion (up to 30s timeout)
         await waitForNotification(AppSmokeAutomation.triageDoneNotification, timeout: 30)
         AppSmokeAutomation.logger.log("SMOKE_EVENT TRIAGE_PHASE_COMPLETE")
+
+        if TriageSmokeProofHoldAutomation.isEnabled {
+            AppSmokeAutomation.logger.log(
+                "SMOKE_EVENT TRIAGE_PROOF_HOLD seconds=\(TriageSmokeProofHoldAutomation.holdSeconds, privacy: .public)"
+            )
+            try? await Task.sleep(for: .seconds(TriageSmokeProofHoldAutomation.holdSeconds))
+        }
+
         isTriagePresented = false
         try? await Task.sleep(for: .milliseconds(600))
 
