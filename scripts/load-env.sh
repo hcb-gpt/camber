@@ -13,7 +13,8 @@ fi
 # Prefer central loader (Keychain-aware)
 if [ -f "${HOME:-}/.camber/load-credentials.sh" ]; then
     # shellcheck source=/dev/null
-    source "${HOME:-}/.camber/load-credentials.sh" 2>/dev/null || true
+    # Silence loader output (some versions print secret prefixes).
+    source "${HOME:-}/.camber/load-credentials.sh" >/dev/null 2>&1 || true
 fi
 
 # Fallback to central file if still missing
@@ -51,8 +52,9 @@ if [ -n "$MISSING" ]; then
     return 1 2>/dev/null || exit 1
 fi
 
-# Mark successful load for this shell
-export CAMBER_CREDS_LOADED=1
+# Mark successful load for this shell (intentionally NOT exported — exporting
+# leaks idempotence into child shells, causing stale secret rotations).
+CAMBER_CREDS_LOADED=1
 
 # Export Supabase CLI token if available
 if [ -n "${CLI:-}" ]; then
