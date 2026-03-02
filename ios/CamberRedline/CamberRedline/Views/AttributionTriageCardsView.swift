@@ -130,6 +130,9 @@ struct AttributionTriageCardsView: View {
                                 Task { await viewModel.resolve(card, to: projectId, notes: notes) }
                                 pickedProjectByQueueId.removeValue(forKey: card.queueId)
                             } else {
+                                if pickedProjectByQueueId[card.queueId] == nil {
+                                    viewModel.recordPickTime()
+                                }
                                 pickedProjectByQueueId[card.queueId] = projectId
                             }
                         },
@@ -230,9 +233,9 @@ struct AttributionTriageCardsView: View {
             )
             Spacer()
             railStat(
-                icon: "speedometer",
-                value: "\(viewModel.avgSecondsPerCard)s",
-                label: "avg",
+                icon: "hand.tap",
+                value: viewModel.pickTimeP90Seconds.map { "\($0)s" } ?? "—",
+                label: "pick p90",
                 color: .white
             )
             railStat(
@@ -323,6 +326,9 @@ struct AttributionTriageCardsView: View {
                         guard let suggested = card.projectId else { return }
                         let trimmed = suggested.trimmingCharacters(in: .whitespacesAndNewlines)
                         guard !trimmed.isEmpty else { return }
+                        if pickedProjectByQueueId[card.queueId] == nil {
+                            viewModel.recordPickTime()
+                        }
                         pickedProjectByQueueId[card.queueId] = trimmed
                     },
                     onTapEvidence: {
@@ -433,17 +439,25 @@ struct AttributionTriageCardsView: View {
         Button {
             Task { await viewModel.undo() }
         } label: {
-            HStack(spacing: 8) {
-                Image(systemName: "arrow.uturn.backward")
-                    .font(.caption)
-                Text("Undo \(action.label)")
-                    .font(.caption)
-                    .fontWeight(.medium)
+            VStack(alignment: .leading, spacing: 2) {
+                HStack(spacing: 8) {
+                    Image(systemName: "arrow.uturn.backward")
+                        .font(.caption)
+                    Text("Undo \(action.label)")
+                        .font(.caption)
+                        .fontWeight(.medium)
+                }
+                if let requestId = action.requestId {
+                    Text("req \(requestId)")
+                        .font(.caption2)
+                        .foregroundStyle(.black.opacity(0.6))
+                        .lineLimit(1)
+                }
             }
             .foregroundStyle(.black)
             .padding(.horizontal, 16)
             .padding(.vertical, 10)
-            .background(Color.undoAmber, in: Capsule())
+            .background(Color.undoAmber, in: RoundedRectangle(cornerRadius: 18))
         }
         .padding(.bottom, 16)
     }

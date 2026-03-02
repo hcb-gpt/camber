@@ -70,6 +70,7 @@ final class CardTriageViewModel {
         let kind: Kind
         let timestamp: Date
         let label: String
+        let requestId: String?
 
         enum Kind { case resolved, dismissed, escalated, skipped }
     }
@@ -116,6 +117,17 @@ final class CardTriageViewModel {
         return total / activityLog.count
     }
 
+    /// p90 seconds from card-visible → first explicit project pick.
+    var pickTimeP90Seconds: Int? {
+        guard !pickTimesSec.isEmpty else { return nil }
+        let sorted = pickTimesSec.sorted()
+        let rawIndex = Int(ceil(Double(sorted.count) * 0.9)) - 1
+        let index = max(0, min(rawIndex, sorted.count - 1))
+        return sorted[index]
+    }
+
+    private var pickTimesSec: [Int] = []
+
     // MARK: - Load
 
     func loadQueue() async {
@@ -159,17 +171,27 @@ final class CardTriageViewModel {
             contactName: card.contactName
         ))
 
+        let actionTimestamp = Date()
+        let actionLabel = projectName(for: projectId) ?? "project"
         lastAction = TriageAction(
             queueId: card.queueId,
             kind: .resolved,
-            timestamp: Date(),
-            label: projectName(for: projectId) ?? "project"
+            timestamp: actionTimestamp,
+            label: actionLabel,
+            requestId: nil
         )
         undoDeadline = Date().addingTimeInterval(25)
         startUndoTimer()
 
         do {
             let response = try await service.resolve(queueId: card.queueId, projectId: projectId, notes: notes)
+            lastAction = TriageAction(
+                queueId: card.queueId,
+                kind: .resolved,
+                timestamp: actionTimestamp,
+                label: actionLabel,
+                requestId: response.requestId
+            )
             if CardTriageSmokeAutomation.isEnabled {
                 let requestId = response.requestId ?? "missing"
                 CardTriageSmokeAutomation.logger.log(
@@ -213,17 +235,27 @@ final class CardTriageViewModel {
             contactName: card.contactName
         ))
 
+        let actionTimestamp = Date()
+        let actionLabel = card.contactName
         lastAction = TriageAction(
             queueId: card.queueId,
             kind: .dismissed,
-            timestamp: Date(),
-            label: card.contactName
+            timestamp: actionTimestamp,
+            label: actionLabel,
+            requestId: nil
         )
         undoDeadline = Date().addingTimeInterval(25)
         startUndoTimer()
 
         do {
             let response = try await service.dismiss(queueId: card.queueId, reason: reason, notes: notes)
+            lastAction = TriageAction(
+                queueId: card.queueId,
+                kind: .dismissed,
+                timestamp: actionTimestamp,
+                label: actionLabel,
+                requestId: response.requestId
+            )
             if CardTriageSmokeAutomation.isEnabled {
                 let requestId = response.requestId ?? "missing"
                 CardTriageSmokeAutomation.logger.log(
@@ -272,20 +304,30 @@ final class CardTriageViewModel {
             contactName: card.contactName
         ))
 
+        let actionTimestamp = Date()
+        let actionLabel = "escalated"
         lastAction = TriageAction(
             queueId: card.queueId,
             kind: .escalated,
-            timestamp: Date(),
-            label: "escalated"
+            timestamp: actionTimestamp,
+            label: actionLabel,
+            requestId: nil
         )
         undoDeadline = Date().addingTimeInterval(25)
         startUndoTimer()
 
         do {
-            try await service.dismiss(
+            let response = try await service.dismiss(
                 queueId: card.queueId,
                 reason: "escalated",
                 notes: reason
+            )
+            lastAction = TriageAction(
+                queueId: card.queueId,
+                kind: .escalated,
+                timestamp: actionTimestamp,
+                label: actionLabel,
+                requestId: response.requestId
             )
         } catch {
             if let banner = service.writesLockedBannerText {
@@ -325,7 +367,8 @@ final class CardTriageViewModel {
             queueId: card.queueId,
             kind: .skipped,
             timestamp: Date(),
-            label: "skipped"
+            label: "skipped",
+            requestId: nil
         )
         // No undo for skip — card is still in queue
         undoDeadline = nil
@@ -389,6 +432,12 @@ final class CardTriageViewModel {
         }
 
         return Array(options.prefix(20))
+    }
+
+    func recordPickTime() {
+        let now = Date()
+        let spent = cardViewStartTime.map { Int(now.timeIntervalSince($0)) } ?? 0
+        pickTimesSec.append(max(0, spent))
     }
 
     private func recordTimeSpent() -> Int {
