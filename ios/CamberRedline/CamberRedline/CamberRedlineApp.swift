@@ -162,6 +162,7 @@ struct CamberRedlineApp: App {
     }
 
     private func updateBadge() {
+        guard !AppSmokeAutomation.isEnabled else { return }
         let count = contactListViewModel.totalUngraded
         UNUserNotificationCenter.current().setBadgeCount(count)
     }
