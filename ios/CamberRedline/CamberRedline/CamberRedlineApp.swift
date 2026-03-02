@@ -121,6 +121,7 @@ struct CamberRedlineApp: App {
                     TruthGraphStatusCardView(
                         viewModel: threadViewModel,
                         unassignedIds: [TruthGraphDemoAutomation.interactionId],
+                        probeInteractionId: TruthGraphDemoAutomation.interactionId,
                         reloadThread: {}
                     )
 
