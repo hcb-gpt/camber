@@ -127,6 +127,7 @@ PASS=0
 FAIL=0
 SKIP=0
 RUN_INTERACTION_IDS=()
+MATCHED_SCENARIOS=0
 
 # ── Helper: assert_invariant ──────────────────────────────────
 # Usage: assert_invariant <test_name> <condition_result> <detail>
@@ -223,6 +224,7 @@ for i in $(seq 0 $((SCENARIO_COUNT - 1))); do
   if [[ -n "$SINGLE_SCENARIO" ]] && [[ "$SCENARIO_ID" != "$SINGLE_SCENARIO" ]]; then
     continue
   fi
+  MATCHED_SCENARIOS=$((MATCHED_SCENARIOS + 1))
 
   echo "──────────────────────────────────────────────────────────────"
   echo "  Scenario: $SCENARIO_ID"
@@ -536,6 +538,11 @@ for i in $(seq 0 $((SCENARIO_COUNT - 1))); do
   fi
   echo ""
 done
+
+if [[ -n "$SINGLE_SCENARIO" ]] && [[ $MATCHED_SCENARIOS -eq 0 ]]; then
+  echo "ERROR: Scenario not found: $SINGLE_SCENARIO"
+  exit 2
+fi
 
 # ── Summary ────────────────────────────────────────────────────
 echo "══════════════════════════════════════════════════════════════"
