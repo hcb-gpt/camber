@@ -8,15 +8,14 @@ BUNDLE_ID="com.heartwoodcustombuilders.CamberRedline"
 STAMP="$(date -u +%Y%m%dT%H%M%SZ)"
 PROOF_DATE="$(date +%Y-%m-%d)"
 PROOF_DIR="${ROOT_DIR}/docs/proofs/ios/${PROOF_DATE}"
-WORK_DIR="${ROOT_DIR}/.scratch/ios_simulator_smoke/${STAMP}_realtime_cleanup_proof"
+WORK_DIR="${ROOT_DIR}/.temp/ios_simulator_smoke/${STAMP}_realtime_cleanup_proof"
 DERIVED_DIR="${WORK_DIR}/DerivedData"
-
-mkdir -p "${PROOF_DIR}"
-mkdir -p "${WORK_DIR}"
 
 # In sandboxed sessions, toolchains cannot always write under ~/Library.
 # Use a local HOME for simctl + xcodebuild.
-SIMCTL_HOME="${ROOT_DIR}/.simctl-home"
+SIMCTL_HOME="${ROOT_DIR}/.temp/simctl-home"
+mkdir -p "${PROOF_DIR}"
+mkdir -p "${WORK_DIR}"
 mkdir -p "${SIMCTL_HOME}/Library/Logs/CoreSimulator"
 
 simctl() {
