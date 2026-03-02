@@ -1,5 +1,5 @@
 /**
- * zapier-call-ingest Edge Function v1.8.0
+ * zapier-call-ingest Edge Function v1.8.1
  *
  * Auth model (consolidated):
  * - Canonical: X-Edge-Secret === EDGE_SHARED_SECRET
@@ -11,16 +11,19 @@
  * pipeline normalization (interactions row, contact link, AI attribution).
  * Forward is best-effort — upsert success = 200 to Zapier regardless.
  *
+ * v1.8.1: Fix critical Beside auth bypass — Beside payloads must pass the same
+ * auth gate before any calls_raw upsert / process-call forward.
+ *
  * v1.7.1: Fix beside auth bypass — move body parse + beside detection BEFORE auth gate.
  * v1.7.0: Recovered BESIDE_RAW_PASSTHROUGH from lost v1.6.0 deploy (Charter §10).
  *
- * @version 1.8.0
+ * @version 1.8.1
  * @date 2026-02-28
  */
 import "jsr:@supabase/functions-js/edge-runtime.d.ts";
 import { createClient } from "jsr:@supabase/supabase-js@2";
 
-const VERSION = "v1.8.0";
+const VERSION = "v1.8.1";
 
 async function logDiagnostic(
   message: string,
@@ -132,91 +135,10 @@ Deno.serve(async (req: Request) => {
   };
   payload._zapier_ingest_meta = zapierMeta;
 
-  // ---- BESIDE_RAW_PASSTHROUGH: detect Beside-format and insert directly ----
-  // Beside payloads bypass auth — they arrive from Zapier without edge secret
-  // headers. Detection is body-based (fromPhoneNumber/toPhoneNumber/noteUrl).
-  // v1.7.1: Moved BEFORE auth gate. v1.7.0 had it after auth (still 401'd).
-  if (isBesidePayload(payload)) {
-    const supabaseUrl = Deno.env.get("SUPABASE_URL")!;
-    const serviceRoleKey = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!;
-    const sb = createClient(supabaseUrl, serviceRoleKey);
-
-    const row = besideToCallsRaw(payload, zapierMeta);
-    const { error: insertErr } = await sb.from("calls_raw").upsert(row, {
-      onConflict: "interaction_id",
-      ignoreDuplicates: true,
-    });
-
-    const fieldsReceived = Object.keys(payload).filter((k) => payload[k] != null && k !== "_zapier_ingest_meta");
-    await logDiagnostic("BESIDE_RAW_PASSTHROUGH", {
-      interaction_id: row.interaction_id,
-      fields_received: fieldsReceived,
-      insert_ok: !insertErr,
-      insert_error: insertErr?.message || null,
-    }, "info");
-
-    if (insertErr) {
-      return new Response(
-        JSON.stringify({
-          ok: false,
-          error: "beside_passthrough_insert_failed",
-          detail: insertErr.message,
-          version: VERSION,
-          ms: Date.now() - t0,
-        }),
-        { status: 500, headers: { "Content-Type": "application/json" } },
-      );
-    }
-
-    // Best-effort forward to process-call for full pipeline normalization
-    // (interactions row, contact link, AI attribution). Upsert already
-    // succeeded so Zapier gets 200 regardless of forward outcome.
-    let forwardStatus: number | null = null;
-    let forwardError: string | null = null;
-    try {
-      const pcUrl = `${supabaseUrl}/functions/v1/process-call`;
-      const edgeSecret = Deno.env.get("EDGE_SHARED_SECRET") || "";
-      const pcResp = await fetch(pcUrl, {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-          "Authorization": `Bearer ${serviceRoleKey}`,
-          "X-Edge-Secret": edgeSecret,
-        },
-        body: JSON.stringify(payload),
-      });
-      forwardStatus = pcResp.status;
-      if (!pcResp.ok) {
-        forwardError = await pcResp.text().catch(() => "unreadable");
-      }
-    } catch (e: any) {
-      forwardError = e.message || "fetch_failed";
-    }
-
-    await logDiagnostic("BESIDE_PROCESS_CALL_FORWARD", {
-      interaction_id: row.interaction_id,
-      forward_status: forwardStatus,
-      forward_error: forwardError,
-      forward_ok: forwardStatus !== null && forwardStatus >= 200 && forwardStatus < 300,
-    }, forwardError ? "error" : "info");
-
-    return new Response(
-      JSON.stringify({
-        ok: true,
-        path: "beside_raw_passthrough",
-        interaction_id: row.interaction_id,
-        capture_source: "beside_zapier",
-        process_call_status: forwardStatus,
-        process_call_error: forwardError,
-        version: VERSION,
-        ms: Date.now() - t0,
-      }),
-      { status: 200, headers: { "Content-Type": "application/json" } },
-    );
-  }
+  const isBeside = isBesidePayload(payload);
 
   // ---- Auth gate (canonical + transitional legacy fallback) ----
-  // Non-beside payloads must authenticate to reach process-call.
+  // Applies to ALL payloads (including Beside).
   const incomingXEdgeSecret = req.headers.get("X-Edge-Secret") || "";
   const incomingXSecret = req.headers.get("X-Secret") || "";
   const expectedEdgeSecret = Deno.env.get("EDGE_SHARED_SECRET") || "";
@@ -266,9 +188,89 @@ Deno.serve(async (req: Request) => {
     });
   }
 
-  // ---- Forward to process-call ----
+  // ---- Shared runtime state (post-auth only) ----
   const supabaseUrl = Deno.env.get("SUPABASE_URL")!;
   const serviceRoleKey = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!;
+
+  // ---- BESIDE_RAW_PASSTHROUGH: detect Beside-format and insert directly ----
+  // NOTE: Beside payloads MUST authenticate before any DB upsert / forward.
+  if (isBeside) {
+    const sb = createClient(supabaseUrl, serviceRoleKey);
+
+    const row = besideToCallsRaw(payload, zapierMeta);
+    const { error: insertErr } = await sb.from("calls_raw").upsert(row, {
+      onConflict: "interaction_id",
+      ignoreDuplicates: true,
+    });
+
+    const fieldsReceived = Object.keys(payload).filter((k) => payload[k] != null && k !== "_zapier_ingest_meta");
+    await logDiagnostic("BESIDE_RAW_PASSTHROUGH", {
+      interaction_id: row.interaction_id,
+      fields_received: fieldsReceived,
+      insert_ok: !insertErr,
+      insert_error: insertErr?.message || null,
+    }, "info");
+
+    if (insertErr) {
+      return new Response(
+        JSON.stringify({
+          ok: false,
+          error: "beside_passthrough_insert_failed",
+          detail: insertErr.message,
+          version: VERSION,
+          ms: Date.now() - t0,
+        }),
+        { status: 500, headers: { "Content-Type": "application/json" } },
+      );
+    }
+
+    // Best-effort forward to process-call for full pipeline normalization
+    // (interactions row, contact link, AI attribution). Upsert already
+    // succeeded so Zapier gets 200 regardless of forward outcome.
+    let forwardStatus: number | null = null;
+    let forwardError: string | null = null;
+    try {
+      const pcUrl = `${supabaseUrl}/functions/v1/process-call`;
+      const pcResp = await fetch(pcUrl, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          "Authorization": `Bearer ${serviceRoleKey}`,
+          "X-Edge-Secret": expectedEdgeSecret,
+        },
+        body: JSON.stringify(payload),
+      });
+      forwardStatus = pcResp.status;
+      if (!pcResp.ok) {
+        forwardError = await pcResp.text().catch(() => "unreadable");
+      }
+    } catch (e: any) {
+      forwardError = e.message || "fetch_failed";
+    }
+
+    await logDiagnostic("BESIDE_PROCESS_CALL_FORWARD", {
+      interaction_id: row.interaction_id,
+      forward_status: forwardStatus,
+      forward_error: forwardError,
+      forward_ok: forwardStatus !== null && forwardStatus >= 200 && forwardStatus < 300,
+    }, forwardError ? "error" : "info");
+
+    return new Response(
+      JSON.stringify({
+        ok: true,
+        path: "beside_raw_passthrough",
+        interaction_id: row.interaction_id,
+        capture_source: "beside_zapier",
+        process_call_status: forwardStatus,
+        process_call_error: forwardError,
+        version: VERSION,
+        ms: Date.now() - t0,
+      }),
+      { status: 200, headers: { "Content-Type": "application/json" } },
+    );
+  }
+
+  // ---- Forward to process-call ----
 
   const forwardHeaders: Record<string, string> = {
     "Content-Type": "application/json",

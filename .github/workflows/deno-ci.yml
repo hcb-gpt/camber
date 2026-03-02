@@ -33,6 +33,7 @@ jobs:
             supabase/functions/redline-thread/auth_gate_test.ts \
             supabase/functions/redline-thread/truth_graph_test.ts \
             supabase/functions/redline-thread/contacts_test.ts \
+            supabase/functions/zapier-call-ingest/auth_gate_test.ts \
             || (echo "deno tests failed" && exit 1)
 
       # Typecheck disabled until TS errors in legacy code are fixed
