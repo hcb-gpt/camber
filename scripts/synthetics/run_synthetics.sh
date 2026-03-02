@@ -35,10 +35,18 @@ while [[ $# -gt 0 ]]; do
       shift
       ;;
     --scenario)
+      if [[ $# -lt 2 ]] || [[ -z "${2:-}" ]]; then
+        echo "ERROR: --scenario requires a scenario_id value"
+        exit 2
+      fi
       SINGLE_SCENARIO="$2"
       shift 2
       ;;
     --timestamp)
+      if [[ $# -lt 2 ]] || [[ -z "${2:-}" ]]; then
+        echo "ERROR: --timestamp requires a tag value"
+        exit 2
+      fi
       RUN_TAG="$2"
       shift 2
       ;;
