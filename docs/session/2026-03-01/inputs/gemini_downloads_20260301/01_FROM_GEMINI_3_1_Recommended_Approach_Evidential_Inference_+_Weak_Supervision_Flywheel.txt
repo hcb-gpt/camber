@@ -1,0 +1,157 @@
+**Defining the Objective**
+
+I'm currently focused on defining the objective. My key task is to review the prompt constraints, specifically the questions, using the product facts as a foundation. I'll need to answer A-D using a strict format, starting with the identification of Invariants. I'm prioritizing understanding the constraints and applying product knowledge.
+
+
+**Clarifying the User Intent**
+
+I'm now zeroing in on the user's intent, which appears multifaceted. The input seems to blend a specification with a review request. I'm focusing on the initial product-grounded facts and questions component and trying to separate it from the later "review" aspect. I'm rereading the initial prompt to gain a clearer understanding of the user's goals.
+
+
+**Revisiting Previous Prompt**
+
+I'm now back-tracking a bit, reviewing the previous prompts again. I realized I may have missed some critical nuances in the formatting requests earlier. The deliverable format is very specific, and I need to make sure I'm adhering to the "pick a lane" and the minimal data additions aspect of the instructions. The test plan with specific metrics is also a key component. I am taking care to focus on the concrete objects: calls_raw, interactions, segment-call, context-assembly, attribution.
+
+
+**Analyzing the Input**
+
+I'm now grappling with a complex input. The user has presented a concatenated document containing various specifications, along with my own previous outputs and original prompts. My priority is to meticulously dissect this information. I'm focusing on identifying the starting points within this data dump and isolating the new instructions. I must navigate this to pinpoint the current constraints.
+
+
+**Pinpointing the Problem**
+
+I'm now zeroing in on the core challenge. After re-examining the deliverable format and the user's questions, it's clear the primary focus is on uncertainty modeling in SMS threading and attribution. I need to address how to handle uncertainty from heuristic thread boundaries and ensure attribution doesn't overfit. I also need to focus on failure modes specific to SMS threading and call transcripts. I'm reviewing the user's specific questions to determine constraints for my work.
+
+
+**Formulating the Approach**
+
+I'm now formulating my approach. I'll propose that each interaction generates a distribution of projects with calibrated confidence, including an explicit "unknown" outcome. The "Gemini" prompt is the guiding framework, and I must propose implementable mechanisms for auditable attribution, within the specified data flow constraints. The focus is on the math/ML, with SMS threading and windowing being A.
+
+
+**Modeling Boundary Uncertainty**
+
+I'm now focusing on the 4-hour heuristic and how to best model the boundary uncertainty to prevent overfitting. I'm prioritizing minimal schema changes. Specifically, I'm formulating attribution as inference, creating a distribution over projects with calibrated confidence, and treating "unknown/needs evidence" as a first-class outcome. I'll need an objective/loss function and determine the allowed features (transcripts + context-assembly). I'm thinking about how to detect and penalize spurious certainty.
+
+
+**Refining the Model**
+
+I'm now refining the model, selecting Dirichlet-Multinomial for project attribution and Snorkel-style weak supervision. I'm focusing on consistency with the earlier Beta-distribution prior and using the Dirichlet-Multinomial model for multi-class project attribution, treating the hard 4-hour window as a threshold. The context includes Legacy Specs to remain aligned.
+
+
+**Proposing Refinements**
+
+I'm now integrating temporal graph concepts to manage uncertainty. I propose maintaining the 4-hour split in `sms-thread-assembler` but passing a "boundary confidence" to `context-assembly`. This score will depend on the time gap between threads and the entity overlap. I will then structure a response to match the user's specific guidelines, emphasizing the evidential Dirichlet Inference and Weak Supervision Flywheel.
+
+
+**Implementing Soft Boundaries**
+
+I'm now implementing the soft boundary approach for the 4-hour window. I'll calculate a `boundary_continuity_score` based on time decay and entity overlap. This will inform `context-assembly`, injecting the previous thread's claims with a score-weighted confidence, and logging any resulting cross-thread dependencies. I'm focusing on the interaction between threads.
+
+
+**Calculating the Distributions**
+
+I'm now calculating the evidence-based project probabilities. The posterior is Dirichlet, where evidence from `affinity_ledger` influences each project's alpha value. The loss function combines cross-entropy with human labels and a KL-divergence penalty. I'm focusing on features such as named entities and caller information and on detecting spurious certainty.
+
+
+**Evaluating Labeling Functions**
+
+I'm now evaluating the Labeling Functions (LFs). Each LF votes, providing evidence stored in `span_attributions.anchors` as a JSONB. I'm focused on the Label Model, which learns LF accuracy by examining vote agreement. I'm also preparing for regression testing, version-locking LF weights, and measuring Brier score improvement using `synthetic_ground_truth`. My attention is now on incorporating the Redline gating metrics.
+
+**Monitoring Gating Metrics**
+
+I'm now monitoring Redline's gating metrics. Epistemic Entropy and the Evidence Support Gap are key. I'll block the UI if the total evidence falls below a threshold, forcing an "UNKNOWN" state. If Dirichlet Entropy exceeds a level, Redline will force a "CONFLICT" state. My focus is now on ensuring proper implementation and response to these gating mechanisms.
+
+
+**Refining the UI Feedback**
+
+I'm now integrating UI feedback mechanics. The reviewer won't just confirm projects but will "Confirm Evidence" by selecting features like "Transcript mentioned 'Woodberry'." This writes $\alpha=+1$ to the `affinity_ledger`, training the Label Model. I'm focusing on minimizing schema changes, leveraging existing structures like `span_attributions.anchors` and `affinity_ledger` while adding `previous_thread_id` to `interactions` for the continuity score.
+
+
+**Evaluating the Success**
+
+I'm now focusing on evaluating the offline and online performance metrics. For Phase 1, the "abstain rate" is crucial, aiming for over 40% on the initial pass to avoid drift. I'm targeting a Brier Score below 0.15 on the labeled interactions. In Phase 2, I'll deploy `ai-router` in shadow mode, writing to `span_attributions`, and monitor precision, coverage, and calibration error. I'm prioritizing high-confidence predictions.
+
+--
+
+
+
+
+### 1. Recommended Approach: Evidential Inference + Weak Supervision Flywheel
+
+**The Lane:** We will treat attribution not as a black-box LLM text classification, but as a **Snorkel-style Weak Supervision Label Model** backed by **Dirichlet Evidential Inference**. 
+
+**Why it fits the pipeline:** You already have the architectural primitives (an `affinity_ledger` for priors, `context-assembly` for feature extraction, and `ai-router` for LLM evaluation). Instead of prompting the LLM in `ai-router` to output a hallucination-prone Softmax percentage (e.g., "95% sure"), we use multiple deterministic scripts and the LLM as discrete **Labeling Functions (LFs)**. Each LF extracts specific *evidence items* that act as counts ($\alpha$) in a Dirichlet distribution. This natively guarantees that "Unknown" and "Conflict" are mathematically grounded states rather than arbitrary threshold hacks.
+
+---
+
+### A) Threading/Windowing: Soft-Boundary Probabilities
+The `sms-thread-assembler` uses a 4-hour hard split, yielding `interactions` with `interaction_id` like `sms_thread_{phone}_{epoch}`. Modifying this ingest pipeline risks data loss, so we treat the 4h limit as an *epistemic boundary, not an absolute one*.
+
+**Concrete Method:**
+1. When `segment-call` processes a new `sms_thread` interaction, it executes a fast look-back: does this `contact_phone` have a previous interaction in the last 24 hours? 
+2. It calculates a `boundary_continuity_score` $\in [0, 1]$. This is an exponential decay function on the time gap $\Delta t$ multiplied by entity/topic overlap.
+3. `context-assembly` fetches the `context_receipt` of the *previous* thread and passes it into the current prompt, weighted by the continuity score.
+4. **The Guardrail:** If the `ai-router` relies on Thread A's context to attribute Thread B, it must explicitly log a `cross_thread_dependency` in Thread B's `span_attributions.anchors`. Redline can then visually render a "chain" link between the two threads, exposing the heuristic boundary to the user without overfitting to it.
+
+---
+
+### B) Attribution as Inference (The Dirichlet Model)
+Each `interaction` produces a distribution over projects with strictly calibrated confidence.
+
+**The Formulation:**
+*   Instead of standard probability, we use Evidential Subjective Logic. Each candidate project $k$ accumulates evidence counts $e_k \ge 0$. 
+*   Total evidence for project $k$: $E_k = \sum e_{k, LF} + W_{prior}(k)$ (from the `affinity_ledger`).
+*   The Dirichlet parameters are $\alpha_k = E_k + 1$.
+*   **Probability:** $P(k) = \frac{\alpha_k}{\sum_{i} \alpha_i}$
+*   **Epistemic Uncertainty:** $u = \frac{K}{\sum_{i} \alpha_i}$ (where $K$ is the number of candidates).
+
+**Features Allowed:** Strict artifacts passed from `context-assembly`: Lexical anchors (address/name matches in transcript), Phase matches, and deterministic graph links (`project_contacts`).
+**Objective/Loss:** If optimizing offline, we use the Type II Maximum Likelihood (Evidence Lower Bound) to train the weights of the LFs against the `synthetic_ground_truth` and `triage_decisions` tables.
+**Detecting Spurious Certainty:** If the LLM claims $P(k) = 0.99$ but the total extracted evidence $E_k$ is 0.1, the Dirichlet math flags a mathematically impossible state. The uncertainty $u$ will be high because the denominator ($\sum \alpha$) is small, forcing the system to downgrade the decision to `UNKNOWN` or `LOW_CONFIDENCE`.
+
+---
+
+### C) Bootstrapping / Weak Supervision
+We learn from noisy labels by separating the creation of evidence from the weighting of evidence.
+
+**The Approach:**
+1. **Labeling Functions (LFs):** `context-assembly` runs deterministic LFs (e.g., `LF_phone_match`, `LF_homeowner_regex`). `ai-router` runs LLM-based LFs (`LF_llm_project_name_extracted`).
+2. **Auditable Storage:** The `span_attributions.anchors` JSONB column stores the raw vector of LF votes. Example: `{"LF_phone_match": 1.0, "LF_llm_extract": 0.8}`.
+3. **The Flywheel:** When a human reviews a triage card in Redline, they aren't just selecting a project. By confirming, they lock the ground truth. A nightly cron job recalculates the accuracy and agreement rates of all LFs against these new human locks, updating their weights in the Label Model. 
+4. **Regression Testing:** Before a new `ai-router` prompt is deployed, we run it over the `synthetic_ground_truth` table. If the Brier Score of the output Dirichlet distributions degrades, the deploy is automatically blocked.
+
+---
+
+### D) "Forces Truth" Surface (Redline UI)
+Redline acts as the absolute gatekeeper for the pipeline. It reads the Dirichlet outputs from `span_attributions` and enforces states.
+
+**Gating Metrics & UI Rules:**
+1. **The Evidence Minimum (UNKNOWN):** If total evidence $\sum E_k < \tau_{min}$, Redline blocks the attribution badge. The state is strictly `UNKNOWN`. The UI shows: *"No explicit evidence found. Prior suggests [Project X]. Confirm?"*
+2. **The Entropy Threshold (NEEDS_SPLIT):** If Dirichlet Entropy is high (meaning strong evidence $E$ exists for *multiple* projects), Redline forces the state to `CONFLICT`. The UI disables the "Confirm" button and replaces it with a "Split Span" scissors tool.
+3. **The Hallucination Block:** If $P(k) \ge 0.92$ but `span_attributions.anchors` is structurally empty or `match_positions` are null, the Redline UI throws a `DEGRADED_PROVENANCE` warning and refuses to render the confidence badge.
+
+---
+
+### 2. Minimal Data Additions Needed
+*   **Table:** `interactions` (or `calls_raw`): Add column `previous_thread_id` (text). Populated by `sms-thread-assembler` to link the 4-hour temporal chain.
+*   **Column Update:** Ensure `span_attributions.anchors` strictly follows the LF vote schema: `{"lf_votes": {...}, "dirichlet_alphas": {...}, "uncertainty": 0.xx}`.
+*   *(No new tables required; utilizes existing `affinity_ledger`, `review_queue`, and `triage_decisions`)*.
+
+---
+
+### 3. Test Plan
+**Offline Replay (Shadow Tuning):**
+*   Run the last 14 days of `interactions` (where `channel='sms_thread'` and `call`) through `context-assembly` $\to$ `ai-router` offline using the LF/Dirichlet model.
+*   **Target Metrics:** "Abstain rate" (UNKNOWN routing) must initially be > 40%. We *want* the system to be highly skeptical on day one to prevent drift. Expected calibration: the empirical accuracy of the $P \ge 0.92$ bucket must be $\ge 98\%$ against human locks.
+
+**Online Shadow Mode:**
+*   Deploy the Dirichlet router. Write the expanded JSON to `span_attributions.anchors` but have Redline continue rendering the legacy UI for 3 days.
+*   Audit the `review_queue` population rate: verify that true multi-project texts are correctly tripping the entropy threshold and routing to `CONFLICT`.
+
+---
+
+### 4. Failure Modes Detected
+1. **The "Next Morning" SMS Fracture:** A continuous conversation spans a 10-hour gap overnight. The 4h `sms-thread-assembler` splits it into `sms_thread_A` and `sms_thread_B`. Thread B is just "Sounds good, do it."
+    *   **How it's handled:** `context-assembly` injects Thread A's receipt via `previous_thread_id` and the `boundary_continuity_score`. Thread B outputs a strong prior for Project X but records zero intrinsic evidence. The Dirichlet math yields high uncertainty ($u$). Redline flags it as `UNKNOWN (Prior Carryover)`, allowing a 1-click human confirm rather than silently hallucinating.
+2. **Diarization / Cross-Talk Bleed:** A call transcript mashes Speaker 1 (talking about Woodberry) and Speaker 2 (talking about Hurley) into a single `conversation_span`.
+    *   **How it's handled:** `LF_lexical` fires for Woodberry. `LF_lexical` fires for Hurley. The Dirichlet distribution assigns high $\alpha$ to both, resulting in an impossible normalization (high entropy). Redline blocks the attribution, triggers `CONFLICT`, and forces the human to split the text.
