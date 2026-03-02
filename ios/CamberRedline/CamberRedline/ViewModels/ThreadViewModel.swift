@@ -1,6 +1,32 @@
 import Foundation
 import Observation
 import Supabase
+import os
+
+private enum RealtimeCleanupSmokeProof {
+    static let launchFlag = "--smoke-realtime-cleanup-proof"
+    static let logger = Logger(subsystem: "CamberRedline", category: "smoke")
+
+    static var isEnabled: Bool {
+#if DEBUG
+        ProcessInfo.processInfo.arguments.contains(launchFlag)
+#else
+        false
+#endif
+    }
+
+    static var forceClaimGradesCancel: Bool {
+        isEnabled && ProcessInfo.processInfo.environment["SMOKE_FORCE_CLAIM_GRADES_CANCEL"] == "1"
+    }
+
+    static var forceThreadInteractionsSubscribeFail: Bool {
+        isEnabled && ProcessInfo.processInfo.environment["SMOKE_FORCE_THREAD_INTERACTIONS_SUBSCRIBE_FAIL"] == "1"
+    }
+
+    static var forceContactListSubscribeFail: Bool {
+        isEnabled && ProcessInfo.processInfo.environment["SMOKE_FORCE_CONTACTLIST_SUBSCRIBE_FAIL"] == "1"
+    }
+}
 
 enum NoteTargetType: String, Codable {
     case sms
@@ -684,9 +710,24 @@ final class ThreadViewModel {
         )
 
         do {
+#if DEBUG
+            if RealtimeCleanupSmokeProof.forceClaimGradesCancel {
+                throw CancellationError()
+            }
+#endif
             try await channel.subscribeWithError()
         } catch {
             await stopClaimGradeSubscription()
+#if DEBUG
+            if RealtimeCleanupSmokeProof.isEnabled {
+                let cleanupOk = gradeChannel == nil
+                    && subscribedContactId == nil
+                    && gradeInsertTask == nil
+                    && gradeUpdateTask == nil
+                RealtimeCleanupSmokeProof.logger
+                    .log("SMOKE_EVENT REALTIME_CLEANUP_PROOF claim_grades_cleanup_ok=\(cleanupOk, privacy: .public)")
+            }
+#endif
             if shouldIgnoreRealtimeError(error) {
                 return
             }
@@ -825,11 +866,31 @@ final class ThreadViewModel {
         )
 
         do {
+#if DEBUG
+            if RealtimeCleanupSmokeProof.forceThreadInteractionsSubscribeFail {
+                throw CancellationError()
+            }
+#endif
             try await interactionsChannel.subscribeWithError()
             try await smsChannel.subscribeWithError()
         } catch {
             await service.client.removeChannel(reviewQueueChannel)
+#if DEBUG
+            if RealtimeCleanupSmokeProof.isEnabled {
+                RealtimeCleanupSmokeProof.logger
+                    .log("SMOKE_EVENT REALTIME_CLEANUP_PROOF thread_interactions_removed_review_queue=1")
+            }
+#endif
             await stopInteractionsSubscription()
+#if DEBUG
+            if RealtimeCleanupSmokeProof.isEnabled {
+                let channelsCleared = threadInteractionsChannel == nil
+                    && threadSMSChannel == nil
+                    && threadReviewQueueChannel == nil
+                RealtimeCleanupSmokeProof.logger
+                    .log("SMOKE_EVENT REALTIME_CLEANUP_PROOF thread_interactions_channels_cleared=\(channelsCleared, privacy: .public)")
+            }
+#endif
             if shouldIgnoreRealtimeError(error) {
                 return
             }
@@ -1200,12 +1261,23 @@ final class ContactListViewModel {
         )
 
         do {
+#if DEBUG
+            if RealtimeCleanupSmokeProof.forceContactListSubscribeFail {
+                throw CancellationError()
+            }
+#endif
             try await channel.subscribeWithError()
             try await smsChannel.subscribeWithError()
         } catch {
             await service.client.removeChannel(channel)
             await service.client.removeChannel(smsChannel)
             await service.client.removeChannel(reviewQueueChannel)
+#if DEBUG
+            if RealtimeCleanupSmokeProof.isEnabled {
+                RealtimeCleanupSmokeProof.logger
+                    .log("SMOKE_EVENT REALTIME_CLEANUP_PROOF contactlist_removed_review_queue=1")
+            }
+#endif
             if shouldIgnoreRealtimeError(error) {
                 return
             }
