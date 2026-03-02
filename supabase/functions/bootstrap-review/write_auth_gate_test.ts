@@ -32,4 +32,3 @@ Deno.test("bootstrap-review rejects anon bearer for write actions before handler
   const undoDispatchIdx = router.indexOf("return await handleUndo", gateIdx);
   assert(undoDispatchIdx > gateIdx, "Expected undo handler dispatch after write gate");
 });
-
