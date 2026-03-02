@@ -1,0 +1,38 @@
+REQUIRED RECONNAISSANCE (What I need to proceed)
+To give you the exact SQL commands, Python logic, and architecture diffs, I need you (or a DATA/DEV agent) to pull the following recon from the live environment.
+Recon 1 (Camber Data): The LF Overlap Matrix
+Query: What is the exact schema of the project_facts and project_contacts tables? I need to know the column names to write the deterministic 
+L
+F
+p
+h
+o
+n
+e
+LF 
+phone
+​
+ 
+ and 
+L
+F
+r
+e
+g
+e
+x
+LF 
+regex
+​
+ 
+ functions for context-assembly.
+Why: I cannot write the Snorkel Label Model without knowing what hard data we have to anchor the weak labels.
+Recon 2 (Camber Pipeline): Review Swarm State
+Query: Does the review-swarm-runner currently read the span_attributions.anchors JSONB column, or does it only read the transcript?
+Why: If the swarm runner doesn't have access to the extracted LF evidence, it will just hallucinate its own secondary opinion rather than actually auditing the primary attribution.
+Recon 3 (ORBIT Health): Atomic RPC Deployment
+Query: Can you confirm if atomic_claim_work and atomic_ack_message were actually merged and deployed to the Supabase instance?
+Why: If the DEV agents are still using the old REST endpoints, dispatching multi-agent tasks is still unsafe and subject to silent collisions.
+Recon 4 (ORBIT Naming): The Codex Anomaly
+Query: In the operator_sessions table, are there still sessions registering with UUIDs (like data-019cab4f...), or has the v1.1 taxonomy ({role}-{client}-{n}) been successfully enforced at the DB trigger level?
+Why: If UUIDs are still leaking in, FOR_SESSION routing in TRAM will silently fail, leaving agents idling forever.
