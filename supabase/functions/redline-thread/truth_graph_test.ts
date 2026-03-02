@@ -37,4 +37,3 @@ Deno.test("truth_graph: lane=sms-ingest for sms_thread interactions", () => {
   assertEquals(out.lane, "sms-ingest");
   assertEquals(out.suggested_repairs.length, 0);
 });
-

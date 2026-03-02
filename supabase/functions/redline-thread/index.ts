@@ -160,8 +160,9 @@ async function handleTruthGraph(db: any, url: URL, t0: number): Promise<Response
 
   const warnings: string[] = [];
 
-  const { data: interactionRow, error: interactionErr } = await timeDb("db_interactions", () =>
-    db.from("interactions").select("interaction_id, channel").eq("interaction_id", interactionId).maybeSingle()
+  const { data: interactionRow, error: interactionErr } = await timeDb(
+    "db_interactions",
+    () => db.from("interactions").select("interaction_id, channel").eq("interaction_id", interactionId).maybeSingle(),
   );
   if (interactionErr) warnings.push(`interactions_lookup_failed:${interactionErr.message}`);
 
@@ -216,8 +217,9 @@ async function handleTruthGraph(db: any, url: URL, t0: number): Promise<Response
 
   let hasAttributions = false;
   if (spanIds.length > 0) {
-    const { data: attrRows, error: attrErr } = await timeDb("db_span_attributions", () =>
-      db.from("span_attributions").select("span_id").in("span_id", spanIds).limit(1)
+    const { data: attrRows, error: attrErr } = await timeDb(
+      "db_span_attributions",
+      () => db.from("span_attributions").select("span_id").in("span_id", spanIds).limit(1),
     );
     if (attrErr) warnings.push(`span_attributions_query_failed:${attrErr.message}`);
     hasAttributions = Array.isArray(attrRows) && attrRows.length > 0;
@@ -240,16 +242,20 @@ async function handleTruthGraph(db: any, url: URL, t0: number): Promise<Response
   const totalMs = Date.now() - t0;
   const serverTiming = buildServerTimingHeader(stageMs, totalMs);
 
-  return json({
-    ok: true,
-    interaction_id: interactionId,
-    hydration,
-    lane: computed.lane,
-    suggested_repairs: computed.suggested_repairs,
-    warnings: [...warnings, ...computed.warnings].filter(Boolean),
-    function_version: FUNCTION_VERSION,
-    ms: totalMs,
-  }, 200, serverTiming ? { "Server-Timing": serverTiming } : {});
+  return json(
+    {
+      ok: true,
+      interaction_id: interactionId,
+      hydration,
+      lane: computed.lane,
+      suggested_repairs: computed.suggested_repairs,
+      warnings: [...warnings, ...computed.warnings].filter(Boolean),
+      function_version: FUNCTION_VERSION,
+      ms: totalMs,
+    },
+    200,
+    serverTiming ? { "Server-Timing": serverTiming } : {},
+  );
 }
 
 // ============================================================
@@ -260,7 +266,12 @@ async function handleTruthGraph(db: any, url: URL, t0: number): Promise<Response
 async function handleRepair(db: any, req: Request, t0: number): Promise<Response> {
   const authResult = requireEdgeSecret(req, ["redline_ios"]);
   if (!authResult.ok) {
-    return json({ ok: false, error_code: "unauthorized", error: "Missing or invalid X-Edge-Secret", function_version: FUNCTION_VERSION }, 401);
+    return json({
+      ok: false,
+      error_code: "unauthorized",
+      error: "Missing or invalid X-Edge-Secret",
+      function_version: FUNCTION_VERSION,
+    }, 401);
   }
   let body: any;
   try {

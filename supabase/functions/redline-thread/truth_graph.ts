@@ -95,4 +95,3 @@ export function computeTruthGraph(
 
   return { lane, suggested_repairs, warnings };
 }
-
