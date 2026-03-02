@@ -798,14 +798,14 @@ function parseRedlineApiRoute(url: URL): RedlineApiRoute | null {
 }
 
 // Parse synthetic SMS-only contact keys like "sms:7065551234" → digits, or null
-function parseSmsOnlyContactDigits(contactId: string): string | null {
+export function parseSmsOnlyContactDigits(contactId: string): string | null {
   if (!contactId) return null;
   const match = contactId.match(/^sms:(\d{7,15})$/);
   return match ? match[1] : null;
 }
 
 // Generate a deterministic UUID from a phone string so iOS can decode contact.id
-function deterministicUUID(input: string): string {
+export function deterministicUUID(input: string): string {
   let hash = 0;
   for (let i = 0; i < input.length; i++) {
     hash = ((hash << 5) - hash + input.charCodeAt(i)) | 0;
@@ -1054,7 +1054,7 @@ async function handleContacts(db: any, url: URL, t0: number): Promise<Response> 
         row.contact_id ??
         (phoneDigits ? `sms:${phoneDigits}` : `unknown:${String(row.contact_name || "").trim() || "contact"}`);
       return {
-        contact_id: row.contact_id,
+        contact_id: row.contact_id ?? deterministicUUID(contactKey),
         contact_key: contactKey,
         name: row.contact_name,
         phone: row.contact_phone,
