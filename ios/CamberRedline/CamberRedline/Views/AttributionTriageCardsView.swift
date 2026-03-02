@@ -66,6 +66,9 @@ struct AttributionTriageCardsView: View {
                     emptyState
                 } else {
                     VStack(spacing: 0) {
+                        if let banner = viewModel.attributionWritesLockedBannerText {
+                            writesLockedBanner(banner)
+                        }
                         activityRail
                         progressBar
                         cardStack
@@ -116,7 +119,9 @@ struct AttributionTriageCardsView: View {
                                 )
                             }
                         },
-                        showsDismissAction: pickerMode != .commentOnly
+                        showsDismissAction: pickerMode != .commentOnly,
+                        writesLocked: viewModel.isAttributionWritesLocked,
+                        writesLockedBannerText: viewModel.attributionWritesLockedBannerText
                     )
                 }
             }
@@ -266,6 +271,12 @@ struct AttributionTriageCardsView: View {
                     card: card,
                     projectName: viewModel.projectName(for: card.projectId),
                     isTop: isTop,
+                    writesLocked: viewModel.isAttributionWritesLocked,
+                    onBlockedWrite: {
+                        if let banner = viewModel.attributionWritesLockedBannerText {
+                            viewModel.error = banner
+                        }
+                    },
                     onSwipeRight: {
                         guard let projectId = card.projectId else {
                             pickerMode = .project
@@ -331,6 +342,37 @@ struct AttributionTriageCardsView: View {
         }
         .padding(.horizontal, 40)
         .padding(.bottom, 12)
+        .opacity(viewModel.isAttributionWritesLocked ? 0.35 : 1)
+    }
+
+    private func writesLockedBanner(_ text: String) -> some View {
+        HStack(alignment: .top, spacing: 10) {
+            Image(systemName: "lock.fill")
+                .font(.caption)
+                .foregroundStyle(Color.undoAmber.opacity(0.9))
+
+            VStack(alignment: .leading, spacing: 2) {
+                Text("Read-only mode")
+                    .font(.caption)
+                    .fontWeight(.semibold)
+                    .foregroundStyle(.white)
+                Text(text)
+                    .font(.caption2)
+                    .foregroundStyle(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+
+            Spacer(minLength: 0)
+        }
+        .padding(12)
+        .background(Color.undoAmber.opacity(0.12), in: RoundedRectangle(cornerRadius: 14))
+        .overlay(
+            RoundedRectangle(cornerRadius: 14)
+                .stroke(Color.undoAmber.opacity(0.35), lineWidth: 1)
+        )
+        .padding(.horizontal, 16)
+        .padding(.top, 8)
+        .padding(.bottom, 6)
     }
 
     // MARK: - Undo Banner
@@ -528,6 +570,8 @@ private struct SwipeableTriageCard: View {
     let card: CardItem
     let projectName: String?
     let isTop: Bool
+    let writesLocked: Bool
+    let onBlockedWrite: () -> Void
     let onSwipeRight: () -> Void
     let onSwipeLeft: () -> Void
     let onSwipeUp: () -> Void
@@ -674,11 +718,32 @@ private struct SwipeableTriageCard: View {
             DragGesture()
                 .onChanged { value in
                     guard isTop else { return }
+                    guard !writesLocked else { return }
                     offset = value.translation
                     rotation = Double(value.translation.width / 20)
                 }
                 .onEnded { value in
                     guard isTop else { return }
+                    if writesLocked {
+                        if value.translation.height > verticalSwipeThreshold,
+                           abs(value.translation.height) > abs(value.translation.width) {
+                            snapBack()
+                            onSwipeDown()
+                            return
+                        }
+
+                        if value.translation.width > horizontalSwipeThreshold
+                            || value.translation.width < -horizontalSwipeThreshold
+                            || value.translation.height < -verticalSwipeThreshold
+                        {
+                            snapBack()
+                            onBlockedWrite()
+                            return
+                        }
+
+                        snapBack()
+                        return
+                    }
                     if value.translation.width > horizontalSwipeThreshold,
                        abs(value.translation.width) >= abs(value.translation.height) {
                         swipeAway(direction: .right)

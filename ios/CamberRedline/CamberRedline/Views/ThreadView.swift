@@ -465,6 +465,8 @@ struct ThreadView: View {
                 stripeLabel: assignment?.name,
                 unresolvedCount: unresolvedSMSCount(in: entries),
                 projectOptions: reviewProjectOptions,
+                writesLocked: viewModel.isAttributionWritesLocked,
+                writesLockedBannerText: viewModel.attributionWritesLockedBannerText,
                 onAssignProject: { selectedProject in
                     assignSMS(entries, to: selectedProject)
                 },
@@ -1395,6 +1397,8 @@ private struct CallTranscriptCard: View {
                         contactName: contactName,
                         selectedAssignment: spanOverrides[span.spanId],
                         projectOptions: projectOptions,
+                        writesLocked: viewModel.isAttributionWritesLocked,
+                        writesLockedBannerText: viewModel.attributionWritesLockedBannerText,
                         onConfirmGuess: {
                             onConfirmSpanGuess(span)
                         },
@@ -1564,6 +1568,8 @@ private struct SpanBlock: View {
     let contactName: String
     let selectedAssignment: SMSProjectAssignment?
     let projectOptions: [SMSProjectAssignment]
+    let writesLocked: Bool
+    let writesLockedBannerText: String?
     let onConfirmGuess: () -> Void
     let onReject: () -> Void
     let onSelectProject: (SMSProjectAssignment) -> Void
@@ -1664,6 +1670,20 @@ private struct SpanBlock: View {
                 }
 
                 VStack(alignment: .leading, spacing: 6) {
+                    if writesLocked, let writesLockedBannerText {
+                        HStack(alignment: .top, spacing: 8) {
+                            Image(systemName: "lock.fill")
+                                .font(.caption2)
+                                .foregroundStyle(Color(.systemGray2))
+                                .padding(.top, 1)
+                            Text(writesLockedBannerText)
+                                .font(.caption2)
+                                .foregroundStyle(Color(.systemGray2))
+                                .fixedSize(horizontal: false, vertical: true)
+                        }
+                        .padding(.bottom, 2)
+                    }
+
                     HStack(spacing: 8) {
                         Image(systemName: "sparkles")
                             .font(.caption2)
@@ -1693,7 +1713,8 @@ private struct SpanBlock: View {
                             actionPill(
                                 "Confirm",
                                 systemImage: "checkmark.circle.fill",
-                                tint: Color(red: 0.19, green: 0.82, blue: 0.35)
+                                tint: Color(red: 0.19, green: 0.82, blue: 0.35),
+                                disabled: writesLocked
                             ) {
                                 if hasGuess {
                                     onConfirmGuess()
@@ -1704,21 +1725,24 @@ private struct SpanBlock: View {
                             actionPill(
                                 "Correct",
                                 systemImage: "folder",
-                                tint: Color(red: 0.95, green: 0.62, blue: 0.23)
+                                tint: Color(red: 0.95, green: 0.62, blue: 0.23),
+                                disabled: writesLocked
                             ) {
                                 showProjectSheet = true
                             }
                             actionPill(
                                 "Reject",
                                 systemImage: "xmark.circle",
-                                tint: Color(white: 0.28)
+                                tint: Color(white: 0.28),
+                                disabled: writesLocked
                             ) {
                                 onReject()
                             }
                             actionPill(
                                 "Comment",
                                 systemImage: "square.and.pencil",
-                                tint: Color(red: 0.16, green: 0.50, blue: 0.94)
+                                tint: Color(red: 0.16, green: 0.50, blue: 0.94),
+                                disabled: writesLocked
                             ) {
                                 onAddNote(
                                     "Comment — Attribution",
@@ -1765,6 +1789,8 @@ private struct SpanBlock: View {
                         .padding(.top, 6)
                     }
                     .buttonStyle(.plain)
+                    .disabled(writesLocked)
+                    .opacity(writesLocked ? 0.45 : 1)
                 }
             } else if let segment = span.transcriptSegment, !segment.isEmpty {
                 // Compressed: 3-line text preview. Tappable to expand.
@@ -1793,6 +1819,8 @@ private struct SpanBlock: View {
                 title: "Assign Project",
                 currentAssignment: currentProject,
                 options: projectOptions,
+                writesLocked: writesLocked,
+                writesLockedBannerText: writesLockedBannerText,
                 onSelect: { selected in
                     onSelectProject(selected)
                 },
@@ -1810,6 +1838,7 @@ private struct SpanBlock: View {
         _ title: String,
         systemImage: String,
         tint: Color,
+        disabled: Bool = false,
         action: @escaping () -> Void
     ) -> some View {
         Button(action: action) {
@@ -1826,6 +1855,8 @@ private struct SpanBlock: View {
             .background(tint.opacity(0.85), in: Capsule())
         }
         .buttonStyle(.plain)
+        .disabled(disabled)
+        .opacity(disabled ? 0.55 : 1)
     }
 }
 
@@ -1839,6 +1870,8 @@ private struct SMSStripeGroup: View {
     let stripeLabel: String?
     let unresolvedCount: Int
     let projectOptions: [SMSProjectAssignment]
+    let writesLocked: Bool
+    let writesLockedBannerText: String?
     let onAssignProject: (SMSProjectAssignment) -> Void
     let onOpenPicker: () -> Void
     let onAddNote: () -> Void
@@ -1857,6 +1890,22 @@ private struct SMSStripeGroup: View {
             }
 
             VStack(alignment: .leading, spacing: 0) {
+                if writesLocked, let writesLockedBannerText {
+                    HStack(alignment: .top, spacing: 8) {
+                        Image(systemName: "lock.fill")
+                            .font(.caption2)
+                            .foregroundStyle(Color(.systemGray2))
+                            .padding(.top, 1)
+                        Text(writesLockedBannerText)
+                            .font(.caption2)
+                            .foregroundStyle(Color(.systemGray2))
+                            .fixedSize(horizontal: false, vertical: true)
+                    }
+                    .padding(.horizontal, 10)
+                    .padding(.top, 8)
+                    .padding(.bottom, 6)
+                }
+
                 if let stripeLabel {
                     HStack(spacing: 8) {
                         if unresolvedCount == 0 {
@@ -1869,6 +1918,8 @@ private struct SMSStripeGroup: View {
                                     .foregroundStyle(Color(.systemGray2))
                             }
                             .buttonStyle(.plain)
+                            .disabled(writesLocked)
+                            .opacity(writesLocked ? 0.45 : 1)
                         } else {
                             Text(stripeLabel)
                                 .font(.caption2)
@@ -1880,6 +1931,8 @@ private struct SMSStripeGroup: View {
                         NoteIconButton(label: "Add note") {
                             onAddNote()
                         }
+                        .disabled(writesLocked)
+                        .opacity(writesLocked ? 0.45 : 1)
                     }
                     .padding(.horizontal, 10)
                     .padding(.top, 6)
@@ -1899,6 +1952,8 @@ private struct SMSStripeGroup: View {
                         NoteIconButton(label: "Add note") {
                             onAddNote()
                         }
+                        .disabled(writesLocked)
+                        .opacity(writesLocked ? 0.45 : 1)
 
                         Button {
                             onOpenPicker()
@@ -1918,6 +1973,8 @@ private struct SMSStripeGroup: View {
                             .clipShape(Capsule())
                         }
                         .buttonStyle(.plain)
+                        .disabled(writesLocked)
+                        .opacity(writesLocked ? 0.55 : 1)
                     }
                     .foregroundStyle(Color(red: 0.95, green: 0.62, blue: 0.23))
                     .padding(.horizontal, 10)
@@ -1937,6 +1994,8 @@ private struct SMSStripeGroup: View {
                 title: "Assign Project",
                 currentAssignment: assignment,
                 options: projectOptions,
+                writesLocked: writesLocked,
+                writesLockedBannerText: writesLockedBannerText,
                 onSelect: onAssignProject,
                 onAddNote: onAddNote
             )
@@ -1956,6 +2015,8 @@ private struct ProjectAssignmentSheet: View {
     let title: String
     let currentAssignment: SMSProjectAssignment?
     let options: [SMSProjectAssignment]
+    let writesLocked: Bool
+    let writesLockedBannerText: String?
     let onSelect: (SMSProjectAssignment) -> Void
     let onAddNote: (() -> Void)?
 
@@ -1973,6 +2034,22 @@ private struct ProjectAssignmentSheet: View {
     var body: some View {
         NavigationStack {
             List {
+                if writesLocked, let writesLockedBannerText {
+                    Section {
+                        HStack(alignment: .top, spacing: 10) {
+                            Image(systemName: "lock.fill")
+                                .font(.caption)
+                                .foregroundStyle(.secondary)
+                                .padding(.top, 1)
+                            Text(writesLockedBannerText)
+                                .font(.caption)
+                                .foregroundStyle(.secondary)
+                                .fixedSize(horizontal: false, vertical: true)
+                        }
+                        .padding(.vertical, 4)
+                    }
+                }
+
                 Section("Project") {
                     if options.isEmpty {
                         Text("No projects available yet.")
@@ -1998,6 +2075,7 @@ private struct ProjectAssignmentSheet: View {
                                 .frame(minHeight: 54, alignment: .leading)
                                 .contentShape(Rectangle())
                             }
+                            .disabled(writesLocked)
                         }
                     }
                 }
@@ -2010,6 +2088,7 @@ private struct ProjectAssignmentSheet: View {
                                 onAddNote()
                             }
                         }
+                        .disabled(writesLocked)
                     }
                 }
             }

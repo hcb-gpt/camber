@@ -1,4 +1,5 @@
 import Foundation
+import Observation
 import os
 
 private enum BootstrapSmokeAutomation {
@@ -13,6 +14,7 @@ private enum BootstrapSmokeAutomation {
 // MARK: - BootstrapService
 
 @MainActor
+@Observable
 final class BootstrapService {
     static let shared = BootstrapService()
 
@@ -31,6 +33,19 @@ final class BootstrapService {
     private var cachedReviewProjects: [ReviewProject] = []
     private var cachedReviewProjectsAt: Date?
     private let reviewProjectsCacheTTL: TimeInterval = 5 * 60
+
+    private(set) var writeLockState: BootstrapWriteLockState?
+
+    var writesLockedBannerText: String? {
+        guard let state = writeLockState else { return nil }
+
+        var message = "Attribution writes temporarily locked (needs privileged auth). Reads still available."
+        if let functionVersion = state.functionVersion?.trimmingCharacters(in: .whitespacesAndNewlines),
+           !functionVersion.isEmpty {
+            message += " (\(functionVersion))"
+        }
+        return message
+    }
 
     private init() {
         let supabaseUrlString = (Bundle.main.object(forInfoDictionaryKey: Config.supabaseURLKey) as? String)?
@@ -69,7 +84,7 @@ final class BootstrapService {
         request.setValue("Bearer \(anonKey)", forHTTPHeaderField: "Authorization")
 
         let (data, response) = try await session.data(for: request)
-        try validateHTTPResponse(response)
+        try validateHTTPResponse(response, data: data)
 
         let decoded = try decoder.decode(ReviewQueueResponse.self, from: data)
         guard decoded.ok else {
@@ -176,7 +191,7 @@ final class BootstrapService {
         request.setValue("Bearer \(anonKey)", forHTTPHeaderField: "Authorization")
 
         let (data, response) = try await session.data(for: request)
-        try validateHTTPResponse(response)
+        try validateHTTPResponse(response, data: data)
         do {
             let decoded = try decoder.decode(AssistantContextPacket.self, from: data)
             if BootstrapSmokeAutomation.isEnabled,
@@ -320,7 +335,7 @@ final class BootstrapService {
         request.httpBody = try encoder.encode(payload)
 
         let (data, response) = try await session.data(for: request)
-        try validateHTTPResponse(response)
+        try validateHTTPResponse(response, data: data)
 
         let decoded = try decoder.decode(AssistantFeedbackResponse.self, from: data)
         guard decoded.ok else {
@@ -332,6 +347,10 @@ final class BootstrapService {
     // MARK: - Helpers
 
     private func post<T: Encodable>(action: String, body: T) async throws -> Data {
+        if let writeLockState {
+            throw BootstrapServiceError.writesLocked(writeLockState)
+        }
+
         var components = URLComponents(url: baseURL, resolvingAgainstBaseURL: false)!
         components.queryItems = [URLQueryItem(name: "action", value: action)]
 
@@ -346,7 +365,7 @@ final class BootstrapService {
         request.httpBody = try encoder.encode(body)
 
         let (data, response) = try await session.data(for: request)
-        try validateHTTPResponse(response)
+        try validateHTTPResponse(response, data: data, isWrite: true)
 
         guard let http = response as? HTTPURLResponse else {
             return data
@@ -385,14 +404,68 @@ final class BootstrapService {
         return parsed
     }
 
-    private func validateHTTPResponse(_ response: URLResponse) throws {
+    private func validateHTTPResponse(_ response: URLResponse, data: Data? = nil, isWrite: Bool = false) throws {
         guard let http = response as? HTTPURLResponse else {
             throw BootstrapServiceError.invalidResponse
         }
         guard (200...299).contains(http.statusCode) else {
+            let requestId = http.value(forHTTPHeaderField: "x-request-id")
+                ?? http.value(forHTTPHeaderField: "sb-request-id")
+
+            if let data,
+               let payload = try? decoder.decode(EdgeFunctionErrorPayload.self, from: data),
+               let error = payload.error?.trimmingCharacters(in: .whitespacesAndNewlines),
+               !error.isEmpty {
+                if isWrite,
+                   [401, 403].contains(http.statusCode),
+                   payload.errorCode == "invalid_auth" || error.contains("Write actions require X-Edge-Secret") {
+                    let lockState = BootstrapWriteLockState(
+                        statusCode: http.statusCode,
+                        errorCode: payload.errorCode,
+                        error: error,
+                        functionVersion: payload.functionVersion,
+                        requestId: requestId,
+                        observedAt: Date()
+                    )
+                    writeLockState = lockState
+                    throw BootstrapServiceError.writesLocked(lockState)
+                }
+
+                if let requestId, !requestId.isEmpty {
+                    throw BootstrapServiceError.apiError("\(error) (request_id: \(requestId))")
+                }
+                throw BootstrapServiceError.apiError(error)
+            }
+
+            if let requestId, !requestId.isEmpty {
+                throw BootstrapServiceError.apiError("HTTP error \(http.statusCode) (request_id: \(requestId)).")
+            }
             throw BootstrapServiceError.httpError(statusCode: http.statusCode)
         }
     }
+}
+
+private struct EdgeFunctionErrorPayload: Decodable {
+    let ok: Bool?
+    let error: String?
+    let errorCode: String?
+    let functionVersion: String?
+
+    enum CodingKeys: String, CodingKey {
+        case ok
+        case error
+        case errorCode = "error_code"
+        case functionVersion = "function_version"
+    }
+}
+
+struct BootstrapWriteLockState: Equatable {
+    let statusCode: Int
+    let errorCode: String?
+    let error: String
+    let functionVersion: String?
+    let requestId: String?
+    let observedAt: Date
 }
 
 struct ResolveResponse: Decodable {
@@ -470,6 +543,7 @@ enum BootstrapServiceError: LocalizedError {
     case invalidResponse
     case httpError(statusCode: Int)
     case apiError(String)
+    case writesLocked(BootstrapWriteLockState)
 
     var errorDescription: String? {
         switch self {
@@ -480,6 +554,17 @@ enum BootstrapServiceError: LocalizedError {
         case .httpError(let code):
             return "HTTP error \(code)."
         case .apiError(let message):
+            return message
+        case .writesLocked(let state):
+            var message = "Attribution writes temporarily locked (needs privileged auth). Reads still available."
+            if let functionVersion = state.functionVersion?.trimmingCharacters(in: .whitespacesAndNewlines),
+               !functionVersion.isEmpty {
+                message += " (\(functionVersion))"
+            }
+            if let requestId = state.requestId?.trimmingCharacters(in: .whitespacesAndNewlines),
+               !requestId.isEmpty {
+                message += " (request_id: \(requestId))"
+            }
             return message
         }
     }
