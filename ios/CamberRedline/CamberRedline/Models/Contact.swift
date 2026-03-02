@@ -50,7 +50,9 @@ struct Contact: Codable, Identifiable, Hashable {
                 ?? (try? container.decode(String.self, forKey: .name))
                 ?? UUID().uuidString
             contactId = Contact.deterministicUUID(from: fallbackKey)
-            print("[Contact] contact_id was null/invalid; synthesized UUID from key: \(fallbackKey)")
+            #if DEBUG
+                print("[Contact] contact_id was null/invalid; synthesized UUID from key: \(fallbackKey)")
+            #endif
         }
 
         contactKey = try container.decodeIfPresent(String.self, forKey: .contactKey)
