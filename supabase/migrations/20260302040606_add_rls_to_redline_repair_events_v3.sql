@@ -13,7 +13,13 @@ BEGIN
     ) THEN
         CREATE POLICY service_role_only ON public.redline_repair_events
             FOR ALL
-            TO authenticated, anon
+            TO public
+            USING (auth.role() = 'service_role')
+            WITH CHECK (auth.role() = 'service_role');
+    ELSE
+        -- Ensure the existing policy applies to the service_role database role.
+        ALTER POLICY service_role_only ON public.redline_repair_events TO public;
+        ALTER POLICY service_role_only ON public.redline_repair_events
             USING (auth.role() = 'service_role')
             WITH CHECK (auth.role() = 'service_role');
     END IF;
