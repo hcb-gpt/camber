@@ -512,6 +512,7 @@ Deno.serve(async (req: Request) => {
               needs_review: false,
               review_reasons: ["terminal_empty_transcript", ...previewGate.reasons],
               transcript_chars: normalizedPreview.transcript?.length || 0,
+              is_nonsegmentable: (normalizedPreview.transcript?.length || 0) === 0,
             })
             .eq("interaction_id", iid);
           if (interactionUpdateErr) {
@@ -1075,6 +1076,7 @@ Deno.serve(async (req: Request) => {
         review_reasons: interactionReviewReasons,
         project_attribution_confidence: project_confidence,
         transcript_chars: n.transcript?.length || 0,
+        is_nonsegmentable: (n.transcript?.length || 0) === 0,
         is_shadow,
       }, { onConflict: "interaction_id" });
 
