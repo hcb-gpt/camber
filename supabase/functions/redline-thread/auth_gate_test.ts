@@ -1,5 +1,5 @@
 import { assert, assertEquals } from "https://deno.land/std@0.218.0/assert/mod.ts";
-import { runTopLevelEdgeSecretProbe } from "./auth_gate.ts";
+import { runTopLevelEdgeSecretOrAnonKeyProbe, runTopLevelEdgeSecretProbe } from "./auth_gate.ts";
 
 Deno.test("redline-thread keeps auth gate before non-health service-role client create", () => {
   const source = Deno.readTextFileSync(new URL("./index.ts", import.meta.url));
@@ -34,4 +34,27 @@ Deno.test("top-level gate allows valid X-Edge-Secret and source", async () => {
 
   assertEquals(resp.status, 200);
   assertEquals(body.ok, true);
+});
+
+Deno.test("top-level gate (edge-secret-or-anon) rejects missing auth headers", async () => {
+  const req = new Request("https://example.test/functions/v1/redline-thread?action=contacts");
+  const resp = runTopLevelEdgeSecretOrAnonKeyProbe(req, "expected-secret", "expected-anon");
+  const body = await resp.json();
+
+  assertEquals(resp.status, 401);
+  assertEquals(body.error_code, "missing_auth");
+});
+
+Deno.test("top-level gate (edge-secret-or-anon) allows Authorization: Bearer <anonKey>", async () => {
+  const req = new Request("https://example.test/functions/v1/redline-thread?action=contacts", {
+    headers: {
+      Authorization: "Bearer expected-anon",
+    },
+  });
+  const resp = runTopLevelEdgeSecretOrAnonKeyProbe(req, "expected-secret", "expected-anon");
+  const body = await resp.json();
+
+  assertEquals(resp.status, 200);
+  assertEquals(body.ok, true);
+  assertEquals(body.auth, "anon_key");
 });
