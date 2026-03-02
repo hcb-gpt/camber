@@ -914,33 +914,19 @@ private struct ContactHeader: View {
     }
 }
 
-private enum SpanOverlayAction {
-    case confirm
-    case reject
-    case correct
-    case comment
-}
-
-private struct SpanOverlay: View {
-    let targetType: String
-    let targetId: String
-    let onAction: (SpanOverlayAction) -> Void
+private struct NoteIconButton: View {
+    let label: String
+    let action: () -> Void
 
     var body: some View {
-        HStack(spacing: 10) {
-            Button("Confirm") { onAction(.confirm) }
-            Button("Reject") { onAction(.reject) }
-            Button("Correct") { onAction(.correct) }
-            Button("Comment") { onAction(.comment) }
-            Spacer()
-            Text("\(targetType):\(targetId.prefix(6))")
-                .font(.caption2)
-                .foregroundStyle(Color(.systemGray3))
+        Button(action: action) {
+            Image(systemName: "square.and.pencil")
+                .font(.caption)
+                .foregroundStyle(Color(.systemGray2))
+                .frame(width: 30, height: 30)
         }
-        .font(.caption2)
-        .foregroundStyle(Color(.systemGray2))
         .buttonStyle(.plain)
-        .padding(.top, 6)
+        .accessibilityLabel(Text(label))
     }
 }
 
@@ -1378,10 +1364,6 @@ private struct SpanBlock: View {
         return Self.spanColors[colorIndex % Self.spanColors.count]
     }
 
-    private var unknownAssignment: SMSProjectAssignment {
-        SMSProjectAssignment(projectId: nil, name: "Unknown Project", colorIndex: nil)
-    }
-
     private var parsedTurns: [SpeakerTurn] {
         guard let segment = span.transcriptSegment, !segment.isEmpty else { return [] }
         return TranscriptParser.parse(segment, contactName: contactName)
@@ -1399,6 +1381,11 @@ private struct SpanBlock: View {
                         .font(.caption)
                         .fontWeight(.semibold)
                         .foregroundStyle(color)
+                } else if span.needsAttribution && selectedAssignment == nil {
+                    Text("Unassigned")
+                        .font(.caption)
+                        .fontWeight(.semibold)
+                        .foregroundStyle(Color(red: 0.95, green: 0.62, blue: 0.23))
                 }
                 Spacer()
 
@@ -1421,6 +1408,13 @@ private struct SpanBlock: View {
                         .clipShape(Capsule())
                     }
                     .buttonStyle(.plain)
+                }
+
+                NoteIconButton(label: "Add note") {
+                    onAddNote(
+                        "Notes — Conversation segment",
+                        [ThreadNoteTarget(type: .span, id: span.spanId.uuidString)]
+                    )
                 }
 
                 Image(systemName: isExpanded ? "chevron.up" : "chevron.down")
@@ -1482,26 +1476,6 @@ private struct SpanBlock: View {
                         }
                     }
             }
-
-            SpanOverlay(
-                targetType: "span",
-                targetId: span.spanId.uuidString,
-                onAction: { action in
-                    switch action {
-                    case .confirm:
-                        onSelectProject(currentProject.projectId == nil ? unknownAssignment : currentProject)
-                    case .reject:
-                        onSelectProject(unknownAssignment)
-                    case .correct:
-                        showProjectSheet = true
-                    case .comment:
-                        onAddNote(
-                            "Notes — Conversation segment",
-                            [ThreadNoteTarget(type: .span, id: span.spanId.uuidString)]
-                        )
-                    }
-                }
-            )
         }
         .padding(10)
         .background(color.opacity(currentProject.colorIndex == nil ? 0.16 : 0.10))
@@ -1546,10 +1520,6 @@ private struct SMSStripeGroup: View {
 
     @State private var showProjectSheet = false
 
-    private var unknownAssignment: SMSProjectAssignment {
-        SMSProjectAssignment(projectId: nil, name: "Unknown Project", colorIndex: nil)
-    }
-
     private var stripeShape: RoundedRectangle {
         RoundedRectangle(cornerRadius: 12, style: .continuous)
     }
@@ -1563,27 +1533,32 @@ private struct SMSStripeGroup: View {
 
             VStack(alignment: .leading, spacing: 0) {
                 if let stripeLabel {
-                    if unresolvedCount == 0 {
-                        Button {
-                            onOpenPicker()
-                            showProjectSheet = true
-                        } label: {
+                    HStack(spacing: 8) {
+                        if unresolvedCount == 0 {
+                            Button {
+                                onOpenPicker()
+                                showProjectSheet = true
+                            } label: {
+                                Text(stripeLabel)
+                                    .font(.caption2)
+                                    .foregroundStyle(Color(.systemGray2))
+                            }
+                            .buttonStyle(.plain)
+                        } else {
                             Text(stripeLabel)
                                 .font(.caption2)
                                 .foregroundStyle(Color(.systemGray2))
                         }
-                        .buttonStyle(.plain)
-                        .padding(.horizontal, 10)
-                        .padding(.top, 6)
-                        .padding(.bottom, 4)
-                    } else {
-                        Text(stripeLabel)
-                            .font(.caption2)
-                            .foregroundStyle(Color(.systemGray2))
-                            .padding(.horizontal, 10)
-                            .padding(.top, 6)
-                            .padding(.bottom, 4)
+
+                        Spacer()
+
+                        NoteIconButton(label: "Add note") {
+                            onAddNote()
+                        }
                     }
+                    .padding(.horizontal, 10)
+                    .padding(.top, 6)
+                    .padding(.bottom, 4)
                 }
 
                 if unresolvedCount > 0 {
@@ -1595,6 +1570,10 @@ private struct SMSStripeGroup: View {
                             .fontWeight(.semibold)
 
                         Spacer()
+
+                        NoteIconButton(label: "Add note") {
+                            onAddNote()
+                        }
 
                         Button {
                             onOpenPicker()
@@ -1623,32 +1602,6 @@ private struct SMSStripeGroup: View {
                 ForEach(Array(entries.enumerated()), id: \.element.id) { idx, entry in
                     MessageBubble(entry: entry, showTimestamp: true)
                         .padding(.bottom, bubbleSpacing(at: idx))
-                }
-
-                if let first = entries.first {
-                    SpanOverlay(
-                        targetType: "sms",
-                        targetId: first.messageId,
-                        onAction: { action in
-                            switch action {
-                            case .confirm:
-                                if let assignment {
-                                    onAssignProject(assignment)
-                                } else {
-                                    showProjectSheet = true
-                                }
-                            case .reject:
-                                onAssignProject(unknownAssignment)
-                            case .correct:
-                                onOpenPicker()
-                                showProjectSheet = true
-                            case .comment:
-                                onAddNote()
-                            }
-                        }
-                    )
-                    .padding(.horizontal, 10)
-                    .padding(.bottom, 6)
                 }
             }
         }
