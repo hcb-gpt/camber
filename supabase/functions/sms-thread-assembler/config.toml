@@ -1,0 +1,3 @@
+# sms-thread-assembler: internal scheduler/edge-triggered SMS thread builder
+# Auth: X-Edge-Secret + X-Source allowlist, so gateway JWT verification must be disabled.
+verify_jwt = false

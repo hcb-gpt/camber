@@ -1,0 +1,3 @@
+# alias-review: internal tooling endpoint
+# Auth: X-Edge-Secret + source allowlist OR service_role key
+verify_jwt = false
