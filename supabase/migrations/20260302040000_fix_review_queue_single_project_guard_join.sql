@@ -69,4 +69,77 @@ create trigger trg_review_queue_single_project_guard
   when (new.status = 'pending')
   execute function public.trg_review_queue_single_project_guard();
 
+-- Keep the span_attributions-side resolver aligned with the live schema:
+-- conversation_spans.interaction_id and interactions.interaction_id are TEXT.
+create or replace function public.trg_span_attribution_resolve_orphans()
+returns trigger
+language plpgsql
+as $$
+declare
+  v_contact_id uuid;
+  v_project_count int;
+  v_sole_project_id uuid;
+  v_interaction_id text;
+  v_resolved_count int;
+begin
+  select cs.interaction_id into v_interaction_id
+  from public.conversation_spans cs
+  where cs.id = new.span_id;
+
+  if v_interaction_id is null then
+    return new;
+  end if;
+
+  select i.contact_id into v_contact_id
+  from public.interactions i
+  where i.interaction_id = v_interaction_id;
+
+  if v_contact_id is null then
+    return new;
+  end if;
+
+  -- Check if single-project contact (avoid min(uuid) which is unsupported)
+  select count(*) into v_project_count
+  from public.project_contacts
+  where contact_id = v_contact_id
+    and is_active = true;
+
+  if v_project_count = 1 then
+    select project_id into v_sole_project_id
+    from public.project_contacts
+    where contact_id = v_contact_id
+      and is_active = true
+    limit 1;
+
+    if v_sole_project_id is not null then
+      update public.review_queue
+      set status = 'resolved',
+          resolved_at = now(),
+          resolved_by = 'single_project_invariant',
+          resolution_action = 'confirmed',
+          resolution_notes = format(
+            'Auto-resolved on attribution: contact has single project %s',
+            v_sole_project_id
+          )
+      where interaction_id = v_interaction_id
+        and status = 'pending';
+
+      get diagnostics v_resolved_count = row_count;
+      if v_resolved_count > 0 then
+        raise log 'single_project_invariant: auto-resolved % review_queue items for interaction % (project %)',
+          v_resolved_count, v_interaction_id, v_sole_project_id;
+      end if;
+    end if;
+  end if;
+
+  return new;
+end;
+$$;
+
+drop trigger if exists trg_span_attribution_resolve_orphans on public.span_attributions;
+create trigger trg_span_attribution_resolve_orphans
+  after insert or update on public.span_attributions
+  for each row
+  execute function public.trg_span_attribution_resolve_orphans();
+
 commit;
