@@ -215,6 +215,7 @@ Deno.serve(async (req: Request) => {
         ingested_at_utc: new Date().toISOString(),
         human_summary: `SMS thread: ${thread.contactName} (${thread.messages.length} msgs)`,
         transcript_chars: transcript.length,
+        is_nonsegmentable: transcript.length === 0,
         is_shadow: false,
       }, { onConflict: "interaction_id" });
 

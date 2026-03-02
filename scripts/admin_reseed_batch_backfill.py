@@ -149,7 +149,22 @@ def _fetch_table_ids(
 
 
 def _list_unsegmented_interactions(base_url: str, service_key: str) -> list[str]:
-    all_interactions = _fetch_table_ids(base_url, service_key, "interactions")
+    # Exclude interactions explicitly marked as nonsegmentable (e.g. empty/null transcript)
+    # to prevent infinite reseed loops.
+    try:
+        all_interactions = _fetch_table_ids(
+            base_url,
+            service_key,
+            "interactions",
+            where="is_nonsegmentable=eq.false",
+        )
+    except RuntimeError as exc:
+        print(
+            f"[admin-reseed-batch] WARN: falling back to unfiltered interactions scan "
+            f"(is_nonsegmentable column missing?): {exc}",
+            file=sys.stderr,
+        )
+        all_interactions = _fetch_table_ids(base_url, service_key, "interactions")
     active_spans = set(
         _fetch_table_ids(
             base_url,

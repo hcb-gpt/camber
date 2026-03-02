@@ -4,7 +4,7 @@ Batch orchestration helper for Phase 2 segmentation backfill.
 
 ## What it does
 
-1. Loads all `interactions.interaction_id`
+1. Loads all `interactions.interaction_id` (excludes `is_nonsegmentable=true`)
 2. Loads all `conversation_spans` with `is_superseded=false`
 3. Computes candidates with no active spans
 4. Calls `admin-reseed` for each candidate with:

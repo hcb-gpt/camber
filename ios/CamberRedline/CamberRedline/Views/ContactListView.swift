@@ -1,14 +1,30 @@
 import SwiftUI
 
+fileprivate enum InboxFilter: String, CaseIterable {
+    case all = "All"
+    case attribution = "Attribution"
+}
+
+fileprivate enum ThreadSwipeSmokeAutomation {
+    static let launchFlag = "--smoke-thread-swipe"
+
+    static var isEnabled: Bool {
+        ProcessInfo.processInfo.arguments.contains(launchFlag)
+    }
+}
+
 struct ContactListView: View {
     var contactListViewModel: ContactListViewModel
     var threadViewModel: ThreadViewModel
+    @Binding var selectedTab: RedlineTab
+    @Binding var isTriagePresented: Bool
 
     @State private var searchText = ""
-    @State private var showSyncStatus = false
-    @State private var showResetConfirmation = false
+    @State private var filter: InboxFilter = .all
+    @State private var navigationPath: [Contact] = []
+    @State private var didAutoNavigateForSmoke = false
 
-    private var filteredContacts: [Contact] {
+    private var filteredContactsBySearch: [Contact] {
         let trimmed = searchText.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmed.isEmpty else { return contactListViewModel.contacts }
 
@@ -31,19 +47,37 @@ struct ContactListView: View {
         }
     }
 
+    private var visibleContacts: [Contact] {
+        let contacts = filteredContactsBySearch
+        switch filter {
+        case .all:
+            return contacts
+        case .attribution:
+            // Placeholder mapping (until backend provides a true unread metric):
+            // "Attribution" == "has ungraded triage pressure"
+            return contacts.filter { $0.ungradedCount > 0 }
+        }
+    }
+
     var body: some View {
-        NavigationStack {
+        NavigationStack(path: $navigationPath) {
             contactListContent
         }
         .preferredColorScheme(.dark)
     }
 
     private var contactListContent: some View {
-        ContactList(contacts: filteredContacts)
+        ContactList(
+            contacts: visibleContacts,
+            selectedTab: $selectedTab,
+            filter: $filter,
+            triageCount: contactListViewModel.totalUngraded,
+            isTriagePresented: $isTriagePresented
+        )
             .searchable(
                 text: $searchText,
                 placement: .navigationBarDrawer(displayMode: .always),
-                prompt: "Search"
+                prompt: "Search or Ask Redline AI"
             )
             .refreshable {
                 await contactListViewModel.loadContacts()
@@ -54,49 +88,39 @@ struct ContactListView: View {
             .navigationDestination(for: Contact.self, destination: destinationView(for:))
             .background(Color(white: 0.06))
             .scrollContentBackground(.hidden)
-            .toolbarBackground(Color(white: 0.06), for: .navigationBar)
-            .toolbarBackground(.visible, for: .navigationBar)
+            .toolbarBackground(Color(white: 0.06), for: ToolbarPlacement.navigationBar)
+            .toolbarBackground(.visible, for: ToolbarPlacement.navigationBar)
             .toolbar { topBarToolbar }
-            .sheet(isPresented: $showSyncStatus, content: syncStatusSheet)
-            .confirmationDialog("Reset grading clock?", isPresented: $showResetConfirmation, titleVisibility: .visible) {
-                Button("Reset to now", role: .destructive) {
-                    Task {
-                        await contactListViewModel.resetGradingClock()
-                    }
-                }
-                Button("Cancel", role: .cancel) {}
-            } message: {
-                Text("All current ungraded counts will reset to zero. Only new claims from this moment forward will count as ungraded.")
-            }
             .overlay { loadingOverlay }
             .overlay { searchEmptyOverlay }
-            .overlay(alignment: .bottom) { errorOverlay }
+            .overlay(alignment: Alignment.bottom) { errorOverlay }
             .onReceive(NotificationCenter.default.publisher(for: .redlineAttributionDidResolve)) { _ in
                 Task {
                     await contactListViewModel.loadContacts()
                 }
+            }
+            .task(id: contactListViewModel.contacts.count) {
+                guard ThreadSwipeSmokeAutomation.isEnabled else { return }
+                guard !didAutoNavigateForSmoke else { return }
+                guard !visibleContacts.isEmpty else { return }
+
+                didAutoNavigateForSmoke = true
+                let candidate = visibleContacts.first(where: { $0.ungradedCount > 0 }) ?? visibleContacts[0]
+                navigationPath = [candidate]
             }
     }
 
     @ToolbarContentBuilder
     private var topBarToolbar: some ToolbarContent {
         ToolbarItem(placement: .topBarTrailing) {
-            Menu {
-                Button {
-                    showSyncStatus = true
-                } label: {
-                    Label("Pipeline Status", systemImage: "heart.text.square")
-                }
-                Button(role: .destructive) {
-                    showResetConfirmation = true
-                } label: {
-                    Label("Reset Grading Clock", systemImage: "clock.arrow.circlepath")
-                }
+            Button {
+                isTriagePresented = true
             } label: {
-                Image(systemName: "clock.arrow.circlepath")
-                    .font(.system(size: 15, weight: .medium))
-                    .foregroundStyle(Color(white: 0.5))
+                Label("Triage", systemImage: "checkmark.circle")
+                    .labelStyle(.iconOnly)
+                    .foregroundStyle(Color(white: 0.55))
             }
+            .accessibilityLabel("Open triage")
         }
     }
 
@@ -104,14 +128,8 @@ struct ContactListView: View {
         ThreadView(
             viewModel: threadViewModel,
             contact: contact,
-            orderedContacts: filteredContacts
+            orderedContacts: visibleContacts
         )
-    }
-
-    private func syncStatusSheet() -> some View {
-        SyncStatusView()
-            .presentationDetents([.medium, .large])
-            .presentationDragIndicator(.visible)
     }
 
     @ViewBuilder
@@ -124,7 +142,7 @@ struct ContactListView: View {
 
     @ViewBuilder
     private var searchEmptyOverlay: some View {
-        if !searchText.isEmpty && filteredContacts.isEmpty && !contactListViewModel.isLoading {
+        if !searchText.isEmpty && visibleContacts.isEmpty && !contactListViewModel.isLoading {
             ContentUnavailableView.search(text: searchText)
                 .foregroundStyle(.white)
         }
@@ -145,175 +163,165 @@ struct ContactListView: View {
 
 private struct ContactList: View {
     let contacts: [Contact]
+    @Binding var selectedTab: RedlineTab
+    @Binding var filter: InboxFilter
+    let triageCount: Int
+    @Binding var isTriagePresented: Bool
 
     var body: some View {
-        List(contacts) { contact in
-            NavigationLink(value: contact) {
-                ContactRow(contact: contact)
+        List {
+            Section {
+                filterRow
+                    .listRowInsets(EdgeInsets(top: 6, leading: 16, bottom: 8, trailing: 16))
+                    .listRowBackground(Color(white: 0.06))
+                    .listRowSeparator(.hidden)
             }
-            .listRowBackground(Color(white: 0.06))
-            .listRowSeparatorTint(Color(white: 0.13))
+
+            Section {
+                attributionTriageRow
+                askAIRow
+                ForEach(contacts) { contact in
+                    NavigationLink(value: contact) {
+                        ContactRow(contact: contact)
+                    }
+                    .listRowBackground(Color(white: 0.06))
+                    .listRowSeparatorTint(Color(white: 0.13))
+                }
+            }
         }
         .listStyle(.plain)
     }
-}
 
-// MARK: - Color hex helper
-
-private extension Color {
-    init(hex: UInt32) {
-        let r = Double((hex >> 16) & 0xFF) / 255
-        let g = Double((hex >> 8) & 0xFF) / 255
-        let b = Double(hex & 0xFF) / 255
-        self.init(red: r, green: g, blue: b)
+    private var filterRow: some View {
+        ScrollView(.horizontal, showsIndicators: false) {
+            HStack(spacing: 10) {
+                pill(InboxFilter.all.rawValue, isSelected: filter == .all) {
+                    filter = .all
+                }
+                pill(InboxFilter.attribution.rawValue, isSelected: filter == .attribution) {
+                    filter = .attribution
+                }
+                pill("Ask AI", isSelected: false, icon: "sparkles") {
+                    selectedTab = .ai
+                }
+            }
+            .padding(.vertical, 4)
+        }
     }
-}
 
-private struct SyncStatusView: View {
-    @State private var heartbeats: [PipelineHeartbeat] = []
-    @State private var isLoading = true
-    @State private var errorMessage: String?
-    @State private var refreshTimer: Timer?
+    private var attributionTriageRow: some View {
+        Button {
+            isTriagePresented = true
+        } label: {
+            HStack(spacing: 12) {
+                Circle()
+                    .fill(Color(red: 0.95, green: 0.62, blue: 0.23))
+                    .frame(width: 34, height: 34)
+                    .overlay(
+                        Image(systemName: "checkmark.circle.fill")
+                            .font(.system(size: 14, weight: .semibold))
+                            .foregroundStyle(.black.opacity(0.85))
+                    )
 
-    private let bgColor = Color(white: 0.08)
-
-    var body: some View {
-        NavigationStack {
-            ZStack {
-                bgColor.ignoresSafeArea()
-
-                if isLoading && heartbeats.isEmpty {
-                    ProgressView()
-                        .tint(.white)
-                } else if let errorMessage {
-                    VStack(spacing: 8) {
-                        Image(systemName: "exclamationmark.triangle")
-                            .font(.title2)
-                            .foregroundStyle(.red)
-                        Text(errorMessage)
-                            .font(.caption)
-                            .foregroundStyle(.secondary)
-                            .multilineTextAlignment(.center)
-                    }
-                    .padding()
-                } else if heartbeats.isEmpty {
-                    Text("No pipeline data")
-                        .font(.subheadline)
+                VStack(alignment: .leading, spacing: 2) {
+                    Text("Attribution Triage")
+                        .font(.system(size: 16, weight: .semibold))
+                        .foregroundStyle(.white)
+                    Text("Resolve unassigned items")
+                        .font(.system(size: 13))
                         .foregroundStyle(.secondary)
-                } else {
-                    List {
-                        ForEach(sortedHeartbeats) { beat in
-                            HeartbeatRow(heartbeat: beat)
-                                .listRowBackground(Color(white: 0.06))
-                                .listRowSeparatorTint(Color(white: 0.13))
-                        }
-                    }
-                    .listStyle(.plain)
-                    .scrollContentBackground(.hidden)
                 }
-            }
-            .navigationTitle("Pipeline Status")
-            .navigationBarTitleDisplayMode(.inline)
-            .toolbarBackground(Color(white: 0.06), for: .navigationBar)
-            .toolbarBackground(.visible, for: .navigationBar)
-        }
-        .preferredColorScheme(.dark)
-        .task {
-            await loadHeartbeat()
-        }
-        .onAppear {
-            refreshTimer = Timer.scheduledTimer(withTimeInterval: 30, repeats: true) { _ in
-                Task { @MainActor in
-                    await loadHeartbeat()
-                }
-            }
-        }
-        .onDisappear {
-            refreshTimer?.invalidate()
-            refreshTimer = nil
-        }
-    }
 
-    private var sortedHeartbeats: [PipelineHeartbeat] {
-        heartbeats.sorted { a, b in
-            let orderMap: [String: Int] = ["calls": 0, "sms": 1]
-            let aOrder = orderMap[a.pipeline.lowercased()] ?? 99
-            let bOrder = orderMap[b.pipeline.lowercased()] ?? 99
-            return aOrder < bOrder
-        }
-    }
+                Spacer()
 
-    private func loadHeartbeat() async {
-        do {
-            heartbeats = try await SupabaseService.shared.fetchPipelineHeartbeat()
-            errorMessage = nil
-        } catch {
-            if heartbeats.isEmpty {
-                errorMessage = error.localizedDescription
-            }
-        }
-        isLoading = false
-    }
-}
-
-private struct HeartbeatRow: View {
-    let heartbeat: PipelineHeartbeat
-
-    var body: some View {
-        HStack(spacing: 12) {
-            Circle()
-                .fill(statusColor)
-                .frame(width: 10, height: 10)
-
-            VStack(alignment: .leading, spacing: 3) {
-                Text(heartbeat.pipeline.capitalized)
-                    .font(.subheadline.weight(.semibold))
-                    .foregroundStyle(.white)
-
-                if let date = heartbeat.lastEventAt {
-                    Text(relativeTime(from: date))
+                if triageCount > 0 {
+                    Text("\(triageCount)")
                         .font(.caption)
-                        .foregroundStyle(.secondary)
-                } else {
-                    Text("No data")
-                        .font(.caption)
+                        .fontWeight(.semibold)
+                        .foregroundStyle(.black)
+                        .padding(.horizontal, 10)
+                        .padding(.vertical, 4)
+                        .background(Color(red: 0.95, green: 0.62, blue: 0.23), in: Capsule())
+                }
+
+                Image(systemName: "chevron.right")
+                    .font(.system(size: 12, weight: .semibold))
+                    .foregroundStyle(Color(white: 0.45))
+            }
+            .padding(.vertical, 6)
+        }
+        .buttonStyle(.plain)
+        .listRowBackground(Color(white: 0.06))
+        .listRowSeparatorTint(Color(white: 0.13))
+        .accessibilityLabel("Open attribution triage")
+    }
+
+    private var askAIRow: some View {
+        Button {
+            selectedTab = .ai
+        } label: {
+            HStack(spacing: 12) {
+                Circle()
+                    .fill(
+                        LinearGradient(
+                            colors: [
+                                Color(red: 0.26, green: 0.62, blue: 1.0),
+                                Color(red: 0.60, green: 0.32, blue: 1.0),
+                            ],
+                            startPoint: .topLeading,
+                            endPoint: .bottomTrailing
+                        )
+                    )
+                    .frame(width: 34, height: 34)
+                    .overlay(
+                        Image(systemName: "sparkles")
+                            .font(.system(size: 14, weight: .semibold))
+                            .foregroundStyle(.white)
+                    )
+
+                VStack(alignment: .leading, spacing: 2) {
+                    Text("Ask Redline AI")
+                        .font(.system(size: 16, weight: .semibold))
+                        .foregroundStyle(.white)
+                    Text("Ask about calls & context")
+                        .font(.system(size: 13))
                         .foregroundStyle(.secondary)
                 }
+
+                Spacer()
+
+                Image(systemName: "chevron.right")
+                    .font(.system(size: 12, weight: .semibold))
+                    .foregroundStyle(Color(white: 0.45))
             }
+            .padding(.vertical, 6)
+        }
+        .buttonStyle(.plain)
+        .listRowBackground(Color(white: 0.06))
+        .listRowSeparatorTint(Color(white: 0.13))
+        .accessibilityLabel("Ask Redline AI")
+    }
 
-            Spacer()
-
-            if let minutes = heartbeat.stalenessMinutes {
-                Text(stalenessLabel(minutes))
-                    .font(.caption.monospacedDigit())
-                    .foregroundStyle(statusColor)
+    private func pill(_ title: String, isSelected: Bool, icon: String? = nil, action: @escaping () -> Void) -> some View {
+        Button(action: action) {
+            HStack(spacing: 6) {
+                if let icon {
+                    Image(systemName: icon)
+                        .font(.system(size: 12, weight: .semibold))
+                }
+                Text(title)
+                    .font(.system(size: 13, weight: .semibold))
             }
+            .padding(.horizontal, 12)
+            .padding(.vertical, 7)
+            .foregroundStyle(isSelected ? .black : .white)
+            .background(
+                RoundedRectangle(cornerRadius: 14, style: .continuous)
+                    .fill(isSelected ? Color.white : Color(white: 0.14))
+            )
         }
-        .padding(.vertical, 4)
-    }
-
-    private var statusColor: Color {
-        guard let minutes = heartbeat.stalenessMinutes else { return .gray }
-        if minutes < 30 { return .green }
-        if minutes < 120 { return .yellow }
-        return .red
-    }
-
-    private func stalenessLabel(_ minutes: Double) -> String {
-        if minutes < 60 {
-            return "\(Int(minutes))m ago"
-        }
-        let hours = minutes / 60
-        if hours < 24 {
-            return String(format: "%.1fh ago", hours)
-        }
-        let days = hours / 24
-        return String(format: "%.1fd ago", days)
-    }
-
-    private func relativeTime(from date: Date) -> String {
-        let formatter = RelativeDateTimeFormatter()
-        formatter.unitsStyle = .abbreviated
-        return formatter.localizedString(for: date, relativeTo: Date())
+        .buttonStyle(.plain)
     }
 }
+
+ 

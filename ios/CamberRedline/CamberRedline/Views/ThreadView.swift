@@ -1,5 +1,15 @@
 import SwiftUI
 import UIKit
+import os
+
+private enum ThreadSwipeSmokeAutomation {
+    static let launchFlag = "--smoke-thread-swipe"
+    static let logger = Logger(subsystem: "CamberRedline", category: "smoke")
+
+    static var isEnabled: Bool {
+        ProcessInfo.processInfo.arguments.contains(launchFlag)
+    }
+}
 
 // MARK: - Display Group
 
@@ -94,6 +104,7 @@ struct ThreadView: View {
     var viewModel: ThreadViewModel
     let contact: Contact
     let orderedContacts: [Contact]
+    @AppStorage("internal_truth_graph_status_card_enabled") private var isTruthGraphStatusCardEnabled = true
     @State private var hasScrolledToLatest = false
     @State private var didTriggerTopPagination = false
     @State private var hasUserScrolledThread = false
@@ -102,6 +113,10 @@ struct ThreadView: View {
     @State private var spanOverrides: [UUID: SMSProjectAssignment] = [:]
     @State private var activeNoteContext: ThreadNoteContext?
     @State private var noteDraft = ""
+    @State private var isContactInfoPresented = false
+    @State private var pendingUndo: PendingUndoAction?
+    @State private var undoClearTask: Task<Void, Never>?
+    @State private var didRunThreadSwipeSmoke = false
     private let bottomAnchorID = "thread-bottom-anchor"
     private let topLoadThreshold: CGFloat = -80
     private static let smsStripeColors: [Color] = [
@@ -109,6 +124,7 @@ struct ThreadView: View {
         Color(red: 0.18, green: 0.26, blue: 0.40),
         Color(red: 0.38, green: 0.24, blue: 0.18),
     ]
+    @Environment(\.openURL) private var openURL
     private var reviewProjectOptions: [SMSProjectAssignment] {
         let mapped = viewModel.reviewProjects.enumerated().map { index, project in
             SMSProjectAssignment(projectId: project.id, name: project.name, colorIndex: index)
@@ -118,6 +134,20 @@ struct ThreadView: View {
             return mapped
         }
         return [SMSProjectAssignment(projectId: nil, name: "Unknown Project", colorIndex: nil)] + mapped
+    }
+
+    private struct PendingUndoAction: Identifiable {
+        enum Kind: String {
+            case confirm
+            case reject
+            case correct
+        }
+
+        let id = UUID()
+        let kind: Kind
+        let reviewQueueId: String
+        let spanId: UUID?
+        let createdAt: Date
     }
 
     // MARK: - Derived display groups
@@ -241,10 +271,21 @@ struct ThreadView: View {
                         unreadCount: contact.ungradedCount,
                         phone: contact.phone,
                         onCall: {
-                            viewModel.showTransientError("Call action not wired in Redline yet.")
+                            guard let phone = contact.phone, !phone.isEmpty else {
+                                viewModel.showTransientError("No phone number on file.")
+                                return
+                            }
+
+                            let sanitized = phone.filter { $0.isNumber || $0 == "+" }
+                            guard !sanitized.isEmpty, let url = URL(string: "tel://\(sanitized)") else {
+                                viewModel.showTransientError("Invalid phone number.")
+                                return
+                            }
+
+                            openURL(url)
                         },
                         onInfo: {
-                            viewModel.showTransientError("Contact details panel is coming soon.")
+                            isContactInfoPresented = true
                         }
                     )
                     .padding(.horizontal, 16)
@@ -257,21 +298,25 @@ struct ThreadView: View {
                             .padding(.vertical, 8)
                     }
 
-                    let missingCount = missingAttributions(in: groups)
-                    if missingCount > 0 {
-                        HStack(spacing: 8) {
-                            Image(systemName: "exclamationmark.triangle.fill")
-                            Text("\(missingCount) attribution\(missingCount == 1 ? "" : "s") still missing in this thread")
-                                .font(.caption)
-                                .fontWeight(.semibold)
-                            Spacer()
+                    let unassignedIds = unassignedInteractions(in: groups)
+                    if !unassignedIds.isEmpty {
+                        if isTruthGraphStatusCardEnabled {
+                            TruthGraphStatusCardView(
+                                viewModel: viewModel,
+                                unassignedIds: unassignedIds,
+                                reloadThread: {
+                                    Task {
+                                        await viewModel.loadThread(contactId: contact.contactId)
+                                    }
+                                }
+                            )
+                                .padding(.horizontal, 16)
+                                .padding(.bottom, 10)
+                        } else {
+                            legacyMissingAttributionBanner(missingCount: unassignedIds.count)
+                                .padding(.horizontal, 16)
+                                .padding(.bottom, 10)
                         }
-                        .foregroundStyle(Color(red: 0.95, green: 0.62, blue: 0.23))
-                        .padding(.horizontal, 12)
-                        .padding(.vertical, 8)
-                        .background(Color(red: 0.20, green: 0.12, blue: 0.05), in: RoundedRectangle(cornerRadius: 10))
-                        .padding(.horizontal, 16)
-                        .padding(.bottom, 10)
                     }
 
                     ForEach(Array(groups.enumerated()), id: \.element.id) { index, group in
@@ -319,14 +364,19 @@ struct ThreadView: View {
                 }
             }
             .overlay(alignment: .bottom) {
-                if let error = viewModel.error {
-                    Text(error)
-                        .font(.caption)
-                        .foregroundStyle(.red)
-                        .padding(8)
-                        .background(.ultraThinMaterial, in: RoundedRectangle(cornerRadius: 8))
-                        .padding()
+                VStack(spacing: 10) {
+                    if let pendingUndo {
+                        undoPill(pendingUndo)
+                    }
+                    if let error = viewModel.error {
+                        Text(error)
+                            .font(.caption)
+                            .foregroundStyle(.red)
+                            .padding(8)
+                            .background(.ultraThinMaterial, in: RoundedRectangle(cornerRadius: 8))
+                    }
                 }
+                .padding()
             }
             .task(id: contact.contactId) {
                 hasScrolledToLatest = false
@@ -350,6 +400,8 @@ struct ThreadView: View {
                     try? await Task.sleep(for: .milliseconds(80))
                 }
                 hasScrolledToLatest = true
+
+                await runThreadSwipeSmokeIfEnabled()
             }
             .onChange(of: viewModel.threadItems.count) { _, newCount in
                 guard newCount > 0 else { return }
@@ -386,6 +438,9 @@ struct ThreadView: View {
                 }
             }
         }
+        .sheet(isPresented: $isContactInfoPresented) {
+            ContactInfoView(contact: contact)
+        }
         .sheet(item: $activeNoteContext) { context in
             NoteEditorSheet(
                 title: context.title,
@@ -401,6 +456,221 @@ struct ThreadView: View {
                 }
             )
         }
+    }
+
+    private func recordUndo(kind: PendingUndoAction.Kind, reviewQueueId: String, spanId: UUID?) {
+        let action = PendingUndoAction(kind: kind, reviewQueueId: reviewQueueId, spanId: spanId, createdAt: Date())
+        pendingUndo = action
+
+        undoClearTask?.cancel()
+        let actionId = action.id
+        undoClearTask = Task { @MainActor in
+            do {
+                try await Task.sleep(for: .seconds(25))
+            } catch {
+                return
+            }
+            guard pendingUndo?.id == actionId else { return }
+            pendingUndo = nil
+        }
+    }
+
+    @ViewBuilder
+    private func undoPill(_ action: PendingUndoAction) -> some View {
+        HStack(spacing: 10) {
+            Image(systemName: "arrow.uturn.backward.circle.fill")
+                .foregroundStyle(Color(.systemGray2))
+            Text("Undo")
+                .font(.caption)
+                .fontWeight(.semibold)
+                .foregroundStyle(.white)
+            Text(action.kind.rawValue.capitalized)
+                .font(.caption)
+                .foregroundStyle(Color(.systemGray2))
+            Spacer()
+            Button("Undo") {
+                undoAction(action)
+            }
+            .font(.caption)
+            .fontWeight(.semibold)
+            .buttonStyle(.borderedProminent)
+            .tint(Color(white: 0.22))
+            .disabled(viewModel.isAttributionWritesLocked)
+            .opacity(viewModel.isAttributionWritesLocked ? 0.45 : 1)
+        }
+        .padding(10)
+        .background(.ultraThinMaterial, in: RoundedRectangle(cornerRadius: 12, style: .continuous))
+    }
+
+    private func undoAction(_ action: PendingUndoAction) {
+        guard !viewModel.isAttributionWritesLocked else { return }
+
+        let queueId = action.reviewQueueId
+        let spanId = action.spanId
+
+        pendingUndo = nil
+        undoClearTask?.cancel()
+
+        Task {
+            let ok = await viewModel.undoAttribution(reviewQueueId: queueId)
+            if ok {
+                await MainActor.run {
+                    if let spanId {
+                        spanOverrides.removeValue(forKey: spanId)
+                    }
+                    triggerAssignmentHaptic()
+                }
+            }
+        }
+    }
+
+    private struct SmokeSwipeTarget {
+        let source: String
+        let interactionId: String
+        let spanId: UUID?
+        let spanIdRaw: String
+        let reviewQueueId: String
+        let kind: PendingUndoAction.Kind
+        let projectId: String
+    }
+
+    @MainActor
+    private func runThreadSwipeSmokeIfEnabled() async {
+        guard ThreadSwipeSmokeAutomation.isEnabled else { return }
+        guard !didRunThreadSwipeSmoke else { return }
+        didRunThreadSwipeSmoke = true
+
+        let threadTarget = findSmokeSwipeTarget()
+        let queueTarget = await findSmokeSwipeTargetFromQueue()
+        guard let target = threadTarget ?? queueTarget else {
+            ThreadSwipeSmokeAutomation.logger.log("SMOKE_EVENT THREAD_SWIPE_NO_TARGET")
+            return
+        }
+
+        ThreadSwipeSmokeAutomation.logger.log(
+            "SMOKE_EVENT THREAD_SWIPE_TARGET source=\(target.source, privacy: .public) kind=\(target.kind.rawValue, privacy: .public) queue=\(target.reviewQueueId, privacy: .public) interaction=\(target.interactionId, privacy: .public) span=\(target.spanIdRaw, privacy: .public)"
+        )
+
+        let didResolve = await viewModel.resolveAttribution(
+            reviewQueueId: target.reviewQueueId,
+            projectId: target.projectId,
+            notes: nil,
+            reloadAfterResolve: false
+        )
+        let resolveEvent: String = switch target.kind {
+        case .confirm:
+            "THREAD_SWIPE_CONFIRM"
+        case .correct:
+            "THREAD_SWIPE_CORRECT"
+        case .reject:
+            "THREAD_SWIPE_REJECT"
+        }
+        ThreadSwipeSmokeAutomation.logger.log("SMOKE_EVENT \(resolveEvent, privacy: .public) ok=\(didResolve, privacy: .public) queue=\(target.reviewQueueId, privacy: .public)")
+        guard didResolve else { return }
+
+        recordUndo(kind: target.kind, reviewQueueId: target.reviewQueueId, spanId: target.spanId)
+
+        try? await Task.sleep(for: .milliseconds(900))
+
+        ThreadSwipeSmokeAutomation.logger.log(
+            "SMOKE_EVENT THREAD_SWIPE_UNDO queue=\(target.reviewQueueId, privacy: .public)"
+        )
+        let didUndo = await viewModel.undoAttribution(reviewQueueId: target.reviewQueueId)
+        ThreadSwipeSmokeAutomation.logger.log(
+            "SMOKE_EVENT THREAD_SWIPE_UNDO_RESULT ok=\(didUndo, privacy: .public) queue=\(target.reviewQueueId, privacy: .public)"
+        )
+        if didUndo {
+            pendingUndo = nil
+            undoClearTask?.cancel()
+        }
+    }
+
+    private func findSmokeSwipeTarget() -> SmokeSwipeTarget? {
+        let fallbackProjectId = viewModel.reviewProjects
+            .map(\.id)
+            .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
+            .first(where: { !$0.isEmpty })
+
+        for group in displayGroups {
+            guard case .callGroup(let header, _) = group else { continue }
+            for span in header.spans.sorted(by: { $0.spanIndex < $1.spanIndex }) {
+                guard span.needsAttribution else { continue }
+                guard let reviewQueueId = span.reviewQueueId, !reviewQueueId.isEmpty else { continue }
+                let projectId = (span.projectId ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
+                if !projectId.isEmpty {
+                    return SmokeSwipeTarget(
+                        source: "thread",
+                        interactionId: header.interactionId,
+                        spanId: span.spanId,
+                        spanIdRaw: span.spanId.uuidString,
+                        reviewQueueId: reviewQueueId,
+                        kind: .confirm,
+                        projectId: projectId
+                    )
+                }
+                guard let fallbackProjectId else { continue }
+                return SmokeSwipeTarget(
+                    source: "thread",
+                    interactionId: header.interactionId,
+                    spanId: span.spanId,
+                    spanIdRaw: span.spanId.uuidString,
+                    reviewQueueId: reviewQueueId,
+                    kind: .correct,
+                    projectId: fallbackProjectId
+                )
+            }
+        }
+        return nil
+    }
+
+    @MainActor
+    private func findSmokeSwipeTargetFromQueue() async -> SmokeSwipeTarget? {
+        do {
+            let queue = try await BootstrapService.shared.fetchQueue(limit: 30)
+            let fallbackProjectId = queue.projects
+                .map(\.id)
+                .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
+                .first(where: { !$0.isEmpty })
+                ?? viewModel.reviewProjects
+                    .map(\.id)
+                    .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
+                    .first(where: { !$0.isEmpty })
+
+            for item in queue.items {
+                let reviewQueueId = item.id.trimmingCharacters(in: .whitespacesAndNewlines)
+                guard !reviewQueueId.isEmpty else { continue }
+
+                let rawSpanId = item.spanId.trimmingCharacters(in: .whitespacesAndNewlines)
+                let spanId = UUID(uuidString: rawSpanId)
+
+                if let guessProjectId = item.aiGuessProjectId,
+                   !guessProjectId.isEmpty {
+                    return SmokeSwipeTarget(
+                        source: "queue",
+                        interactionId: item.interactionId,
+                        spanId: spanId,
+                        spanIdRaw: rawSpanId.isEmpty ? "missing" : rawSpanId,
+                        reviewQueueId: reviewQueueId,
+                        kind: .confirm,
+                        projectId: guessProjectId
+                    )
+                }
+
+                guard let fallbackProjectId else { continue }
+                return SmokeSwipeTarget(
+                    source: "queue",
+                    interactionId: item.interactionId,
+                    spanId: spanId,
+                    spanIdRaw: rawSpanId.isEmpty ? "missing" : rawSpanId,
+                    reviewQueueId: reviewQueueId,
+                    kind: .correct,
+                    projectId: fallbackProjectId
+                )
+            }
+        } catch {
+            return nil
+        }
+        return nil
     }
 
     @ViewBuilder
@@ -423,6 +693,12 @@ struct ThreadView: View {
                 onAssignSpanProject: { span, selectedProject in
                     assignSpan(span, to: selectedProject)
                 },
+                onConfirmSpanGuess: { span in
+                    confirmSpanGuess(span)
+                },
+                onRejectSpan: { span in
+                    rejectSpan(span)
+                },
                 onAddNote: { title, targets in
                     openNoteEditor(title: title, targets: targets)
                 }
@@ -438,6 +714,8 @@ struct ThreadView: View {
                 stripeLabel: assignment?.name,
                 unresolvedCount: unresolvedSMSCount(in: entries),
                 projectOptions: reviewProjectOptions,
+                writesLocked: viewModel.isAttributionWritesLocked,
+                writesLockedBannerText: viewModel.attributionWritesLockedBannerText,
                 onAssignProject: { selectedProject in
                     assignSMS(entries, to: selectedProject)
                 },
@@ -480,16 +758,90 @@ struct ThreadView: View {
             viewModel.showTransientError("Select a project before applying attribution.")
             return
         }
+        let rawNotes = viewModel.noteText(targetType: .span, targetId: span.spanId.uuidString)
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+        let notes = rawNotes.isEmpty ? nil : rawNotes
         Task {
             let didResolve = await viewModel.resolveAttribution(
                 reviewQueueId: queueId,
-                projectId: projectId
+                projectId: projectId,
+                notes: notes
             )
             if !didResolve {
                 spanOverrides.removeValue(forKey: span.spanId)
             } else {
                 await MainActor.run {
                     triggerAssignmentHaptic()
+                    recordUndo(kind: .correct, reviewQueueId: queueId, spanId: span.spanId)
+                    if notes != nil {
+                        viewModel.saveNote(targetType: .span, targetId: span.spanId.uuidString, text: "")
+                    }
+                }
+            }
+        }
+    }
+
+    private func confirmSpanGuess(_ span: SpanEntry) {
+        guard span.needsAttribution else { return }
+        guard let queueId = span.reviewQueueId else { return }
+
+        let projectId = (span.projectId ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !projectId.isEmpty else {
+            viewModel.showTransientError("No AI guess available yet. Choose a project to resolve.")
+            return
+        }
+
+        let optimisticAssignment = reviewProjectOptions.first(where: { $0.projectId == projectId })
+            ?? SMSProjectAssignment(projectId: projectId, name: span.projectName ?? "Assigned", colorIndex: nil)
+        spanOverrides[span.spanId] = optimisticAssignment
+
+        let rawNotes = viewModel.noteText(targetType: .span, targetId: span.spanId.uuidString)
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+        let notes = rawNotes.isEmpty ? nil : rawNotes
+
+        Task {
+            let didResolve = await viewModel.resolveAttribution(
+                reviewQueueId: queueId,
+                projectId: projectId,
+                notes: notes
+            )
+            if !didResolve {
+                spanOverrides.removeValue(forKey: span.spanId)
+            } else {
+                await MainActor.run {
+                    triggerAssignmentHaptic()
+                    recordUndo(kind: .confirm, reviewQueueId: queueId, spanId: span.spanId)
+                    if notes != nil {
+                        viewModel.saveNote(targetType: .span, targetId: span.spanId.uuidString, text: "")
+                    }
+                }
+            }
+        }
+    }
+
+    private func rejectSpan(_ span: SpanEntry) {
+        guard span.needsAttribution else { return }
+        guard let queueId = span.reviewQueueId else { return }
+
+        spanOverrides.removeValue(forKey: span.spanId)
+
+        let rawNotes = viewModel.noteText(targetType: .span, targetId: span.spanId.uuidString)
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+        let notes = rawNotes.isEmpty ? nil : rawNotes
+
+        Task {
+            let didDismiss = await viewModel.dismissAttribution(
+                reviewQueueId: queueId,
+                reason: "reject",
+                notes: notes
+            )
+            if didDismiss {
+                await MainActor.run {
+                    triggerAssignmentHaptic()
+                    recordUndo(kind: .reject, reviewQueueId: queueId, spanId: span.spanId)
+                    if notes != nil {
+                        viewModel.saveNote(targetType: .span, targetId: span.spanId.uuidString, text: "")
+                    }
                 }
             }
         }
@@ -528,35 +880,43 @@ struct ThreadView: View {
 
     // MARK: - Date separator logic
 
-    private func missingAttributions(in groups: [DisplayGroup]) -> Int {
-        groups.reduce(0) { partial, group in
+    private func unassignedInteractions(in groups: [DisplayGroup]) -> [String] {
+        var ids = Set<String>()
+        for group in groups {
             switch group {
             case .callGroup(let header, _):
                 let optimisticResolved = header.spans.filter {
                     $0.needsAttribution && spanOverrides[$0.spanId] != nil
                 }.count
-                return partial + max(0, header.pendingAttributionCount - optimisticResolved)
+                if header.pendingAttributionCount - optimisticResolved > 0 {
+                    ids.insert(header.interactionId)
+                }
             case .smsGroup(let entries, _):
-                let pendingQueueIds = Set(
-                    entries.compactMap { entry -> String? in
-                        guard entry.needsAttribution else { return nil }
-                        return entry.reviewQueueId
+                for entry in entries {
+                    if entry.needsAttribution && smsOverrides[entry.messageId]?.projectId == nil {
+                        ids.insert(entry.messageId)
                     }
-                )
-                let optimisticResolvedQueueIds = Set(
-                    entries.compactMap { entry -> String? in
-                        guard
-                            entry.needsAttribution,
-                            smsOverrides[entry.messageId]?.projectId != nil
-                        else { return nil }
-                        return entry.reviewQueueId
-                    }
-                )
-                return partial + max(0, pendingQueueIds.count - optimisticResolvedQueueIds.count)
+                }
             case .voicemail, .aiSummary:
-                return partial
+                break
             }
         }
+        return Array(ids).sorted()
+    }
+
+    @ViewBuilder
+    private func legacyMissingAttributionBanner(missingCount: Int) -> some View {
+        HStack(spacing: 8) {
+            Image(systemName: "exclamationmark.triangle.fill")
+            Text("\(missingCount) Unassigned item\(missingCount == 1 ? "" : "s") still in this thread")
+                .font(.caption)
+                .fontWeight(.semibold)
+            Spacer()
+        }
+        .foregroundStyle(Color(red: 0.95, green: 0.62, blue: 0.23))
+        .padding(.horizontal, 12)
+        .padding(.vertical, 8)
+        .background(Color(red: 0.20, green: 0.12, blue: 0.05), in: RoundedRectangle(cornerRadius: 10))
     }
 
     private func shouldShowDateSeparator(at index: Int, in groups: [DisplayGroup]) -> Bool {
@@ -618,6 +978,252 @@ struct ThreadView: View {
         guard let first = targets.first else { return }
         noteDraft = viewModel.noteText(targetType: first.type, targetId: first.id)
         activeNoteContext = ThreadNoteContext(title: title, targets: targets)
+    }
+
+    private func triggerAssignmentHaptic() {
+        UIImpactFeedbackGenerator(style: .medium).impactOccurred()
+    }
+}
+
+struct TruthGraphStatusCardView: View {
+    var viewModel: ThreadViewModel
+    let unassignedIds: [String]
+    let reloadThread: () -> Void
+
+    private let accent = Color(red: 0.95, green: 0.62, blue: 0.23)
+
+    private var primaryInteractionId: String? {
+        unassignedIds.first(where: { $0.hasPrefix("cll_") || $0.hasPrefix("sms_thread_") || $0.hasPrefix("sms_thread__") })
+            ?? unassignedIds.first
+    }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            HStack(spacing: 8) {
+                Image(systemName: "point.3.connected.trianglepath.dotted")
+                    .font(.subheadline)
+                    .foregroundStyle(accent)
+                Text("Truth Graph status")
+                    .font(.caption)
+                    .fontWeight(.semibold)
+                    .foregroundStyle(.white)
+                Text("INTERNAL")
+                    .font(.caption2)
+                    .fontWeight(.bold)
+                    .foregroundStyle(Color.black.opacity(0.85))
+                    .padding(.horizontal, 6)
+                    .padding(.vertical, 2)
+                    .background(accent, in: Capsule())
+                Spacer()
+                if viewModel.isTruthGraphLoading {
+                    ProgressView()
+                        .tint(accent)
+                        .scaleEffect(0.8)
+                }
+            }
+
+            let count = unassignedIds.count
+            Text("\(count) Unassigned item\(count == 1 ? "" : "s"). Truth Graph is read-only and returns suggested repairs when applicable.")
+                .font(.caption)
+                .foregroundStyle(Color(.systemGray2))
+
+            DisclosureGroup {
+                VStack(alignment: .leading, spacing: 6) {
+                    ForEach(unassignedIds, id: \.self) { id in
+                        HStack {
+                            Text(id)
+                                .font(.system(.caption2, design: .monospaced))
+                                .foregroundStyle(Color(.systemGray3))
+                            Spacer()
+                            Button {
+                                UIPasteboard.general.string = id
+                                triggerAssignmentHaptic()
+                            } label: {
+                                Image(systemName: "doc.on.doc")
+                                    .font(.caption2)
+                                    .foregroundStyle(accent)
+                            }
+                            .buttonStyle(.plain)
+                        }
+                        .padding(.vertical, 2)
+                    }
+                }
+                .padding(.top, 4)
+            } label: {
+                Text("Show IDs")
+                    .font(.caption2)
+                    .fontWeight(.semibold)
+                    .foregroundStyle(accent)
+            }
+
+            if let primaryInteractionId {
+                HStack(spacing: 8) {
+                    Text("Inspecting")
+                        .font(.caption2)
+                        .foregroundStyle(Color(.systemGray3))
+                    Text(primaryInteractionId)
+                        .font(.system(.caption2, design: .monospaced))
+                        .foregroundStyle(Color(.systemGray2))
+                        .lineLimit(1)
+                        .truncationMode(.middle)
+                    Spacer()
+                    Button {
+                        UIPasteboard.general.string = primaryInteractionId
+                        triggerAssignmentHaptic()
+                    } label: {
+                        Image(systemName: "doc.on.doc")
+                            .font(.caption2)
+                            .foregroundStyle(accent)
+                    }
+                    .buttonStyle(.plain)
+                }
+            }
+
+            if let error = viewModel.truthGraphError, !error.isEmpty {
+                Text("Truth Graph error: \(error)")
+                    .font(.caption2)
+                    .foregroundStyle(accent)
+            } else if let status = viewModel.truthGraphStatus,
+                      let primaryInteractionId,
+                      status.interactionId == primaryInteractionId
+            {
+                Text("Lane: \(status.lane)")
+                    .font(.caption2)
+                    .foregroundStyle(Color(.systemGray2))
+
+                VStack(alignment: .leading, spacing: 6) {
+                    hydrationRow("calls_raw", ok: status.hydration.callsRaw)
+                    hydrationRow("interactions", ok: status.hydration.interactions)
+                    hydrationRow("conversation_spans", ok: status.hydration.conversationSpans)
+                    hydrationRow("evidence_events", ok: status.hydration.evidenceEvents)
+                    hydrationRow("span_attributions", ok: status.hydration.spanAttributions)
+                    hydrationRow("journal_claims", ok: status.hydration.journalClaims)
+                    hydrationRow("review_queue", ok: status.hydration.reviewQueue)
+                }
+
+                if status.suggestedRepairs.isEmpty {
+                    Text("Suggested repairs: none.")
+                        .font(.caption2)
+                        .foregroundStyle(Color(.systemGray3))
+                } else {
+                    VStack(alignment: .leading, spacing: 10) {
+                        Text("Suggested repairs (admin-run only)")
+                            .font(.caption2)
+                            .fontWeight(.semibold)
+                            .foregroundStyle(accent)
+
+                        ForEach(status.suggestedRepairs) { repair in
+                            VStack(alignment: .leading, spacing: 4) {
+                                Text(repair.label)
+                                    .font(.caption2)
+                                    .foregroundStyle(Color(.systemGray2))
+
+                                HStack(spacing: 8) {
+                                    Text(repair.idempotencyKey)
+                                        .font(.system(.caption2, design: .monospaced))
+                                        .foregroundStyle(Color(.systemGray3))
+                                        .lineLimit(1)
+                                        .truncationMode(.middle)
+                                    Spacer()
+                                    Button {
+                                        UIPasteboard.general.string = repair.idempotencyKey
+                                        triggerAssignmentHaptic()
+                                    } label: {
+                                        Image(systemName: "doc.on.doc")
+                                            .font(.caption2)
+                                            .foregroundStyle(accent)
+                                    }
+                                    .buttonStyle(.plain)
+                                }
+
+                                Text(repair.action)
+                                    .font(.system(.caption2, design: .monospaced))
+                                    .foregroundStyle(Color(.systemGray3))
+                            }
+                        }
+                    }
+                }
+
+                if !status.warnings.isEmpty {
+                    VStack(alignment: .leading, spacing: 4) {
+                        Text("Warnings")
+                            .font(.caption2)
+                            .fontWeight(.semibold)
+                            .foregroundStyle(accent)
+
+                        ForEach(status.warnings, id: \.self) { warning in
+                            Text("• \(warning)")
+                                .font(.caption2)
+                                .foregroundStyle(Color(.systemGray3))
+                        }
+                    }
+                }
+
+                Text("Repairs require a privileged X-Edge-Secret; iOS will not run them. Copy an idempotency key and run via internal ops tooling.")
+                    .font(.caption2)
+                    .foregroundStyle(Color(.systemGray3))
+            } else {
+                Text("Loading Truth Graph will not run repairs. It only returns read-only hydration + suggested repair keys.")
+                    .font(.caption2)
+                    .foregroundStyle(Color(.systemGray3))
+            }
+
+            HStack(spacing: 8) {
+                Button {
+                    Task {
+                        guard let primaryInteractionId else { return }
+                        await viewModel.loadTruthGraphStatusIfNeeded(interactionId: primaryInteractionId, force: true)
+                    }
+                } label: {
+                    Label("Refresh Truth Graph", systemImage: "point.3.connected.trianglepath.dotted")
+                        .font(.caption2)
+                        .fontWeight(.semibold)
+                }
+                .buttonStyle(.borderedProminent)
+                .tint(accent)
+                .disabled(viewModel.isTruthGraphLoading || primaryInteractionId == nil)
+
+                Button(action: reloadThread) {
+                    Label("Reload Thread", systemImage: "arrow.clockwise")
+                        .font(.caption2)
+                        .fontWeight(.semibold)
+                }
+                .buttonStyle(.bordered)
+                .tint(accent)
+                .disabled(viewModel.isLoading)
+            }
+        }
+        .task(id: primaryInteractionId) {
+            guard let primaryInteractionId else { return }
+            await viewModel.loadTruthGraphStatusIfNeeded(interactionId: primaryInteractionId, force: false)
+        }
+        .padding(12)
+        .background(
+            LinearGradient(
+                colors: [
+                    Color(red: 0.14, green: 0.10, blue: 0.06),
+                    Color(red: 0.09, green: 0.08, blue: 0.12),
+                ],
+                startPoint: .topLeading,
+                endPoint: .bottomTrailing
+            ),
+            in: RoundedRectangle(cornerRadius: 12)
+        )
+        .overlay(
+            RoundedRectangle(cornerRadius: 12)
+                .stroke(accent.opacity(0.35), lineWidth: 1)
+        )
+    }
+
+    private func hydrationRow(_ label: String, ok: Bool) -> some View {
+        HStack(spacing: 6) {
+            Image(systemName: ok ? "checkmark.circle.fill" : "xmark.circle.fill")
+                .font(.caption2)
+                .foregroundStyle(ok ? Color(red: 0.30, green: 0.85, blue: 0.45) : Color(.systemGray3))
+            Text(label)
+                .font(.system(.caption2, design: .monospaced))
+                .foregroundStyle(Color(.systemGray3))
+        }
     }
 
     private func triggerAssignmentHaptic() {
@@ -795,33 +1401,19 @@ private struct ContactHeader: View {
     }
 }
 
-private enum SpanOverlayAction {
-    case confirm
-    case reject
-    case correct
-    case comment
-}
-
-private struct SpanOverlay: View {
-    let targetType: String
-    let targetId: String
-    let onAction: (SpanOverlayAction) -> Void
+private struct NoteIconButton: View {
+    let label: String
+    let action: () -> Void
 
     var body: some View {
-        HStack(spacing: 10) {
-            Button("Confirm") { onAction(.confirm) }
-            Button("Reject") { onAction(.reject) }
-            Button("Correct") { onAction(.correct) }
-            Button("Comment") { onAction(.comment) }
-            Spacer()
-            Text("\(targetType):\(targetId.prefix(6))")
-                .font(.caption2)
-                .foregroundStyle(Color(.systemGray3))
+        Button(action: action) {
+            Image(systemName: "square.and.pencil")
+                .font(.caption)
+                .foregroundStyle(Color(.systemGray2))
+                .frame(width: 30, height: 30)
         }
-        .font(.caption2)
-        .foregroundStyle(Color(.systemGray2))
         .buttonStyle(.plain)
-        .padding(.top, 6)
+        .accessibilityLabel(Text(label))
     }
 }
 
@@ -910,6 +1502,8 @@ private struct CallTranscriptCard: View {
     let projectOptions: [SMSProjectAssignment]
     let spanOverrides: [UUID: SMSProjectAssignment]
     let onAssignSpanProject: (SpanEntry, SMSProjectAssignment) -> Void
+    let onConfirmSpanGuess: (SpanEntry) -> Void
+    let onRejectSpan: (SpanEntry) -> Void
     let onAddNote: (String, [ThreadNoteTarget]) -> Void
 
     @State private var transcriptExpanded = false
@@ -919,6 +1513,8 @@ private struct CallTranscriptCard: View {
          viewModel: ThreadViewModel, projectOptions: [SMSProjectAssignment],
          spanOverrides: [UUID: SMSProjectAssignment],
          onAssignSpanProject: @escaping (SpanEntry, SMSProjectAssignment) -> Void,
+         onConfirmSpanGuess: @escaping (SpanEntry) -> Void,
+         onRejectSpan: @escaping (SpanEntry) -> Void,
          onAddNote: @escaping (String, [ThreadNoteTarget]) -> Void) {
         self.header = header
         self.turns = turns
@@ -927,6 +1523,8 @@ private struct CallTranscriptCard: View {
         self.projectOptions = projectOptions
         self.spanOverrides = spanOverrides
         self.onAssignSpanProject = onAssignSpanProject
+        self.onConfirmSpanGuess = onConfirmSpanGuess
+        self.onRejectSpan = onRejectSpan
         self.onAddNote = onAddNote
         // Auto-expand claims when there are ungraded claims
         let hasUngraded = header.claims.contains { $0.grade == nil || $0.grade!.isEmpty }
@@ -1004,7 +1602,7 @@ private struct CallTranscriptCard: View {
                 HStack(spacing: 6) {
                     Image(systemName: "exclamationmark.triangle.fill")
                         .font(.caption2)
-                    Text("\(unresolvedCount) missing attribution\(unresolvedCount == 1 ? "" : "s")")
+                    Text("\(unresolvedCount) unassigned")
                         .font(.caption)
                         .fontWeight(.semibold)
                     if projectOptions.isEmpty {
@@ -1051,6 +1649,14 @@ private struct CallTranscriptCard: View {
                         contactName: contactName,
                         selectedAssignment: spanOverrides[span.spanId],
                         projectOptions: projectOptions,
+                        writesLocked: viewModel.isAttributionWritesLocked,
+                        writesLockedBannerText: viewModel.attributionWritesLockedBannerText,
+                        onConfirmGuess: {
+                            onConfirmSpanGuess(span)
+                        },
+                        onReject: {
+                            onRejectSpan(span)
+                        },
                         onSelectProject: { selected in
                             onAssignSpanProject(span, selected)
                         },
@@ -1214,11 +1820,23 @@ private struct SpanBlock: View {
     let contactName: String
     let selectedAssignment: SMSProjectAssignment?
     let projectOptions: [SMSProjectAssignment]
+    let writesLocked: Bool
+    let writesLockedBannerText: String?
+    let onConfirmGuess: () -> Void
+    let onReject: () -> Void
     let onSelectProject: (SMSProjectAssignment) -> Void
     let onAddNote: (String, [ThreadNoteTarget]) -> Void
 
     @State private var isExpanded = false
     @State private var showProjectSheet = false
+    @State private var lastSwipeAt: Date?
+
+    private enum SwipeIntent {
+        case confirm
+        case reject
+        case correct
+        case comment
+    }
 
     private static let spanColors: [Color] = [
         Color(red: 0.18, green: 0.64, blue: 0.25),
@@ -1259,13 +1877,13 @@ private struct SpanBlock: View {
         return Self.spanColors[colorIndex % Self.spanColors.count]
     }
 
-    private var unknownAssignment: SMSProjectAssignment {
-        SMSProjectAssignment(projectId: nil, name: "Unknown Project", colorIndex: nil)
-    }
-
     private var parsedTurns: [SpeakerTurn] {
         guard let segment = span.transcriptSegment, !segment.isEmpty else { return [] }
         return TranscriptParser.parse(segment, contactName: contactName)
+    }
+
+    private var hasGuess: Bool {
+        !((span.projectId ?? "").trimmingCharacters(in: .whitespacesAndNewlines)).isEmpty
     }
 
     var body: some View {
@@ -1280,28 +1898,19 @@ private struct SpanBlock: View {
                         .font(.caption)
                         .fontWeight(.semibold)
                         .foregroundStyle(color)
+                } else if span.needsAttribution && selectedAssignment == nil {
+                    Text("Unassigned")
+                        .font(.caption)
+                        .fontWeight(.semibold)
+                        .foregroundStyle(Color(red: 0.95, green: 0.62, blue: 0.23))
                 }
                 Spacer()
 
-                // Visible "Assign" button when attribution is needed
-                if span.needsAttribution && selectedAssignment == nil {
-                    Button {
-                        showProjectSheet = true
-                    } label: {
-                        HStack(spacing: 4) {
-                            Image(systemName: "folder.badge.questionmark")
-                                .font(.caption2)
-                            Text("Assign")
-                                .font(.caption2)
-                                .fontWeight(.semibold)
-                        }
-                        .foregroundStyle(.white)
-                        .padding(.horizontal, 10)
-                        .padding(.vertical, 5)
-                        .background(Color(red: 0.95, green: 0.62, blue: 0.23).opacity(0.85))
-                        .clipShape(Capsule())
-                    }
-                    .buttonStyle(.plain)
+                NoteIconButton(label: "Add note") {
+                    onAddNote(
+                        "Notes — Conversation segment",
+                        [ThreadNoteTarget(type: .span, id: span.spanId.uuidString)]
+                    )
                 }
 
                 Image(systemName: isExpanded ? "chevron.up" : "chevron.down")
@@ -1314,6 +1923,103 @@ private struct SpanBlock: View {
                 withAnimation(.easeInOut(duration: 0.2)) {
                     isExpanded.toggle()
                 }
+            }
+
+            if span.needsAttribution && selectedAssignment == nil {
+                let guessName = (span.projectName ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
+                let hasGuess = !(span.projectId ?? "").trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+                let confidencePct: Int? = span.confidence.map { raw in
+                    let clamped = max(0, min(raw, 1))
+                    return Int((clamped * 100).rounded())
+                }
+
+                VStack(alignment: .leading, spacing: 6) {
+                    if writesLocked, let writesLockedBannerText {
+                        HStack(alignment: .top, spacing: 8) {
+                            Image(systemName: "lock.fill")
+                                .font(.caption2)
+                                .foregroundStyle(Color(.systemGray2))
+                                .padding(.top, 1)
+                            Text(writesLockedBannerText)
+                                .font(.caption2)
+                                .foregroundStyle(Color(.systemGray2))
+                                .fixedSize(horizontal: false, vertical: true)
+                        }
+                        .padding(.bottom, 2)
+                    }
+
+                    HStack(spacing: 8) {
+                        Image(systemName: "sparkles")
+                            .font(.caption2)
+                            .foregroundStyle(Color(.systemGray2))
+                        Text("AI guess:")
+                            .font(.caption2)
+                            .foregroundStyle(Color(.systemGray2))
+                        Text(guessName.isEmpty ? "None" : guessName)
+                            .font(.caption2)
+                            .fontWeight(.semibold)
+                            .foregroundStyle(Color(.systemGray))
+                            .lineLimit(1)
+                        Spacer()
+                        Text(confidencePct.map { "\($0)%" } ?? "—")
+                            .font(.caption2)
+                            .fontWeight(.semibold)
+                            .foregroundStyle(confidencePct == nil ? Color(.systemGray2) : .white)
+                            .padding(.horizontal, 8)
+                            .padding(.vertical, 3)
+                            .background(Color(white: 0.20), in: Capsule())
+                    }
+
+                    ScrollView(.horizontal, showsIndicators: false) {
+                        HStack(spacing: 8) {
+                            actionPill(
+                                "Confirm",
+                                systemImage: "checkmark.circle.fill",
+                                tint: Color(red: 0.19, green: 0.82, blue: 0.35),
+                                disabled: writesLocked
+                            ) {
+                                if hasGuess {
+                                    onConfirmGuess()
+                                } else {
+                                    showProjectSheet = true
+                                }
+                            }
+                            actionPill(
+                                "Correct",
+                                systemImage: "folder",
+                                tint: Color(red: 0.95, green: 0.62, blue: 0.23),
+                                disabled: writesLocked
+                            ) {
+                                showProjectSheet = true
+                            }
+                            actionPill(
+                                "Reject",
+                                systemImage: "xmark.circle",
+                                tint: Color(white: 0.28),
+                                disabled: writesLocked
+                            ) {
+                                onReject()
+                            }
+                            actionPill(
+                                "Comment",
+                                systemImage: "square.and.pencil",
+                                tint: Color(red: 0.16, green: 0.50, blue: 0.94),
+                                disabled: writesLocked
+                            ) {
+                                onAddNote(
+                                    "Comment — Attribution",
+                                    [ThreadNoteTarget(type: .span, id: span.spanId.uuidString)]
+                                )
+                            }
+                        }
+                        .padding(.vertical, 2)
+                    }
+
+                    Text("Swipe: \u{2192} Confirm  \u{2190} Reject  \u{2191} Correct  \u{2193} Comment")
+                        .font(.caption2)
+                        .foregroundStyle(Color(.systemGray3))
+                }
+                .padding(.top, 2)
             }
 
             if isExpanded {
@@ -1349,6 +2055,8 @@ private struct SpanBlock: View {
                         .padding(.top, 6)
                     }
                     .buttonStyle(.plain)
+                    .disabled(writesLocked)
+                    .opacity(writesLocked ? 0.45 : 1)
                 }
             } else if let segment = span.transcriptSegment, !segment.isEmpty {
                 // Compressed: 3-line text preview. Tappable to expand.
@@ -1363,26 +2071,6 @@ private struct SpanBlock: View {
                         }
                     }
             }
-
-            SpanOverlay(
-                targetType: "span",
-                targetId: span.spanId.uuidString,
-                onAction: { action in
-                    switch action {
-                    case .confirm:
-                        onSelectProject(currentProject.projectId == nil ? unknownAssignment : currentProject)
-                    case .reject:
-                        onSelectProject(unknownAssignment)
-                    case .correct:
-                        showProjectSheet = true
-                    case .comment:
-                        onAddNote(
-                            "Notes — Conversation segment",
-                            [ThreadNoteTarget(type: .span, id: span.spanId.uuidString)]
-                        )
-                    }
-                }
-            )
         }
         .padding(10)
         .background(color.opacity(currentProject.colorIndex == nil ? 0.16 : 0.10))
@@ -1392,11 +2080,20 @@ private struct SpanBlock: View {
                 .frame(width: 3)
         }
         .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
+        .contentShape(Rectangle())
+        .simultaneousGesture(
+            DragGesture(minimumDistance: 28)
+                .onEnded { value in
+                    handleSwipe(value.translation)
+                }
+        )
         .sheet(isPresented: $showProjectSheet) {
             ProjectAssignmentSheet(
                 title: "Assign Project",
                 currentAssignment: currentProject,
                 options: projectOptions,
+                writesLocked: writesLocked,
+                writesLockedBannerText: writesLockedBannerText,
                 onSelect: { selected in
                     onSelectProject(selected)
                 },
@@ -1408,6 +2105,84 @@ private struct SpanBlock: View {
                 }
             )
         }
+    }
+
+    private func handleSwipe(_ translation: CGSize) {
+        guard span.needsAttribution, selectedAssignment == nil else { return }
+        guard !writesLocked else { return }
+        guard !showProjectSheet else { return }
+
+        if let lastSwipeAt, Date().timeIntervalSince(lastSwipeAt) < 0.45 {
+            return
+        }
+
+        guard let intent = swipeIntent(for: translation) else { return }
+        lastSwipeAt = Date()
+
+        UIImpactFeedbackGenerator(style: .medium).impactOccurred()
+
+        switch intent {
+        case .confirm:
+            if hasGuess {
+                onConfirmGuess()
+            } else {
+                showProjectSheet = true
+            }
+        case .reject:
+            onReject()
+        case .correct:
+            showProjectSheet = true
+        case .comment:
+            onAddNote(
+                "Comment — Attribution",
+                [ThreadNoteTarget(type: .span, id: span.spanId.uuidString)]
+            )
+        }
+    }
+
+    private func swipeIntent(for translation: CGSize) -> SwipeIntent? {
+        let dx = translation.width
+        let dy = translation.height
+
+        let horizontalThreshold: CGFloat = 64
+        let verticalThreshold: CGFloat = 120
+
+        let horizontalDominant = abs(dx) > abs(dy) * 1.35
+        let verticalDominant = abs(dy) > abs(dx) * 1.8
+
+        if horizontalDominant, abs(dx) >= horizontalThreshold {
+            return dx > 0 ? .confirm : .reject
+        }
+        if verticalDominant, abs(dy) >= verticalThreshold {
+            return dy < 0 ? .correct : .comment
+        }
+
+        return nil
+    }
+
+    private func actionPill(
+        _ title: String,
+        systemImage: String,
+        tint: Color,
+        disabled: Bool = false,
+        action: @escaping () -> Void
+    ) -> some View {
+        Button(action: action) {
+            HStack(spacing: 4) {
+                Image(systemName: systemImage)
+                    .font(.caption2)
+                Text(title)
+                    .font(.caption2)
+                    .fontWeight(.semibold)
+            }
+            .foregroundStyle(.white)
+            .padding(.horizontal, 10)
+            .padding(.vertical, 6)
+            .background(tint.opacity(0.85), in: Capsule())
+        }
+        .buttonStyle(.plain)
+        .disabled(disabled)
+        .opacity(disabled ? 0.55 : 1)
     }
 }
 
@@ -1421,15 +2196,13 @@ private struct SMSStripeGroup: View {
     let stripeLabel: String?
     let unresolvedCount: Int
     let projectOptions: [SMSProjectAssignment]
+    let writesLocked: Bool
+    let writesLockedBannerText: String?
     let onAssignProject: (SMSProjectAssignment) -> Void
     let onOpenPicker: () -> Void
     let onAddNote: () -> Void
 
     @State private var showProjectSheet = false
-
-    private var unknownAssignment: SMSProjectAssignment {
-        SMSProjectAssignment(projectId: nil, name: "Unknown Project", colorIndex: nil)
-    }
 
     private var stripeShape: RoundedRectangle {
         RoundedRectangle(cornerRadius: 12, style: .continuous)
@@ -1443,28 +2216,53 @@ private struct SMSStripeGroup: View {
             }
 
             VStack(alignment: .leading, spacing: 0) {
+                if writesLocked, let writesLockedBannerText {
+                    HStack(alignment: .top, spacing: 8) {
+                        Image(systemName: "lock.fill")
+                            .font(.caption2)
+                            .foregroundStyle(Color(.systemGray2))
+                            .padding(.top, 1)
+                        Text(writesLockedBannerText)
+                            .font(.caption2)
+                            .foregroundStyle(Color(.systemGray2))
+                            .fixedSize(horizontal: false, vertical: true)
+                    }
+                    .padding(.horizontal, 10)
+                    .padding(.top, 8)
+                    .padding(.bottom, 6)
+                }
+
                 if let stripeLabel {
-                    if unresolvedCount == 0 {
-                        Button {
-                            onOpenPicker()
-                            showProjectSheet = true
-                        } label: {
+                    HStack(spacing: 8) {
+                        if unresolvedCount == 0 {
+                            Button {
+                                onOpenPicker()
+                                showProjectSheet = true
+                            } label: {
+                                Text(stripeLabel)
+                                    .font(.caption2)
+                                    .foregroundStyle(Color(.systemGray2))
+                            }
+                            .buttonStyle(.plain)
+                            .disabled(writesLocked)
+                            .opacity(writesLocked ? 0.45 : 1)
+                        } else {
                             Text(stripeLabel)
                                 .font(.caption2)
                                 .foregroundStyle(Color(.systemGray2))
                         }
-                        .buttonStyle(.plain)
-                        .padding(.horizontal, 10)
-                        .padding(.top, 6)
-                        .padding(.bottom, 4)
-                    } else {
-                        Text(stripeLabel)
-                            .font(.caption2)
-                            .foregroundStyle(Color(.systemGray2))
-                            .padding(.horizontal, 10)
-                            .padding(.top, 6)
-                            .padding(.bottom, 4)
+
+                        Spacer()
+
+                        NoteIconButton(label: "Add note") {
+                            onAddNote()
+                        }
+                        .disabled(writesLocked)
+                        .opacity(writesLocked ? 0.45 : 1)
                     }
+                    .padding(.horizontal, 10)
+                    .padding(.top, 6)
+                    .padding(.bottom, 4)
                 }
 
                 if unresolvedCount > 0 {
@@ -1476,6 +2274,12 @@ private struct SMSStripeGroup: View {
                             .fontWeight(.semibold)
 
                         Spacer()
+
+                        NoteIconButton(label: "Add note") {
+                            onAddNote()
+                        }
+                        .disabled(writesLocked)
+                        .opacity(writesLocked ? 0.45 : 1)
 
                         Button {
                             onOpenPicker()
@@ -1495,6 +2299,8 @@ private struct SMSStripeGroup: View {
                             .clipShape(Capsule())
                         }
                         .buttonStyle(.plain)
+                        .disabled(writesLocked)
+                        .opacity(writesLocked ? 0.55 : 1)
                     }
                     .foregroundStyle(Color(red: 0.95, green: 0.62, blue: 0.23))
                     .padding(.horizontal, 10)
@@ -1505,32 +2311,6 @@ private struct SMSStripeGroup: View {
                     MessageBubble(entry: entry, showTimestamp: true)
                         .padding(.bottom, bubbleSpacing(at: idx))
                 }
-
-                if let first = entries.first {
-                    SpanOverlay(
-                        targetType: "sms",
-                        targetId: first.messageId,
-                        onAction: { action in
-                            switch action {
-                            case .confirm:
-                                if let assignment {
-                                    onAssignProject(assignment)
-                                } else {
-                                    showProjectSheet = true
-                                }
-                            case .reject:
-                                onAssignProject(unknownAssignment)
-                            case .correct:
-                                onOpenPicker()
-                                showProjectSheet = true
-                            case .comment:
-                                onAddNote()
-                            }
-                        }
-                    )
-                    .padding(.horizontal, 10)
-                    .padding(.bottom, 6)
-                }
             }
         }
         .frame(maxWidth: .infinity, alignment: .leading)
@@ -1540,6 +2320,8 @@ private struct SMSStripeGroup: View {
                 title: "Assign Project",
                 currentAssignment: assignment,
                 options: projectOptions,
+                writesLocked: writesLocked,
+                writesLockedBannerText: writesLockedBannerText,
                 onSelect: onAssignProject,
                 onAddNote: onAddNote
             )
@@ -1559,6 +2341,8 @@ private struct ProjectAssignmentSheet: View {
     let title: String
     let currentAssignment: SMSProjectAssignment?
     let options: [SMSProjectAssignment]
+    let writesLocked: Bool
+    let writesLockedBannerText: String?
     let onSelect: (SMSProjectAssignment) -> Void
     let onAddNote: (() -> Void)?
 
@@ -1576,6 +2360,22 @@ private struct ProjectAssignmentSheet: View {
     var body: some View {
         NavigationStack {
             List {
+                if writesLocked, let writesLockedBannerText {
+                    Section {
+                        HStack(alignment: .top, spacing: 10) {
+                            Image(systemName: "lock.fill")
+                                .font(.caption)
+                                .foregroundStyle(.secondary)
+                                .padding(.top, 1)
+                            Text(writesLockedBannerText)
+                                .font(.caption)
+                                .foregroundStyle(.secondary)
+                                .fixedSize(horizontal: false, vertical: true)
+                        }
+                        .padding(.vertical, 4)
+                    }
+                }
+
                 Section("Project") {
                     if options.isEmpty {
                         Text("No projects available yet.")
@@ -1601,6 +2401,7 @@ private struct ProjectAssignmentSheet: View {
                                 .frame(minHeight: 54, alignment: .leading)
                                 .contentShape(Rectangle())
                             }
+                            .disabled(writesLocked)
                         }
                     }
                 }
@@ -1613,6 +2414,7 @@ private struct ProjectAssignmentSheet: View {
                                 onAddNote()
                             }
                         }
+                        .disabled(writesLocked)
                     }
                 }
             }
