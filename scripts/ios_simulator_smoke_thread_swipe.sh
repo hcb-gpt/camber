@@ -36,6 +36,40 @@ wait_for_simctl() {
   simctl list devices >/dev/null 2>&1
 }
 
+pick_simulator_udid() {
+  local udid=""
+
+  # Prefer an already-booted iPhone (reduces flakiness and avoids iPad/Mac-catalyst destinations).
+  udid="$(simctl list devices | awk -F '[()]' '/Booted/ && /iPhone/{print $2; exit}')"
+  if [[ -n "${udid}" ]]; then
+    echo "${udid}"
+    return 0
+  fi
+
+  # Prefer newest iPhones (common CI/dev defaults).
+  for pref in "iPhone 17" "iPhone 16" "iPhone 15"; do
+    udid="$(simctl list devices available | awk -F '[()]' -v pref="${pref}" '$0 ~ pref {print $2; exit}')"
+    if [[ -n "${udid}" ]]; then
+      echo "${udid}"
+      return 0
+    fi
+  done
+
+  # Fallback: first available iPhone.
+  udid="$(simctl list devices available | awk -F '[()]' '/iPhone/{print $2; exit}')"
+  if [[ -n "${udid}" ]]; then
+    echo "${udid}"
+    return 0
+  fi
+
+  return 1
+}
+
+is_booted() {
+  local udid="${1}"
+  simctl list devices | awk -v udid="${udid}" '$0 ~ udid && /Booted/ {found=1} END {exit !found}'
+}
+
 echo "[smoke] output: ${OUT_DIR}"
 
 if ! wait_for_simctl; then
@@ -43,13 +77,13 @@ if ! wait_for_simctl; then
   exit 1
 fi
 
-DEVICE_UDID="$(simctl list devices | awk -F '[()]' '/Booted/{print $2; exit}')"
+DEVICE_UDID="$(pick_simulator_udid || true)"
 if [[ -z "${DEVICE_UDID}" ]]; then
-  DEVICE_UDID="$(simctl list devices available | awk -F '[()]' '/iPhone 16/{print $2; exit}')"
-  if [[ -z "${DEVICE_UDID}" ]]; then
-    echo "ERROR: no simulator found" >&2
-    exit 1
-  fi
+  echo "ERROR: no iPhone simulator found" >&2
+  exit 1
+fi
+
+if ! is_booted "${DEVICE_UDID}"; then
   simctl boot "${DEVICE_UDID}" || true
 fi
 
@@ -137,4 +171,3 @@ EOF
 
 echo "[smoke] done"
 cat "${OUT_DIR}/summary.txt"
-

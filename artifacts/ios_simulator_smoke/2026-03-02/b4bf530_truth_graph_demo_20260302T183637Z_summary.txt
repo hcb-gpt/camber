@@ -1,0 +1,7 @@
+bundle_id=com.heartwoodcustombuilders.CamberRedline
+device_udid=F27127D7-C087-4351-AF3A-7A57D1E1635C
+out_dir=/Users/chadbarlow/gh/hcb-gpt/camber/artifacts/ios_simulator_smoke/20260302T183637Z_truth_graph_demo
+screens=/Users/chadbarlow/gh/hcb-gpt/camber/artifacts/ios_simulator_smoke/20260302T183637Z_truth_graph_demo/screens
+interaction_id=cll_SYNTH_SYNTH_FLOATER_CONTIN_1772335530
+git_sha=b4bf5303c6e0999896a0a86d282413e4869f2203
+launch_args=--truth-graph-demo
