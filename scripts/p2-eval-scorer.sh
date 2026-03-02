@@ -36,7 +36,15 @@ CALL_IDS_FILE=""
 while [[ $# -gt 0 ]]; do
   case $1 in
     --blind-trial-only) MODE="blind_trial"; shift ;;
-    --call-ids) MODE="custom"; CALL_IDS_FILE="$2"; shift 2 ;;
+    --call-ids)
+      if [[ $# -lt 2 ]] || [[ -z "${2:-}" ]] || [[ "${2:-}" == --* ]]; then
+        echo "ERROR: --call-ids requires a file path" >&2
+        exit 2
+      fi
+      MODE="custom"
+      CALL_IDS_FILE="$2"
+      shift 2
+      ;;
     --json) OUTPUT="json"; shift ;;
     -h|--help)
       echo "Usage: $0 [--blind-trial-only] [--call-ids FILE] [--json]"

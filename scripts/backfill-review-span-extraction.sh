@@ -20,12 +20,46 @@ BATCH_SIZE=10
 while [[ $# -gt 0 ]]; do
   case $1 in
     --dry-run) DRY_RUN=true; shift ;;
-    --limit) LIMIT="$2"; shift 2 ;;
-    --delay-ms) DELAY_MS="$2"; shift 2 ;;
-    --batch-size) BATCH_SIZE="$2"; shift 2 ;;
+    --limit)
+      if [[ $# -lt 2 ]] || [[ -z "${2:-}" ]] || [[ "${2:-}" == --* ]]; then
+        echo "ERROR: --limit requires a positive integer." >&2
+        exit 2
+      fi
+      LIMIT="$2"
+      shift 2
+      ;;
+    --delay-ms)
+      if [[ $# -lt 2 ]] || [[ -z "${2:-}" ]] || [[ "${2:-}" == --* ]]; then
+        echo "ERROR: --delay-ms requires a non-negative integer." >&2
+        exit 2
+      fi
+      DELAY_MS="$2"
+      shift 2
+      ;;
+    --batch-size)
+      if [[ $# -lt 2 ]] || [[ -z "${2:-}" ]] || [[ "${2:-}" == --* ]]; then
+        echo "ERROR: --batch-size requires a positive integer." >&2
+        exit 2
+      fi
+      BATCH_SIZE="$2"
+      shift 2
+      ;;
     *) echo "Unknown arg: $1"; exit 1 ;;
   esac
 done
+
+if [[ ! "${LIMIT}" =~ ^[0-9]+$ ]] || (( LIMIT <= 0 )); then
+  echo "ERROR: --limit must be a positive integer." >&2
+  exit 2
+fi
+if [[ ! "${DELAY_MS}" =~ ^[0-9]+$ ]]; then
+  echo "ERROR: --delay-ms must be a non-negative integer." >&2
+  exit 2
+fi
+if [[ ! "${BATCH_SIZE}" =~ ^[0-9]+$ ]] || (( BATCH_SIZE <= 0 )); then
+  echo "ERROR: --batch-size must be a positive integer." >&2
+  exit 2
+fi
 
 # Validate secrets
 if [[ -z "${EDGE_SHARED_SECRET:-}" ]]; then

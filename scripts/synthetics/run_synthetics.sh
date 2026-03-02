@@ -35,10 +35,18 @@ while [[ $# -gt 0 ]]; do
       shift
       ;;
     --scenario)
+      if [[ $# -lt 2 ]] || [[ -z "${2:-}" ]]; then
+        echo "ERROR: --scenario requires a scenario_id value"
+        exit 2
+      fi
       SINGLE_SCENARIO="$2"
       shift 2
       ;;
     --timestamp)
+      if [[ $# -lt 2 ]] || [[ -z "${2:-}" ]]; then
+        echo "ERROR: --timestamp requires a tag value"
+        exit 2
+      fi
       RUN_TAG="$2"
       shift 2
       ;;
@@ -66,6 +74,13 @@ while [[ $# -gt 0 ]]; do
       ;;
   esac
 done
+
+# Normalize/validate run tag after argument parsing.
+RUN_TAG="$(echo "$RUN_TAG" | tr '[:lower:]' '[:upper:]' | tr -cd 'A-Z0-9')"
+if [[ -z "$RUN_TAG" ]]; then
+  echo "ERROR: run tag is empty after normalization (allowed: A-Z, 0-9)"
+  exit 2
+fi
 
 # ── Validate prerequisites ─────────────────────────────────────
 if ! command -v jq &>/dev/null; then
@@ -119,6 +134,7 @@ PASS=0
 FAIL=0
 SKIP=0
 RUN_INTERACTION_IDS=()
+MATCHED_SCENARIOS=0
 
 # ── Helper: assert_invariant ──────────────────────────────────
 # Usage: assert_invariant <test_name> <condition_result> <detail>
@@ -215,6 +231,7 @@ for i in $(seq 0 $((SCENARIO_COUNT - 1))); do
   if [[ -n "$SINGLE_SCENARIO" ]] && [[ "$SCENARIO_ID" != "$SINGLE_SCENARIO" ]]; then
     continue
   fi
+  MATCHED_SCENARIOS=$((MATCHED_SCENARIOS + 1))
 
   echo "──────────────────────────────────────────────────────────────"
   echo "  Scenario: $SCENARIO_ID"
@@ -529,13 +546,24 @@ for i in $(seq 0 $((SCENARIO_COUNT - 1))); do
   echo ""
 done
 
+if [[ -n "$SINGLE_SCENARIO" ]] && [[ $MATCHED_SCENARIOS -eq 0 ]]; then
+  echo "ERROR: Scenario not found: $SINGLE_SCENARIO"
+  exit 2
+fi
+
 # ── Summary ────────────────────────────────────────────────────
 echo "══════════════════════════════════════════════════════════════"
 echo "  RESULTS: $PASS passed, $FAIL failed, $SKIP skipped"
 echo "══════════════════════════════════════════════════════════════"
 
-# Output the interaction IDs created so the gate script can find them
-echo "INTERACTION_IDS=$(IFS=,; echo "${RUN_INTERACTION_IDS[*]}")"
+# Output the interaction IDs created so the gate script can find them.
+# Guard empty array expansion to avoid unbound-variable errors under set -u.
+if [[ ${#RUN_INTERACTION_IDS[@]} -gt 0 ]]; then
+  INTERACTION_IDS_CSV="$(IFS=,; echo "${RUN_INTERACTION_IDS[*]}")"
+else
+  INTERACTION_IDS_CSV=""
+fi
+echo "INTERACTION_IDS=${INTERACTION_IDS_CSV}"
 
 if [[ $FAIL -gt 0 ]]; then
   exit 1
