@@ -191,7 +191,7 @@ struct AssistantChatView: View {
 
         for prompt in prompts {
             viewModel.currentInput = prompt
-            AssistantSmokeAutomation.logger.log("SMOKE_EVENT ASSISTANT_PROMPT prompt=\(prompt, privacy: .public)")
+            AssistantSmokeAutomation.logger.log("SMOKE_EVENT ASSISTANT_PROMPT prompt=\(prompt, privacy: .private)")
             await viewModel.sendMessage(contactId: contactId, projectId: projectId)
             try? await Task.sleep(for: .seconds(1))
         }
