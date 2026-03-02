@@ -1,7 +1,9 @@
+import Foundation
 import SwiftUI
 
 struct ContactRow: View {
     let contact: Contact
+    @Environment(\.openURL) private var openURL
 
     // MARK: - Layout constants
 
@@ -11,7 +13,7 @@ struct ContactRow: View {
 
     var body: some View {
         HStack(spacing: 16) {
-            initialsAvatar
+            avatar
 
             VStack(alignment: .leading, spacing: 6) {
 
@@ -24,10 +26,26 @@ struct ContactRow: View {
 
                     Spacer()
 
-                    if let relativeTime = relativeTimeString {
-                        Text(relativeTime)
-                            .font(.system(size: 13, weight: .regular).monospacedDigit())
-                            .foregroundStyle(Color(white: 0.38))
+                    HStack(spacing: 10) {
+                        if let relativeTime = relativeTimeString {
+                            Text(relativeTime)
+                                .font(.system(size: 13, weight: .regular).monospacedDigit())
+                                .foregroundStyle(Color(white: 0.38))
+                        }
+
+                        if let callURL = callURL {
+                            Button {
+                                openURL(callURL)
+                            } label: {
+                                Image(systemName: "phone.fill")
+                                    .font(.system(size: 12, weight: .semibold))
+                                    .foregroundStyle(Color(white: 0.88))
+                                    .frame(width: 26, height: 26)
+                                    .background(Circle().fill(Color(white: 0.14)))
+                            }
+                            .buttonStyle(.borderless)
+                            .accessibilityLabel("Call")
+                        }
                     }
                 }
 
@@ -41,25 +59,78 @@ struct ContactRow: View {
         .padding(.vertical, 10)
     }
 
-    // MARK: - Initials Avatar
+    // MARK: - Avatar
 
-    private var initialsAvatar: some View {
+    private var avatar: some View {
+        ZStack(alignment: .bottomTrailing) {
+            Circle()
+                .fill(Color(white: 0.12))
+                .frame(width: avatarSize, height: avatarSize)
+                .overlay(
+                    Text(initials)
+                        .font(.system(size: 15, weight: .semibold))
+                        .foregroundStyle(Color(white: 0.93))
+                )
+                .overlay(
+                    Circle()
+                        .strokeBorder(Color(white: 0.20), lineWidth: 0.5)
+                )
+
+            if contact.ungradedCount > 0 {
+                triageBadge
+                    .offset(x: 3, y: 3)
+            }
+        }
+    }
+
+    private var triageBadge: some View {
         let count = contact.ungradedCount
         let label = count > 99 ? "99+" : "\(count)"
 
         return Text(label)
-            .font(.system(size: label.count > 2 ? 12 : 15, weight: .semibold).monospacedDigit())
-            .foregroundStyle(count > 0 ? Color(red: 0.95, green: 0.62, blue: 0.23) : Color(white: 0.52))
-            .frame(width: avatarSize, height: avatarSize)
-            .background(count > 0 ? Color(red: 0.20, green: 0.12, blue: 0.05) : Color(white: 0.12))
-            .clipShape(Circle())
+            .font(.system(size: label.count > 2 ? 9 : 10, weight: .bold).monospacedDigit())
+            .foregroundStyle(.black)
+            .padding(.horizontal, label.count > 2 ? 5 : 6)
+            .padding(.vertical, 2)
+            .background(Capsule().fill(Color(red: 0.95, green: 0.62, blue: 0.23)))
             .overlay(
-                Circle()
-                    .strokeBorder(
-                        count > 0 ? Color(red: 0.43, green: 0.26, blue: 0.11) : Color(white: 0.20),
-                        lineWidth: 0.5
-                    )
+                Capsule()
+                    .strokeBorder(Color.black.opacity(0.18), lineWidth: 0.5)
             )
+            .accessibilityLabel("\(count) needs triage")
+    }
+
+    private var initials: String {
+        let trimmed = contact.name.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { return "?" }
+
+        let hasLetter = trimmed.unicodeScalars.contains { CharacterSet.letters.contains($0) }
+        if !hasLetter {
+            let digits = trimmed.filter(\.isNumber)
+            if digits.count >= 2 {
+                return String(digits.suffix(2))
+            }
+            if digits.count == 1 {
+                return String(digits)
+            }
+            return "#"
+        }
+
+        let parts = trimmed.split(whereSeparator: { $0 == " " || $0 == "\n" || $0 == "\t" || $0 == "-" })
+        guard let first = parts.first?.first else { return "?" }
+        if let last = parts.dropFirst().last?.first {
+            return "\(first)\(last)".uppercased()
+        }
+        return "\(first)".uppercased()
+    }
+
+    private var callURL: URL? {
+        guard let phone = contact.phone?.trimmingCharacters(in: .whitespacesAndNewlines), !phone.isEmpty else {
+            return nil
+        }
+        let sanitized = phone.filter { $0.isNumber || $0 == "+" }
+        guard !sanitized.isEmpty else { return nil }
+        return URL(string: "tel://\(sanitized)")
     }
 
     // MARK: - Preview Text
