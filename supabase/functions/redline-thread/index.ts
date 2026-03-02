@@ -46,6 +46,15 @@ function noStoreHeaders(): Record<string, string> {
   };
 }
 
+function constantTimeEqual(a: string, b: string): boolean {
+  if (a.length !== b.length) return false;
+  let result = 0;
+  for (let i = 0; i < a.length; i++) {
+    result |= a.charCodeAt(i) ^ b.charCodeAt(i);
+  }
+  return result === 0;
+}
+
 function json(data: unknown, status = 200, extraHeaders: Record<string, string> = {}): Response {
   return new Response(JSON.stringify(data), {
     status,
@@ -263,6 +272,50 @@ async function handleTruthGraph(db: any, url: URL, t0: number): Promise<Response
 // Body: { interaction_id, repair_action, idempotency_key, requested_by? }
 // ============================================================
 async function handleRepair(db: any, req: Request, t0: number): Promise<Response> {
+  // Privileged endpoint: without a guard, this route would proxy internal service-role + edge-secret calls.
+  const edgeSecretHeader = String(req.headers.get("X-Edge-Secret") || "").trim();
+  const expectedEdgeSecret = String(Deno.env.get("EDGE_SHARED_SECRET") || "").trim();
+  const hasValidEdgeSecret = edgeSecretHeader.length > 0 &&
+    expectedEdgeSecret.length > 0 &&
+    constantTimeEqual(edgeSecretHeader, expectedEdgeSecret);
+
+  if (!hasValidEdgeSecret) {
+    const authHeader = String(req.headers.get("Authorization") || "");
+    const authMatch = authHeader.match(/^bearer\s+(.+)$/i);
+    const bearerToken = authMatch ? authMatch[1]!.trim() : "";
+
+    if (!bearerToken) {
+      return json({
+        ok: false,
+        error_code: "missing_auth",
+        detail: "X-Edge-Secret or Authorization: Bearer <service_role_key> required",
+        function_version: FUNCTION_VERSION,
+        ms: Date.now() - t0,
+      }, 401);
+    }
+
+    const expectedServiceRoleKey = String(Deno.env.get("SUPABASE_SERVICE_ROLE_KEY") || "").trim();
+    if (!expectedServiceRoleKey) {
+      return json({
+        ok: false,
+        error_code: "server_misconfigured",
+        detail: "SUPABASE_SERVICE_ROLE_KEY not configured",
+        function_version: FUNCTION_VERSION,
+        ms: Date.now() - t0,
+      }, 500);
+    }
+
+    if (!constantTimeEqual(bearerToken, expectedServiceRoleKey)) {
+      return json({
+        ok: false,
+        error_code: "invalid_auth_token",
+        detail: "Authorization Bearer token must match service role key",
+        function_version: FUNCTION_VERSION,
+        ms: Date.now() - t0,
+      }, 403);
+    }
+  }
+
   let body: any;
   try {
     body = await req.json();
