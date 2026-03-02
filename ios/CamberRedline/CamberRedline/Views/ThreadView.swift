@@ -104,7 +104,6 @@ struct ThreadView: View {
     @State private var activeNoteContext: ThreadNoteContext?
     @State private var noteDraft = ""
     @State private var isContactInfoPresented = false
-    @State private var isRunningTruthGraphRepair = false
     private let bottomAnchorID = "thread-bottom-anchor"
     private let topLoadThreshold: CGFloat = -80
     private static let smsStripeColors: [Color] = [
@@ -275,7 +274,15 @@ struct ThreadView: View {
                     let unassignedIds = unassignedInteractions(in: groups)
                     if !unassignedIds.isEmpty {
                         if isTruthGraphStatusCardEnabled {
-                            truthGraphStatusCard(unassignedIds: unassignedIds)
+                            TruthGraphStatusCardView(
+                                viewModel: viewModel,
+                                unassignedIds: unassignedIds,
+                                reloadThread: {
+                                    Task {
+                                        await viewModel.loadThread(contactId: contact.contactId)
+                                    }
+                                }
+                            )
                                 .padding(.horizontal, 16)
                                 .padding(.bottom, 10)
                         } else {
@@ -437,6 +444,12 @@ struct ThreadView: View {
                 onAssignSpanProject: { span, selectedProject in
                     assignSpan(span, to: selectedProject)
                 },
+                onConfirmSpanGuess: { span in
+                    confirmSpanGuess(span)
+                },
+                onRejectSpan: { span in
+                    rejectSpan(span)
+                },
                 onAddNote: { title, targets in
                     openNoteEditor(title: title, targets: targets)
                 }
@@ -494,16 +507,87 @@ struct ThreadView: View {
             viewModel.showTransientError("Select a project before applying attribution.")
             return
         }
+        let rawNotes = viewModel.noteText(targetType: .span, targetId: span.spanId.uuidString)
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+        let notes = rawNotes.isEmpty ? nil : rawNotes
         Task {
             let didResolve = await viewModel.resolveAttribution(
                 reviewQueueId: queueId,
-                projectId: projectId
+                projectId: projectId,
+                notes: notes
             )
             if !didResolve {
                 spanOverrides.removeValue(forKey: span.spanId)
             } else {
                 await MainActor.run {
                     triggerAssignmentHaptic()
+                    if notes != nil {
+                        viewModel.saveNote(targetType: .span, targetId: span.spanId.uuidString, text: "")
+                    }
+                }
+            }
+        }
+    }
+
+    private func confirmSpanGuess(_ span: SpanEntry) {
+        guard span.needsAttribution else { return }
+        guard let queueId = span.reviewQueueId else { return }
+
+        let projectId = (span.projectId ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !projectId.isEmpty else {
+            viewModel.showTransientError("No AI guess available yet. Choose a project to resolve.")
+            return
+        }
+
+        let optimisticAssignment = reviewProjectOptions.first(where: { $0.projectId == projectId })
+            ?? SMSProjectAssignment(projectId: projectId, name: span.projectName ?? "Assigned", colorIndex: nil)
+        spanOverrides[span.spanId] = optimisticAssignment
+
+        let rawNotes = viewModel.noteText(targetType: .span, targetId: span.spanId.uuidString)
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+        let notes = rawNotes.isEmpty ? nil : rawNotes
+
+        Task {
+            let didResolve = await viewModel.resolveAttribution(
+                reviewQueueId: queueId,
+                projectId: projectId,
+                notes: notes
+            )
+            if !didResolve {
+                spanOverrides.removeValue(forKey: span.spanId)
+            } else {
+                await MainActor.run {
+                    triggerAssignmentHaptic()
+                    if notes != nil {
+                        viewModel.saveNote(targetType: .span, targetId: span.spanId.uuidString, text: "")
+                    }
+                }
+            }
+        }
+    }
+
+    private func rejectSpan(_ span: SpanEntry) {
+        guard span.needsAttribution else { return }
+        guard let queueId = span.reviewQueueId else { return }
+
+        spanOverrides.removeValue(forKey: span.spanId)
+
+        let rawNotes = viewModel.noteText(targetType: .span, targetId: span.spanId.uuidString)
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+        let notes = rawNotes.isEmpty ? nil : rawNotes
+
+        Task {
+            let didDismiss = await viewModel.dismissAttribution(
+                reviewQueueId: queueId,
+                reason: "reject",
+                notes: notes
+            )
+            if didDismiss {
+                await MainActor.run {
+                    triggerAssignmentHaptic()
+                    if notes != nil {
+                        viewModel.saveNote(targetType: .span, targetId: span.spanId.uuidString, text: "")
+                    }
                 }
             }
         }
@@ -581,128 +665,6 @@ struct ThreadView: View {
         .background(Color(red: 0.20, green: 0.12, blue: 0.05), in: RoundedRectangle(cornerRadius: 10))
     }
 
-    @ViewBuilder
-    private func truthGraphStatusCard(unassignedIds: [String]) -> some View {
-        VStack(alignment: .leading, spacing: 10) {
-            HStack(spacing: 8) {
-                Image(systemName: "point.3.connected.trianglepath.dotted")
-                    .font(.subheadline)
-                    .foregroundStyle(Color(red: 0.95, green: 0.62, blue: 0.23))
-                Text("Truth Graph status")
-                    .font(.caption)
-                    .fontWeight(.semibold)
-                    .foregroundStyle(.white)
-                Text("INTERNAL")
-                    .font(.caption2)
-                    .fontWeight(.bold)
-                    .foregroundStyle(Color.black.opacity(0.85))
-                    .padding(.horizontal, 6)
-                    .padding(.vertical, 2)
-                    .background(Color(red: 0.95, green: 0.62, blue: 0.23), in: Capsule())
-                Spacer()
-                if isRunningTruthGraphRepair {
-                    ProgressView()
-                        .tint(Color(red: 0.95, green: 0.62, blue: 0.23))
-                        .scaleEffect(0.8)
-                }
-            }
-
-            let count = unassignedIds.count
-            Text("\(count) Unassigned item\(count == 1 ? "" : "s"). Evidence is visible and repairable from this thread.")
-                .font(.caption)
-                .foregroundStyle(Color(.systemGray2))
-
-            if !unassignedIds.isEmpty {
-                DisclosureGroup {
-                    VStack(alignment: .leading, spacing: 6) {
-                        ForEach(unassignedIds, id: \.self) { id in
-                            HStack {
-                                Text(id)
-                                    .font(.system(.caption2, design: .monospaced))
-                                    .foregroundStyle(Color(.systemGray3))
-                                Spacer()
-                                Button {
-                                    UIPasteboard.general.string = id
-                                    triggerAssignmentHaptic()
-                                } label: {
-                                    Image(systemName: "doc.on.doc")
-                                        .font(.caption2)
-                                        .foregroundStyle(Color(red: 0.95, green: 0.62, blue: 0.23))
-                                }
-                                .buttonStyle(.plain)
-                            }
-                            .padding(.vertical, 2)
-                        }
-                    }
-                    .padding(.top, 4)
-                } label: {
-                    Text("Show IDs")
-                        .font(.caption2)
-                        .fontWeight(.semibold)
-                        .foregroundStyle(Color(red: 0.95, green: 0.62, blue: 0.23))
-                }
-            }
-
-            Text("Repair routes: refresh thread state, refresh project candidates, then resolve unassigned items in call cards below.")
-                .font(.caption2)
-                .foregroundStyle(Color(.systemGray3))
-
-            HStack(spacing: 8) {
-                Button {
-                    runTruthGraphRepair(refreshProjects: false)
-                } label: {
-                    Label("Refresh Thread", systemImage: "arrow.clockwise")
-                        .font(.caption2)
-                        .fontWeight(.semibold)
-                }
-                .buttonStyle(.borderedProminent)
-                .tint(Color(red: 0.95, green: 0.62, blue: 0.23))
-                .disabled(isRunningTruthGraphRepair)
-
-                Button {
-                    runTruthGraphRepair(refreshProjects: true)
-                } label: {
-                    Label("Refresh + Projects", systemImage: "wand.and.stars")
-                        .font(.caption2)
-                        .fontWeight(.semibold)
-                }
-                .buttonStyle(.bordered)
-                .tint(Color(red: 0.95, green: 0.62, blue: 0.23))
-                .disabled(isRunningTruthGraphRepair)
-            }
-        }
-        .padding(12)
-        .background(
-            LinearGradient(
-                colors: [
-                    Color(red: 0.14, green: 0.10, blue: 0.06),
-                    Color(red: 0.09, green: 0.08, blue: 0.12),
-                ],
-                startPoint: .topLeading,
-                endPoint: .bottomTrailing
-            ),
-            in: RoundedRectangle(cornerRadius: 12)
-        )
-        .overlay(
-            RoundedRectangle(cornerRadius: 12)
-                .stroke(Color(red: 0.95, green: 0.62, blue: 0.23).opacity(0.35), lineWidth: 1)
-        )
-    }
-
-    private func runTruthGraphRepair(refreshProjects: Bool) {
-        guard !isRunningTruthGraphRepair else { return }
-        isRunningTruthGraphRepair = true
-        Task {
-            await viewModel.loadThread(contactId: contact.contactId)
-            if refreshProjects {
-                await viewModel.loadReviewProjectsIfNeeded()
-            }
-            await MainActor.run {
-                isRunningTruthGraphRepair = false
-            }
-        }
-    }
-
     private func shouldShowDateSeparator(at index: Int, in groups: [DisplayGroup]) -> Bool {
         guard let currentDate = groups[index].eventAtDate else { return false }
         if index == 0 { return true }
@@ -762,6 +724,252 @@ struct ThreadView: View {
         guard let first = targets.first else { return }
         noteDraft = viewModel.noteText(targetType: first.type, targetId: first.id)
         activeNoteContext = ThreadNoteContext(title: title, targets: targets)
+    }
+
+    private func triggerAssignmentHaptic() {
+        UIImpactFeedbackGenerator(style: .medium).impactOccurred()
+    }
+}
+
+struct TruthGraphStatusCardView: View {
+    var viewModel: ThreadViewModel
+    let unassignedIds: [String]
+    let reloadThread: () -> Void
+
+    private let accent = Color(red: 0.95, green: 0.62, blue: 0.23)
+
+    private var primaryInteractionId: String? {
+        unassignedIds.first(where: { $0.hasPrefix("cll_") || $0.hasPrefix("sms_thread_") || $0.hasPrefix("sms_thread__") })
+            ?? unassignedIds.first
+    }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            HStack(spacing: 8) {
+                Image(systemName: "point.3.connected.trianglepath.dotted")
+                    .font(.subheadline)
+                    .foregroundStyle(accent)
+                Text("Truth Graph status")
+                    .font(.caption)
+                    .fontWeight(.semibold)
+                    .foregroundStyle(.white)
+                Text("INTERNAL")
+                    .font(.caption2)
+                    .fontWeight(.bold)
+                    .foregroundStyle(Color.black.opacity(0.85))
+                    .padding(.horizontal, 6)
+                    .padding(.vertical, 2)
+                    .background(accent, in: Capsule())
+                Spacer()
+                if viewModel.isTruthGraphLoading {
+                    ProgressView()
+                        .tint(accent)
+                        .scaleEffect(0.8)
+                }
+            }
+
+            let count = unassignedIds.count
+            Text("\(count) Unassigned item\(count == 1 ? "" : "s"). Truth Graph is read-only and returns suggested repairs when applicable.")
+                .font(.caption)
+                .foregroundStyle(Color(.systemGray2))
+
+            DisclosureGroup {
+                VStack(alignment: .leading, spacing: 6) {
+                    ForEach(unassignedIds, id: \.self) { id in
+                        HStack {
+                            Text(id)
+                                .font(.system(.caption2, design: .monospaced))
+                                .foregroundStyle(Color(.systemGray3))
+                            Spacer()
+                            Button {
+                                UIPasteboard.general.string = id
+                                triggerAssignmentHaptic()
+                            } label: {
+                                Image(systemName: "doc.on.doc")
+                                    .font(.caption2)
+                                    .foregroundStyle(accent)
+                            }
+                            .buttonStyle(.plain)
+                        }
+                        .padding(.vertical, 2)
+                    }
+                }
+                .padding(.top, 4)
+            } label: {
+                Text("Show IDs")
+                    .font(.caption2)
+                    .fontWeight(.semibold)
+                    .foregroundStyle(accent)
+            }
+
+            if let primaryInteractionId {
+                HStack(spacing: 8) {
+                    Text("Inspecting")
+                        .font(.caption2)
+                        .foregroundStyle(Color(.systemGray3))
+                    Text(primaryInteractionId)
+                        .font(.system(.caption2, design: .monospaced))
+                        .foregroundStyle(Color(.systemGray2))
+                        .lineLimit(1)
+                        .truncationMode(.middle)
+                    Spacer()
+                    Button {
+                        UIPasteboard.general.string = primaryInteractionId
+                        triggerAssignmentHaptic()
+                    } label: {
+                        Image(systemName: "doc.on.doc")
+                            .font(.caption2)
+                            .foregroundStyle(accent)
+                    }
+                    .buttonStyle(.plain)
+                }
+            }
+
+            if let error = viewModel.truthGraphError, !error.isEmpty {
+                Text("Truth Graph error: \(error)")
+                    .font(.caption2)
+                    .foregroundStyle(accent)
+            } else if let status = viewModel.truthGraphStatus,
+                      let primaryInteractionId,
+                      status.interactionId == primaryInteractionId
+            {
+                Text("Lane: \(status.lane)")
+                    .font(.caption2)
+                    .foregroundStyle(Color(.systemGray2))
+
+                VStack(alignment: .leading, spacing: 6) {
+                    hydrationRow("calls_raw", ok: status.hydration.callsRaw)
+                    hydrationRow("interactions", ok: status.hydration.interactions)
+                    hydrationRow("conversation_spans", ok: status.hydration.conversationSpans)
+                    hydrationRow("evidence_events", ok: status.hydration.evidenceEvents)
+                    hydrationRow("span_attributions", ok: status.hydration.spanAttributions)
+                    hydrationRow("journal_claims", ok: status.hydration.journalClaims)
+                    hydrationRow("review_queue", ok: status.hydration.reviewQueue)
+                }
+
+                if status.suggestedRepairs.isEmpty {
+                    Text("Suggested repairs: none.")
+                        .font(.caption2)
+                        .foregroundStyle(Color(.systemGray3))
+                } else {
+                    VStack(alignment: .leading, spacing: 10) {
+                        Text("Suggested repairs (admin-run only)")
+                            .font(.caption2)
+                            .fontWeight(.semibold)
+                            .foregroundStyle(accent)
+
+                        ForEach(status.suggestedRepairs) { repair in
+                            VStack(alignment: .leading, spacing: 4) {
+                                Text(repair.label)
+                                    .font(.caption2)
+                                    .foregroundStyle(Color(.systemGray2))
+
+                                HStack(spacing: 8) {
+                                    Text(repair.idempotencyKey)
+                                        .font(.system(.caption2, design: .monospaced))
+                                        .foregroundStyle(Color(.systemGray3))
+                                        .lineLimit(1)
+                                        .truncationMode(.middle)
+                                    Spacer()
+                                    Button {
+                                        UIPasteboard.general.string = repair.idempotencyKey
+                                        triggerAssignmentHaptic()
+                                    } label: {
+                                        Image(systemName: "doc.on.doc")
+                                            .font(.caption2)
+                                            .foregroundStyle(accent)
+                                    }
+                                    .buttonStyle(.plain)
+                                }
+
+                                Text(repair.action)
+                                    .font(.system(.caption2, design: .monospaced))
+                                    .foregroundStyle(Color(.systemGray3))
+                            }
+                        }
+                    }
+                }
+
+                if !status.warnings.isEmpty {
+                    VStack(alignment: .leading, spacing: 4) {
+                        Text("Warnings")
+                            .font(.caption2)
+                            .fontWeight(.semibold)
+                            .foregroundStyle(accent)
+
+                        ForEach(status.warnings, id: \.self) { warning in
+                            Text("• \(warning)")
+                                .font(.caption2)
+                                .foregroundStyle(Color(.systemGray3))
+                        }
+                    }
+                }
+
+                Text("Repairs require a privileged X-Edge-Secret; iOS will not run them. Copy an idempotency key and run via internal ops tooling.")
+                    .font(.caption2)
+                    .foregroundStyle(Color(.systemGray3))
+            } else {
+                Text("Loading Truth Graph will not run repairs. It only returns read-only hydration + suggested repair keys.")
+                    .font(.caption2)
+                    .foregroundStyle(Color(.systemGray3))
+            }
+
+            HStack(spacing: 8) {
+                Button {
+                    Task {
+                        guard let primaryInteractionId else { return }
+                        await viewModel.loadTruthGraphStatusIfNeeded(interactionId: primaryInteractionId, force: true)
+                    }
+                } label: {
+                    Label("Refresh Truth Graph", systemImage: "point.3.connected.trianglepath.dotted")
+                        .font(.caption2)
+                        .fontWeight(.semibold)
+                }
+                .buttonStyle(.borderedProminent)
+                .tint(accent)
+                .disabled(viewModel.isTruthGraphLoading || primaryInteractionId == nil)
+
+                Button(action: reloadThread) {
+                    Label("Reload Thread", systemImage: "arrow.clockwise")
+                        .font(.caption2)
+                        .fontWeight(.semibold)
+                }
+                .buttonStyle(.bordered)
+                .tint(accent)
+                .disabled(viewModel.isLoading)
+            }
+        }
+        .task(id: primaryInteractionId) {
+            guard let primaryInteractionId else { return }
+            await viewModel.loadTruthGraphStatusIfNeeded(interactionId: primaryInteractionId, force: false)
+        }
+        .padding(12)
+        .background(
+            LinearGradient(
+                colors: [
+                    Color(red: 0.14, green: 0.10, blue: 0.06),
+                    Color(red: 0.09, green: 0.08, blue: 0.12),
+                ],
+                startPoint: .topLeading,
+                endPoint: .bottomTrailing
+            ),
+            in: RoundedRectangle(cornerRadius: 12)
+        )
+        .overlay(
+            RoundedRectangle(cornerRadius: 12)
+                .stroke(accent.opacity(0.35), lineWidth: 1)
+        )
+    }
+
+    private func hydrationRow(_ label: String, ok: Bool) -> some View {
+        HStack(spacing: 6) {
+            Image(systemName: ok ? "checkmark.circle.fill" : "xmark.circle.fill")
+                .font(.caption2)
+                .foregroundStyle(ok ? Color(red: 0.30, green: 0.85, blue: 0.45) : Color(.systemGray3))
+            Text(label)
+                .font(.system(.caption2, design: .monospaced))
+                .foregroundStyle(Color(.systemGray3))
+        }
     }
 
     private func triggerAssignmentHaptic() {
@@ -1040,6 +1248,8 @@ private struct CallTranscriptCard: View {
     let projectOptions: [SMSProjectAssignment]
     let spanOverrides: [UUID: SMSProjectAssignment]
     let onAssignSpanProject: (SpanEntry, SMSProjectAssignment) -> Void
+    let onConfirmSpanGuess: (SpanEntry) -> Void
+    let onRejectSpan: (SpanEntry) -> Void
     let onAddNote: (String, [ThreadNoteTarget]) -> Void
 
     @State private var transcriptExpanded = false
@@ -1049,6 +1259,8 @@ private struct CallTranscriptCard: View {
          viewModel: ThreadViewModel, projectOptions: [SMSProjectAssignment],
          spanOverrides: [UUID: SMSProjectAssignment],
          onAssignSpanProject: @escaping (SpanEntry, SMSProjectAssignment) -> Void,
+         onConfirmSpanGuess: @escaping (SpanEntry) -> Void,
+         onRejectSpan: @escaping (SpanEntry) -> Void,
          onAddNote: @escaping (String, [ThreadNoteTarget]) -> Void) {
         self.header = header
         self.turns = turns
@@ -1057,6 +1269,8 @@ private struct CallTranscriptCard: View {
         self.projectOptions = projectOptions
         self.spanOverrides = spanOverrides
         self.onAssignSpanProject = onAssignSpanProject
+        self.onConfirmSpanGuess = onConfirmSpanGuess
+        self.onRejectSpan = onRejectSpan
         self.onAddNote = onAddNote
         // Auto-expand claims when there are ungraded claims
         let hasUngraded = header.claims.contains { $0.grade == nil || $0.grade!.isEmpty }
@@ -1181,6 +1395,12 @@ private struct CallTranscriptCard: View {
                         contactName: contactName,
                         selectedAssignment: spanOverrides[span.spanId],
                         projectOptions: projectOptions,
+                        onConfirmGuess: {
+                            onConfirmSpanGuess(span)
+                        },
+                        onReject: {
+                            onRejectSpan(span)
+                        },
                         onSelectProject: { selected in
                             onAssignSpanProject(span, selected)
                         },
@@ -1344,6 +1564,8 @@ private struct SpanBlock: View {
     let contactName: String
     let selectedAssignment: SMSProjectAssignment?
     let projectOptions: [SMSProjectAssignment]
+    let onConfirmGuess: () -> Void
+    let onReject: () -> Void
     let onSelectProject: (SMSProjectAssignment) -> Void
     let onAddNote: (String, [ThreadNoteTarget]) -> Void
 
@@ -1414,27 +1636,6 @@ private struct SpanBlock: View {
                 }
                 Spacer()
 
-                // Visible "Assign" button when attribution is needed
-                if span.needsAttribution && selectedAssignment == nil {
-                    Button {
-                        showProjectSheet = true
-                    } label: {
-                        HStack(spacing: 4) {
-                            Image(systemName: "folder.badge.questionmark")
-                                .font(.caption2)
-                            Text("Assign")
-                                .font(.caption2)
-                                .fontWeight(.semibold)
-                        }
-                        .foregroundStyle(.white)
-                        .padding(.horizontal, 10)
-                        .padding(.vertical, 5)
-                        .background(Color(red: 0.95, green: 0.62, blue: 0.23).opacity(0.85))
-                        .clipShape(Capsule())
-                    }
-                    .buttonStyle(.plain)
-                }
-
                 NoteIconButton(label: "Add note") {
                     onAddNote(
                         "Notes — Conversation segment",
@@ -1452,6 +1653,83 @@ private struct SpanBlock: View {
                 withAnimation(.easeInOut(duration: 0.2)) {
                     isExpanded.toggle()
                 }
+            }
+
+            if span.needsAttribution && selectedAssignment == nil {
+                let guessName = (span.projectName ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
+                let hasGuess = !(span.projectId ?? "").trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+                let confidencePct: Int? = span.confidence.map { raw in
+                    let clamped = max(0, min(raw, 1))
+                    return Int((clamped * 100).rounded())
+                }
+
+                VStack(alignment: .leading, spacing: 6) {
+                    HStack(spacing: 8) {
+                        Image(systemName: "sparkles")
+                            .font(.caption2)
+                            .foregroundStyle(Color(.systemGray2))
+                        Text("AI guess:")
+                            .font(.caption2)
+                            .foregroundStyle(Color(.systemGray2))
+                        Text(guessName.isEmpty ? "None" : guessName)
+                            .font(.caption2)
+                            .fontWeight(.semibold)
+                            .foregroundStyle(Color(.systemGray))
+                            .lineLimit(1)
+                        Spacer()
+                        if let confidencePct {
+                            Text("\(confidencePct)%")
+                                .font(.caption2)
+                                .fontWeight(.semibold)
+                                .foregroundStyle(.white)
+                                .padding(.horizontal, 8)
+                                .padding(.vertical, 3)
+                                .background(Color(white: 0.20), in: Capsule())
+                        }
+                    }
+
+                    ScrollView(.horizontal, showsIndicators: false) {
+                        HStack(spacing: 8) {
+                            actionPill(
+                                "Confirm",
+                                systemImage: "checkmark.circle.fill",
+                                tint: Color(red: 0.19, green: 0.82, blue: 0.35)
+                            ) {
+                                if hasGuess {
+                                    onConfirmGuess()
+                                } else {
+                                    showProjectSheet = true
+                                }
+                            }
+                            actionPill(
+                                "Correct",
+                                systemImage: "folder",
+                                tint: Color(red: 0.95, green: 0.62, blue: 0.23)
+                            ) {
+                                showProjectSheet = true
+                            }
+                            actionPill(
+                                "Reject",
+                                systemImage: "xmark.circle",
+                                tint: Color(white: 0.28)
+                            ) {
+                                onReject()
+                            }
+                            actionPill(
+                                "Comment",
+                                systemImage: "square.and.pencil",
+                                tint: Color(red: 0.16, green: 0.50, blue: 0.94)
+                            ) {
+                                onAddNote(
+                                    "Comment — Attribution",
+                                    [ThreadNoteTarget(type: .span, id: span.spanId.uuidString)]
+                                )
+                            }
+                        }
+                        .padding(.vertical, 2)
+                    }
+                }
+                .padding(.top, 2)
             }
 
             if isExpanded {
@@ -1526,6 +1804,28 @@ private struct SpanBlock: View {
                 }
             )
         }
+    }
+
+    private func actionPill(
+        _ title: String,
+        systemImage: String,
+        tint: Color,
+        action: @escaping () -> Void
+    ) -> some View {
+        Button(action: action) {
+            HStack(spacing: 4) {
+                Image(systemName: systemImage)
+                    .font(.caption2)
+                Text(title)
+                    .font(.caption2)
+                    .fontWeight(.semibold)
+            }
+            .foregroundStyle(.white)
+            .padding(.horizontal, 10)
+            .padding(.vertical, 6)
+            .background(tint.opacity(0.85), in: Capsule())
+        }
+        .buttonStyle(.plain)
     }
 }
 
