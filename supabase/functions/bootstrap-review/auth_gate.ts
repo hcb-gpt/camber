@@ -23,7 +23,10 @@ export async function checkTopLevelEdgeSecretOrAnonKey(
   const providedEdgeSecret = req.headers.get("X-Edge-Secret");
   const bearerToken = getBearerToken(req);
   const apiKey = req.headers.get("apikey");
-  const providedBearer = bearerToken || apiKey;
+
+  const providedBearerCandidates = [bearerToken, apiKey]
+    .map((value) => value?.trim())
+    .filter((value): value is string => Boolean(value));
 
   // 1. Check Edge Secret first (Pattern A)
   if (expectedEdgeSecret && providedEdgeSecret && constantTimeEqual(providedEdgeSecret, expectedEdgeSecret)) {
@@ -31,9 +34,9 @@ export async function checkTopLevelEdgeSecretOrAnonKey(
   }
 
   // 2. Check Bearer Token (Pattern B/C)
-  if (providedBearer) {
+  if (providedBearerCandidates.length > 0) {
     // Fast path when env is correct (and for unit tests).
-    if (expectedAnonKey && constantTimeEqual(providedBearer, expectedAnonKey)) {
+    if (expectedAnonKey && providedBearerCandidates.some((token) => constantTimeEqual(token, expectedAnonKey))) {
       return { ok: true, status: 200, auth: "bearer" };
     }
 
@@ -46,31 +49,9 @@ export async function checkTopLevelEdgeSecretOrAnonKey(
       };
     }
 
-    // Defensive: ensure token looks like a Supabase anon key.
-    const payload = parseJwtPayload(providedBearer);
-    const role = String(payload?.role || "").trim();
-    if (role !== "anon") {
-      return {
-        ok: false,
-        status: 403,
-        error_code: "invalid_auth",
-        error: "Valid X-Edge-Secret or Supabase anon key required",
-      };
-    }
-
-    // Defensive: ensure the token claims match this Supabase project ref.
-    // NOTE: signature is implicitly verified by the `/rest/v1/` probe below.
-    const ref = String(payload?.ref || "").trim();
+    let hostRef = "";
     try {
-      const hostRef = new URL(supabaseUrl).host.split(".")[0] || "";
-      if (ref && hostRef && ref !== hostRef) {
-        return {
-          ok: false,
-          status: 403,
-          error_code: "invalid_auth",
-          error: "Valid X-Edge-Secret or Supabase anon key required",
-        };
-      }
+      hostRef = new URL(supabaseUrl).host.split(".")[0] || "";
     } catch {
       return {
         ok: false,
@@ -80,8 +61,22 @@ export async function checkTopLevelEdgeSecretOrAnonKey(
       };
     }
 
-    const isValid = await validateSupabaseAnonKeyViaRest(supabaseUrl, providedBearer);
-    if (isValid) return { ok: true, status: 200, auth: "bearer" };
+    // Try bearer token first, then apikey fallback. This avoids false negatives when one header
+    // is malformed but the other is valid (clients commonly send both).
+    for (const providedBearer of providedBearerCandidates) {
+      // Defensive: ensure token looks like a Supabase anon key.
+      const payload = parseJwtPayload(providedBearer);
+      const role = String(payload?.role || "").trim();
+      if (role !== "anon") continue;
+
+      // Defensive: ensure the token claims match this Supabase project ref.
+      // NOTE: signature is implicitly verified by the `/rest/v1/` probe below.
+      const ref = String(payload?.ref || "").trim();
+      if (ref && hostRef && ref !== hostRef) continue;
+
+      const isValid = await validateSupabaseAnonKeyViaRest(supabaseUrl, providedBearer);
+      if (isValid) return { ok: true, status: 200, auth: "bearer" };
+    }
 
     return {
       ok: false,
@@ -138,14 +133,15 @@ function parseJwtPayload(token: string): Record<string, unknown> | null {
 type CacheEntry = { ok: boolean; expiresAtMs: number };
 const bearerValidationCache = new Map<string, CacheEntry>();
 const BEARER_CACHE_TTL_MS = 5 * 60 * 1000;
+const BEARER_CACHE_ERROR_TTL_MS = 2 * 1000;
 const BEARER_CACHE_MAX_ENTRIES = 64;
 
-function cacheSet(token: string, ok: boolean): void {
+function cacheSet(token: string, ok: boolean, ttlMs: number = BEARER_CACHE_TTL_MS): void {
   if (bearerValidationCache.size >= BEARER_CACHE_MAX_ENTRIES) {
     const first = bearerValidationCache.keys().next().value;
     if (first) bearerValidationCache.delete(first);
   }
-  bearerValidationCache.set(token, { ok, expiresAtMs: Date.now() + BEARER_CACHE_TTL_MS });
+  bearerValidationCache.set(token, { ok, expiresAtMs: Date.now() + ttlMs });
 }
 
 async function validateSupabaseAnonKeyViaRest(
@@ -155,26 +151,58 @@ async function validateSupabaseAnonKeyViaRest(
   const cached = bearerValidationCache.get(token);
   if (cached && cached.expiresAtMs > Date.now()) return cached.ok;
 
-  const controller = new AbortController();
-  const timeout = setTimeout(() => controller.abort(), 1500);
+  const url = `${supabaseUrl.replace(/\/$/, "")}/rest/v1/`;
 
-  try {
-    const url = `${supabaseUrl.replace(/\/$/, "")}/rest/v1/`;
-    const resp = await fetch(url, {
-      method: "GET",
-      headers: {
-        apikey: token,
-        Authorization: `Bearer ${token}`,
-      },
-      signal: controller.signal,
-    });
-    const ok = resp.ok;
-    cacheSet(token, ok);
-    return ok;
-  } catch {
-    cacheSet(token, false);
-    return false;
-  } finally {
-    clearTimeout(timeout);
+  const attempts = 3;
+  for (let attempt = 1; attempt <= attempts; attempt++) {
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), 2500);
+
+    try {
+      const resp = await fetch(url, {
+        method: "GET",
+        headers: {
+          apikey: token,
+          Authorization: `Bearer ${token}`,
+        },
+        signal: controller.signal,
+      });
+
+      if (resp.ok) {
+        cacheSet(token, true);
+        return true;
+      }
+
+      // Treat 5xx as transient (edge incident / upstream flake), not an auth failure.
+      if (resp.status >= 500 && attempt < attempts) {
+        await new Promise((resolve) => setTimeout(resolve, 150 * attempt));
+        continue;
+      }
+
+      const ok = resp.ok;
+      cacheSet(token, ok);
+      return ok;
+    } catch (error) {
+      // Network/timeout errors are often transient; retry a couple times and avoid caching a
+      // long-lived "invalid" result on failures that aren't actually auth-related.
+      const isLastAttempt = attempt >= attempts;
+      if (!isLastAttempt) {
+        await new Promise((resolve) => setTimeout(resolve, 150 * attempt));
+        continue;
+      }
+
+      console.warn(
+        `[bootstrap-review:auth_gate] rest probe failed after ${attempts} attempts: ${
+          (error as Error)?.message || String(error)
+        }`,
+      );
+      cacheSet(token, false, BEARER_CACHE_ERROR_TTL_MS);
+      return false;
+    } finally {
+      clearTimeout(timeout);
+    }
   }
+
+  cacheSet(token, false, BEARER_CACHE_ERROR_TTL_MS);
+  return false;
 }
