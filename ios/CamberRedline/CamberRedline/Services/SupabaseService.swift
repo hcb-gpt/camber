@@ -7,6 +7,12 @@ import Supabase
 final class SupabaseService {
     static let shared = SupabaseService()
 
+    private enum Config {
+        static let supabaseURLKey = "SUPABASE_URL"
+        static let supabaseAnonKeyKey = "SUPABASE_ANON_KEY"
+        static let fallbackURL = URL(string: "https://example.invalid")!
+    }
+
     private struct ThreadCacheKey: Hashable {
         let contactId: UUID
         let limit: Int
@@ -21,22 +27,32 @@ final class SupabaseService {
     // Retained for Realtime subscriptions (claim_grades, interactions channels).
     let client: SupabaseClient
 
-    private let edgeFunctionBaseURL = URL(
-        string: "https://rjhdwidddtfetbwqolof.supabase.co/functions/v1/redline-thread"
-    )!
-    private let reviewResolveURL = URL(
-        string: "https://rjhdwidddtfetbwqolof.supabase.co/functions/v1/review-resolve"
-    )!
+    private let edgeFunctionBaseURL: URL
+    private let reviewResolveURL: URL
 
-    private let anonKey =
-        "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InJqaGR3aWRkZHRmZXRid3FvbG9mIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NjUxMTYwNDQsImV4cCI6MjA4MDY5MjA0NH0.m0BArfDxAMQrX2-50_IgircX_SwWLe5VccxewGmuWio"
+    private let anonKey: String
     private let threadCacheTTL: TimeInterval = 30
     private var threadCache: [ThreadCacheKey: ThreadCacheEntry] = [:]
 
     private init() {
+        let supabaseUrlString = (Bundle.main.object(forInfoDictionaryKey: Config.supabaseURLKey) as? String)?
+            .trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        let anonKey = (Bundle.main.object(forInfoDictionaryKey: Config.supabaseAnonKeyKey) as? String)?
+            .trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+
+        let supabaseURL = URL(string: supabaseUrlString) ?? Config.fallbackURL
+
+        if supabaseURL == Config.fallbackURL || anonKey.isEmpty {
+            assertionFailure("Missing \(Config.supabaseURLKey) / \(Config.supabaseAnonKeyKey) in Info.plist")
+        }
+
+        self.anonKey = anonKey
+        edgeFunctionBaseURL = supabaseURL.appendingPathComponent("functions/v1/redline-thread")
+        reviewResolveURL = supabaseURL.appendingPathComponent("functions/v1/review-resolve")
+
         client = SupabaseClient(
-            supabaseURL: URL(string: "https://rjhdwidddtfetbwqolof.supabase.co")!,
-            supabaseKey: "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InJqaGR3aWRkZHRmZXRid3FvbG9mIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NjUxMTYwNDQsImV4cCI6MjA4MDY5MjA0NH0.m0BArfDxAMQrX2-50_IgircX_SwWLe5VccxewGmuWio"
+            supabaseURL: supabaseURL,
+            supabaseKey: anonKey
         )
     }
 
@@ -68,7 +84,6 @@ final class SupabaseService {
         do {
             decoded = try JSONDecoder().decode(ContactsResponse.self, from: data)
         } catch let decodingError as DecodingError {
-            let preview = String(data: data.prefix(300), encoding: .utf8) ?? "<binary>"
             print("[ContactsDecode] DecodingError: \(decodingError)")
             if case .typeMismatch(let type, let ctx) = decodingError {
                 print("[ContactsDecode] typeMismatch: expected \(type), codingPath: \(ctx.codingPath.map(\.stringValue))")
@@ -77,7 +92,12 @@ final class SupabaseService {
             } else if case .valueNotFound(let type, let ctx) = decodingError {
                 print("[ContactsDecode] valueNotFound: \(type), codingPath: \(ctx.codingPath.map(\.stringValue))")
             }
-            print("[ContactsDecode] HTTP \(httpStatus), response preview: \(preview)")
+            #if DEBUG
+                let preview = String(data: data.prefix(300), encoding: .utf8) ?? "<binary>"
+                print("[ContactsDecode] HTTP \(httpStatus), response preview: \(preview)")
+            #else
+                print("[ContactsDecode] HTTP \(httpStatus)")
+            #endif
             throw decodingError
         }
         guard decoded.ok else {
@@ -131,7 +151,6 @@ final class SupabaseService {
         do {
             decoded = try JSONDecoder().decode(ThreadResponse.self, from: data)
         } catch let decodingError as DecodingError {
-            let preview = String(data: data.prefix(300), encoding: .utf8) ?? "<binary>"
             print("[ThreadDecode] DecodingError: \(decodingError)")
             if case .typeMismatch(let type, let ctx) = decodingError {
                 print("[ThreadDecode] typeMismatch: expected \(type), codingPath: \(ctx.codingPath.map(\.stringValue))")
@@ -140,7 +159,12 @@ final class SupabaseService {
             } else if case .valueNotFound(let type, let ctx) = decodingError {
                 print("[ThreadDecode] valueNotFound: \(type), codingPath: \(ctx.codingPath.map(\.stringValue))")
             }
-            print("[ThreadDecode] HTTP \(httpStatus), response preview: \(preview)")
+            #if DEBUG
+                let preview = String(data: data.prefix(300), encoding: .utf8) ?? "<binary>"
+                print("[ThreadDecode] HTTP \(httpStatus), response preview: \(preview)")
+            #else
+                print("[ThreadDecode] HTTP \(httpStatus)")
+            #endif
             throw decodingError
         }
         guard decoded.ok else {

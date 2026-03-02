@@ -175,9 +175,11 @@ final class BootstrapService {
             @unknown default:
                 "unknown"
             }
-            let preview = String(data: data.prefix(400), encoding: .utf8) ?? "<non-utf8>"
             print("[AssistantContextDecode] path=\(path) error=\(error)")
-            print("[AssistantContextDecode] payload_preview=\(preview)")
+            #if DEBUG
+                let preview = String(data: data.prefix(400), encoding: .utf8) ?? "<non-utf8>"
+                print("[AssistantContextDecode] payload_preview=\(preview)")
+            #endif
             throw BootstrapServiceError.apiError("Assistant context decode failure at path: \(path)")
         }
     }
