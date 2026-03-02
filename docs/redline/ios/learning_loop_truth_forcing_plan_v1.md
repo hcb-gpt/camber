@@ -12,7 +12,7 @@ Redline iOS is not a “card viewer.” It is the **actuator** for the epistemic
 ### 1.1 Queue Forcing-State Mix (fresh window)
 Source: `bootstrap-review?action=queue` (max_age_days=21, limit=100), classified into forcing states.
 
-Captured run: **2026-03-02 19:28Z**
+Captured run: **2026-03-02 19:33Z**
 - Total queue items returned: `17`
 - Forcing-state mix:
   - `PICK_REQUIRED`: `17` (100.0%)
@@ -27,6 +27,11 @@ Captured run: **2026-03-02 19:28Z**
   - `quote_unverified`: 10
   - `geo_only`: 4
 - Highest confidence observed: `0.65` (no `>= 0.92` auto-confirm candidates in this fresh window)
+- Sample queue item (to make the datapoint concrete):
+  - `review_queue_id`: `9583e897-c966-4a6a-b050-f851fe3eb557`
+  - `interaction_id`: `cll_SYNTH_SYNTH_FLOATER_CONTIN_1772335530`
+  - `reason_codes`: `["weak_anchor"]`
+  - `confidence`: `0.25`
 
 **Decision implied by this datapoint:** Next iOS truth-surface work should be **picker-first anti-anchoring UX**, not defect/repair UX and not split-span UX (those still matter, but are not the current bottleneck).
 
