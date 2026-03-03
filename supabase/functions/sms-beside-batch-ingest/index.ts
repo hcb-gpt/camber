@@ -1,13 +1,17 @@
 /**
- * sms-beside-batch-ingest Edge Function v1.3.0
+ * sms-beside-batch-ingest Edge Function v1.3.1
  * Zapier SMS batch webhook receiver for Beside VoIP SMS messages
  *
- * @version 1.3.0
- * @date 2026-02-27
+ * @version 1.3.1
+ * @date 2026-03-03
  * @purpose Receive batched SMS messages from Zapier Digest, insert into sms_messages table.
  *          The existing bridge_sms_message_to_surfaces trigger (v2) handles downstream
  *          writes to calls_raw and interactions with contact resolution.
  *
+ * @changelog v1.3.1
+ *   - Add auth compatibility window for Zapier secret/header drift:
+ *     accepts X-Secret with current EDGE_SHARED_SECRET and legacy/previous
+ *     secret candidates while preserving source allowlist.
  * @changelog v1.3.0
  *   - Implement zapier-shadow events write to public.beside_thread_events and beside_threads
  *     to support Beside parity metrics.
@@ -68,7 +72,7 @@ interface BatchPayload {
 // CONSTANTS
 // ============================================================
 
-const VERSION = "sms-beside-batch-ingest_v1.3.0";
+const VERSION = "sms-beside-batch-ingest_v1.3.1";
 const ALLOWED_SOURCES = ["zapier", "test", "edge"];
 const ZACK_INBOX_ID = "ibx_QT0G91CPXD7N1090RC2FQ1WXJ8";
 const ZACK_BESIDE_LINE = "+17066889158";
@@ -96,6 +100,15 @@ const ADMIN_NAMES = new Set([
   "chad barlow", // Beside inbox admin — never a real SMS contact
 ]);
 
+function constantTimeEqual(a: string, b: string): boolean {
+  if (a.length !== b.length) return false;
+  let result = 0;
+  for (let i = 0; i < a.length; i++) {
+    result |= a.charCodeAt(i) ^ b.charCodeAt(i);
+  }
+  return result === 0;
+}
+
 // ============================================================
 // MAIN
 // ============================================================
@@ -120,7 +133,44 @@ Deno.serve(async (req: Request) => {
   // ========================================
   const authResult = requireEdgeSecret(req, ALLOWED_SOURCES);
   if (!authResult.ok) {
-    return authErrorResponse(authResult.error_code!);
+    // Compatibility window:
+    // - accept legacy Zapier secret in X-Secret or X-Edge-Secret
+    // - optionally accept previous rotated edge secret if configured
+    // This keeps source allowlisting in place and avoids broad auth relaxation.
+    const source = (req.headers.get("X-Source") || req.headers.get("source") || "").trim();
+    const sourceAllowed = source.length > 0 && ALLOWED_SOURCES.includes(source);
+    const incomingXEdgeSecret = req.headers.get("X-Edge-Secret") || req.headers.get("x-edge-secret") || "";
+    const incomingXSecret = req.headers.get("X-Secret") || req.headers.get("x-secret") || "";
+    const currentEdgeSecret = (Deno.env.get("EDGE_SHARED_SECRET") || "").trim();
+    const legacyCandidates = [
+      (Deno.env.get("ZAPIER_INGEST_SECRET") || "").trim(),
+      (Deno.env.get("ZAPIER_SECRET") || "").trim(),
+      (Deno.env.get("EDGE_SHARED_SECRET_PREVIOUS") || "").trim(),
+    ].filter((s) => s.length > 0);
+
+    const matchesCandidate = (candidate: string): boolean => {
+      return (
+        (incomingXEdgeSecret.length > 0 && constantTimeEqual(incomingXEdgeSecret, candidate)) ||
+        (incomingXSecret.length > 0 && constantTimeEqual(incomingXSecret, candidate))
+      );
+    };
+
+    const compatAccepted = sourceAllowed && (
+      // Header-contract mismatch: Zapier still sending X-Secret with current edge secret.
+      (currentEdgeSecret.length > 0 &&
+        incomingXSecret.length > 0 &&
+        constantTimeEqual(incomingXSecret, currentEdgeSecret)) ||
+      // Legacy/previous secret compatibility window.
+      legacyCandidates.some(matchesCandidate)
+    );
+
+    if (!compatAccepted) {
+      return authErrorResponse(authResult.error_code!);
+    }
+
+    console.warn(
+      `[sms-beside-batch-ingest] AUTH_COMPAT_ACCEPT source=${source} x_edge_secret_len=${incomingXEdgeSecret.length} x_secret_len=${incomingXSecret.length}`,
+    );
   }
 
   // ========================================
@@ -365,8 +415,9 @@ Deno.serve(async (req: Request) => {
         }, { onConflict: "beside_event_id" });
       } catch (shadowError) {
         // Shadow write failure is non-blocking but should be logged
+        const shadowErrorMessage = shadowError instanceof Error ? shadowError.message : String(shadowError);
         console.warn(
-          `[sms-beside-batch-ingest] Shadow write failed for message_id=${msg.message_id}: ${shadowError.message}`,
+          `[sms-beside-batch-ingest] Shadow write failed for message_id=${msg.message_id}: ${shadowErrorMessage}`,
         );
       }
     } catch (err) {
