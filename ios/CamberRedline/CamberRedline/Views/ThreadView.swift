@@ -11,6 +11,145 @@ private enum ThreadSwipeSmokeAutomation {
     }
 }
 
+private enum ThreadLearningLoopMetrics {
+    static let logger = Logger(subsystem: "CamberRedline", category: "learning_loop")
+
+    static func log(_ message: String) {
+        logger.log("\(message, privacy: .public)")
+    }
+}
+
+private struct WriteLockRecoveryDetails {
+    let statusCode: Int?
+    let requestId: String?
+    let error: String?
+}
+
+struct WriteLockRecoverySheet: View {
+    let onRecover: () async -> BootstrapWriteRecoveryOutcome
+
+    @Environment(\.dismiss) private var dismiss
+    @State private var isChecking = false
+    @State private var outcome: BootstrapWriteRecoveryOutcome?
+
+    var body: some View {
+        NavigationStack {
+            VStack(alignment: .leading, spacing: 14) {
+                Text("Writes are temporarily locked")
+                    .font(.headline)
+
+                if isChecking {
+                    HStack(spacing: 10) {
+                        ProgressView()
+                        Text("Checking access…")
+                            .font(.subheadline)
+                    }
+                    .foregroundStyle(.secondary)
+                } else {
+                    statusView
+                }
+
+                if let details {
+                    DisclosureGroup("Details") {
+                        VStack(alignment: .leading, spacing: 6) {
+                            if let statusCode = details.statusCode {
+                                Text("HTTP \(statusCode)")
+                            }
+                            if let requestId = details.requestId, !requestId.isEmpty {
+                                Text("request_id: \(requestId)")
+                            }
+                            if let error = details.error, !error.isEmpty {
+                                Text(error)
+                                    .fixedSize(horizontal: false, vertical: true)
+                            }
+                        }
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                        .padding(.top, 4)
+                    }
+                }
+
+                Spacer(minLength: 0)
+            }
+            .padding()
+            .navigationTitle("Recover Writes")
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                ToolbarItem(placement: .cancellationAction) {
+                    Button("Close") {
+                        dismiss()
+                    }
+                }
+                ToolbarItem(placement: .confirmationAction) {
+                    if canRetry {
+                        Button("Try again") {
+                            Task { await runRecovery() }
+                        }
+                    }
+                }
+            }
+        }
+        .task {
+            guard outcome == nil else { return }
+            await runRecovery()
+        }
+    }
+
+    @ViewBuilder
+    private var statusView: some View {
+        switch outcome {
+        case .unlocked:
+            Label("Writes unlocked.", systemImage: "checkmark.circle.fill")
+                .foregroundStyle(.green)
+        case .stillLocked:
+            Label("Still read-only. Try again later.", systemImage: "lock.fill")
+                .foregroundStyle(.orange)
+        case .failed(let message, _, _):
+            Label("Still read-only. Try again later.", systemImage: "exclamationmark.triangle.fill")
+                .foregroundStyle(.orange)
+            Text(message)
+                .font(.caption)
+                .foregroundStyle(.secondary)
+        case nil:
+            Text("Checking access…")
+                .font(.subheadline)
+                .foregroundStyle(.secondary)
+        }
+    }
+
+    private var details: WriteLockRecoveryDetails? {
+        switch outcome {
+        case .unlocked(let statusCode, let requestId):
+            return WriteLockRecoveryDetails(statusCode: statusCode, requestId: requestId, error: nil)
+        case .stillLocked(let state):
+            return WriteLockRecoveryDetails(statusCode: state.statusCode, requestId: state.requestId, error: state.error)
+        case .failed(let message, let statusCode, let requestId):
+            return WriteLockRecoveryDetails(statusCode: statusCode, requestId: requestId, error: message)
+        case nil:
+            return nil
+        }
+    }
+
+    private var canRetry: Bool {
+        guard !isChecking else { return false }
+        switch outcome {
+        case .stillLocked, .failed:
+            return true
+        case .unlocked, .none:
+            return false
+        }
+    }
+
+    private func runRecovery() async {
+        isChecking = true
+        let result = await onRecover()
+        await MainActor.run {
+            outcome = result
+            isChecking = false
+        }
+    }
+}
+
 // MARK: - Display Group
 
 /// Project attribution for SMS zebra striping (dummy until API provides data).
@@ -117,6 +256,10 @@ struct ThreadView: View {
     @State private var pendingUndo: PendingUndoAction?
     @State private var undoClearTask: Task<Void, Never>?
     @State private var didRunThreadSwipeSmoke = false
+    @State private var threadSurfaceAppearedAt: Date?
+    @State private var didRecordFirstThreadPick = false
+    @State private var didLogThreadAuthLockVisible = false
+    @State private var showWriteRecoverySheet = false
     private let bottomAnchorID = "thread-bottom-anchor"
     private let topLoadThreshold: CGFloat = -80
     private static let smsStripeColors: [Color] = [
@@ -292,6 +435,12 @@ struct ThreadView: View {
                     .padding(.top, 12)
                     .padding(.bottom, 10)
 
+                    if let banner = viewModel.attributionWritesLockedBannerText {
+                        threadWritesLockedBanner(banner)
+                            .padding(.horizontal, 16)
+                            .padding(.bottom, 8)
+                    }
+
                     if ThreadSwipeSmokeAutomation.isEnabled {
                         Text("SMOKE contact_key: \(contact.contactKey)")
                             .font(.system(.caption2, design: .monospaced))
@@ -389,6 +538,19 @@ struct ThreadView: View {
                 .padding()
             }
             .task(id: contact.contactId) {
+                threadSurfaceAppearedAt = Date()
+                didRecordFirstThreadPick = false
+                didLogThreadAuthLockVisible = false
+                ThreadLearningLoopMetrics.log(
+                    "KPI_EVENT PICK_SURFACE_APPEAR surface=thread queue_depth=\(displayGroups.count)"
+                )
+                if viewModel.isAttributionWritesLocked {
+                    didLogThreadAuthLockVisible = true
+                    ThreadLearningLoopMetrics.log(
+                        "KPI_EVENT AUTH_LOCK_UI_DISABLED surface=thread queue_depth=\(displayGroups.count)"
+                    )
+                }
+
                 hasScrolledToLatest = false
                 didTriggerTopPagination = false
                 hasUserScrolledThread = false
@@ -412,6 +574,16 @@ struct ThreadView: View {
                 hasScrolledToLatest = true
 
                 await runThreadSwipeSmokeIfEnabled()
+            }
+            .onChange(of: viewModel.isAttributionWritesLocked) { _, isLocked in
+                if isLocked, !didLogThreadAuthLockVisible {
+                    didLogThreadAuthLockVisible = true
+                    ThreadLearningLoopMetrics.log(
+                        "KPI_EVENT AUTH_LOCK_UI_DISABLED surface=thread queue_depth=\(displayGroups.count)"
+                    )
+                } else if !isLocked {
+                    didLogThreadAuthLockVisible = false
+                }
             }
             .onChange(of: viewModel.threadItems.count) { _, newCount in
                 guard newCount > 0 else { return }
@@ -451,6 +623,11 @@ struct ThreadView: View {
         .sheet(isPresented: $isContactInfoPresented) {
             ContactInfoView(contact: contact)
         }
+        .sheet(isPresented: $showWriteRecoverySheet) {
+            WriteLockRecoverySheet {
+                await viewModel.recoverWriteAccess()
+            }
+        }
         .sheet(item: $activeNoteContext) { context in
             NoteEditorSheet(
                 title: context.title,
@@ -486,6 +663,44 @@ struct ThreadView: View {
     }
 
     @ViewBuilder
+    private func threadWritesLockedBanner(_ text: String) -> some View {
+        HStack(alignment: .top, spacing: 10) {
+            Image(systemName: "lock.fill")
+                .font(.caption)
+                .foregroundStyle(Color.orange.opacity(0.9))
+
+            VStack(alignment: .leading, spacing: 2) {
+                Text("Writes are temporarily locked")
+                    .font(.caption)
+                    .fontWeight(.semibold)
+                    .foregroundStyle(.white)
+                Text(text)
+                    .font(.caption2)
+                    .foregroundStyle(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+
+            Spacer(minLength: 0)
+
+            Button("Recover") {
+                showWriteRecoverySheet = true
+            }
+            .font(.caption2)
+            .fontWeight(.semibold)
+            .foregroundStyle(.black)
+            .padding(.horizontal, 10)
+            .padding(.vertical, 6)
+            .background(Color.orange, in: Capsule())
+        }
+        .padding(10)
+        .background(Color.orange.opacity(0.12), in: RoundedRectangle(cornerRadius: 12))
+        .overlay(
+            RoundedRectangle(cornerRadius: 12)
+                .stroke(Color.orange.opacity(0.35), lineWidth: 1)
+        )
+    }
+
+    @ViewBuilder
     private func undoPill(_ action: PendingUndoAction) -> some View {
         HStack(spacing: 10) {
             Image(systemName: "arrow.uturn.backward.circle.fill")
@@ -499,6 +714,10 @@ struct ThreadView: View {
                 .foregroundStyle(Color(.systemGray2))
             Spacer()
             Button("Undo") {
+                let ageMs = max(0, Int(Date().timeIntervalSince(action.createdAt) * 1000))
+                ThreadLearningLoopMetrics.log(
+                    "KPI_EVENT UNDO_TAP surface=thread queue=\(action.reviewQueueId) undo_of=\(action.kind.rawValue) age_ms=\(ageMs)"
+                )
                 undoAction(action)
             }
             .font(.caption)
@@ -768,6 +987,7 @@ struct ThreadView: View {
             viewModel.showTransientError("Select a project before applying attribution.")
             return
         }
+        recordFirstThreadPickIfNeeded(queueId: queueId, source: "span_picker")
         let rawNotes = viewModel.noteText(targetType: .span, targetId: span.spanId.uuidString)
             .trimmingCharacters(in: .whitespacesAndNewlines)
         let notes = rawNotes.isEmpty ? nil : rawNotes
@@ -804,6 +1024,7 @@ struct ThreadView: View {
         let optimisticAssignment = reviewProjectOptions.first(where: { $0.projectId == projectId })
             ?? SMSProjectAssignment(projectId: projectId, name: span.projectName ?? "Assigned", colorIndex: nil)
         spanOverrides[span.spanId] = optimisticAssignment
+        recordFirstThreadPickIfNeeded(queueId: queueId, source: "span_confirm_guess")
 
         let rawNotes = viewModel.noteText(targetType: .span, targetId: span.spanId.uuidString)
             .trimmingCharacters(in: .whitespacesAndNewlines)
@@ -871,6 +1092,7 @@ struct ThreadView: View {
                 return entry.reviewQueueId
             }
         guard !queueIds.isEmpty else { return }
+        recordFirstThreadPickIfNeeded(queueId: queueIds[0], source: "sms_picker")
         Task {
             let didResolve = await viewModel.resolveAttributions(
                 reviewQueueIds: queueIds,
@@ -1024,6 +1246,18 @@ struct ThreadView: View {
             return Color(red: 0.22, green: 0.22, blue: 0.24)
         }
         return Self.smsStripeColors[colorIndex % Self.smsStripeColors.count]
+    }
+
+    private func recordFirstThreadPickIfNeeded(queueId: String, source: String) {
+        guard !queueId.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return }
+        guard !didRecordFirstThreadPick else { return }
+        guard let appearedAt = threadSurfaceAppearedAt else { return }
+
+        let elapsedMs = max(0, Int(Date().timeIntervalSince(appearedAt) * 1000))
+        ThreadLearningLoopMetrics.log(
+            "KPI_EVENT PICK_TIME_SAMPLE surface=thread elapsed_ms=\(elapsedMs) queue=\(queueId) source=\(source)"
+        )
+        didRecordFirstThreadPick = true
     }
 
     private func openNoteEditor(title: String, targets: [ThreadNoteTarget]) {

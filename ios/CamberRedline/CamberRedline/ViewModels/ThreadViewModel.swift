@@ -28,6 +28,14 @@ private enum RealtimeCleanupSmokeProof {
     }
 }
 
+private enum ThreadLearningLoopMetrics {
+    static let logger = Logger(subsystem: "CamberRedline", category: "learning_loop")
+
+    static func log(_ message: String) {
+        logger.log("\(message, privacy: .public)")
+    }
+}
+
 enum NoteTargetType: String, Codable {
     case sms
     case span
@@ -71,6 +79,19 @@ final class ThreadViewModel {
 
     var attributionWritesLockedBannerText: String? {
         bootstrapService.writesLockedBannerText
+    }
+
+    func recoverWriteAccess() async -> BootstrapWriteRecoveryOutcome {
+        let outcome = await bootstrapService.recoverWriteAccess()
+        switch outcome {
+        case .unlocked:
+            error = nil
+        case .stillLocked(let state):
+            error = BootstrapServiceError.writesLocked(state).errorDescription
+        case .failed(let message, _, _):
+            error = message
+        }
+        return outcome
     }
 
     // MARK: - Dependencies
@@ -461,17 +482,23 @@ final class ThreadViewModel {
         reloadAfterResolve: Bool = true
     ) async -> Bool {
         if let banner = bootstrapService.writesLockedBannerText {
+            ThreadLearningLoopMetrics.log(
+                "KPI_EVENT AUTH_LOCK_BLOCKED surface=thread action=resolve_single queue=\(reviewQueueId)"
+            )
             showTransientError(banner, clearAfter: .seconds(4))
             return false
         }
 
         error = nil
         do {
-            _ = try await bootstrapService.resolve(
+            let response = try await bootstrapService.resolve(
                 queueId: reviewQueueId,
                 projectId: projectId,
                 notes: notes,
                 userId: "ios_redline"
+            )
+            ThreadLearningLoopMetrics.log(
+                "KPI_EVENT WRITE_ACTION surface=thread action=resolve_single queue=\(reviewQueueId) request_id=\(response.requestId ?? "missing")"
             )
             if reloadAfterResolve {
                 schedulePostResolveSync()
@@ -490,6 +517,9 @@ final class ThreadViewModel {
     @discardableResult
     func resolveAttributions(reviewQueueIds: [String], projectId: String, notes: String? = nil) async -> Bool {
         if let banner = bootstrapService.writesLockedBannerText {
+            ThreadLearningLoopMetrics.log(
+                "KPI_EVENT AUTH_LOCK_BLOCKED surface=thread action=resolve_bulk queue_count=\(reviewQueueIds.count)"
+            )
             showTransientError(banner, clearAfter: .seconds(4))
             return false
         }
@@ -500,11 +530,14 @@ final class ThreadViewModel {
 
         do {
             for queueId in uniqueQueueIds {
-                _ = try await bootstrapService.resolve(
+                let response = try await bootstrapService.resolve(
                     queueId: queueId,
                     projectId: projectId,
                     notes: notes,
                     userId: "ios_redline"
+                )
+                ThreadLearningLoopMetrics.log(
+                    "KPI_EVENT WRITE_ACTION surface=thread action=resolve_bulk queue=\(queueId) request_id=\(response.requestId ?? "missing")"
                 )
             }
             schedulePostResolveSync()
@@ -527,17 +560,23 @@ final class ThreadViewModel {
         reloadAfterResolve: Bool = true
     ) async -> Bool {
         if let banner = bootstrapService.writesLockedBannerText {
+            ThreadLearningLoopMetrics.log(
+                "KPI_EVENT AUTH_LOCK_BLOCKED surface=thread action=dismiss_single queue=\(reviewQueueId)"
+            )
             showTransientError(banner, clearAfter: .seconds(4))
             return false
         }
 
         error = nil
         do {
-            _ = try await bootstrapService.dismiss(
+            let response = try await bootstrapService.dismiss(
                 queueId: reviewQueueId,
                 reason: reason,
                 notes: notes,
                 userId: "ios_redline"
+            )
+            ThreadLearningLoopMetrics.log(
+                "KPI_EVENT WRITE_ACTION surface=thread action=dismiss_single queue=\(reviewQueueId) request_id=\(response.requestId ?? "missing")"
             )
             if reloadAfterResolve {
                 schedulePostResolveSync()
@@ -556,6 +595,9 @@ final class ThreadViewModel {
     @discardableResult
     func dismissAttributions(reviewQueueIds: [String], reason: String? = nil, notes: String? = nil) async -> Bool {
         if let banner = bootstrapService.writesLockedBannerText {
+            ThreadLearningLoopMetrics.log(
+                "KPI_EVENT AUTH_LOCK_BLOCKED surface=thread action=dismiss_bulk queue_count=\(reviewQueueIds.count)"
+            )
             showTransientError(banner, clearAfter: .seconds(4))
             return false
         }
@@ -566,11 +608,14 @@ final class ThreadViewModel {
 
         do {
             for queueId in uniqueQueueIds {
-                _ = try await bootstrapService.dismiss(
+                let response = try await bootstrapService.dismiss(
                     queueId: queueId,
                     reason: reason,
                     notes: notes,
                     userId: "ios_redline"
+                )
+                ThreadLearningLoopMetrics.log(
+                    "KPI_EVENT WRITE_ACTION surface=thread action=dismiss_bulk queue=\(queueId) request_id=\(response.requestId ?? "missing")"
                 )
             }
             schedulePostResolveSync()
@@ -590,13 +635,19 @@ final class ThreadViewModel {
     @discardableResult
     func undoAttribution(reviewQueueId: String, reloadAfterUndo: Bool = true) async -> Bool {
         if let banner = bootstrapService.writesLockedBannerText {
+            ThreadLearningLoopMetrics.log(
+                "KPI_EVENT AUTH_LOCK_BLOCKED surface=thread action=undo queue=\(reviewQueueId)"
+            )
             showTransientError(banner, clearAfter: .seconds(4))
             return false
         }
 
         error = nil
         do {
-            try await bootstrapService.undo(queueId: reviewQueueId)
+            let response = try await bootstrapService.undo(queueId: reviewQueueId)
+            ThreadLearningLoopMetrics.log(
+                "KPI_EVENT UNDO_COMMIT surface=thread queue=\(reviewQueueId) request_id=\(response.requestId ?? "missing")"
+            )
             if reloadAfterUndo {
                 schedulePostResolveSync()
             }

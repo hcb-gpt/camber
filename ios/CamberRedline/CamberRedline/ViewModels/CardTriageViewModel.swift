@@ -16,6 +16,14 @@ private enum CardTriageSmokeAutomation {
     }
 }
 
+private enum CardTriageLearningLoopMetrics {
+    static let logger = Logger(subsystem: "CamberRedline", category: "learning_loop")
+
+    static func log(_ message: String) {
+        logger.log("\(message, privacy: .public)")
+    }
+}
+
 /// A single triage card: one review_queue item enriched with display metadata.
 struct CardItem: Identifiable {
     let id: String          // review_queue ID
@@ -97,14 +105,38 @@ final class CardTriageViewModel {
     private var projectNameById: [String: String] = [:]
     private var totalAtLoad: Int = 0
     private var undoDeadline: Date?
+    private var recentProjectIds: [String] = []
+    private let recentProjectsDefaultsKey = "triage_recent_project_ids_v1"
     let sessionStartTime = Date()
     var cardViewStartTime: Date?
 
     struct TriageAction {
+        struct ActionReceipt {
+            let queueId: String
+            let requestId: String?
+
+            var compactLabel: String {
+                let queueShort = String(queueId.prefix(8))
+                if let requestId, !requestId.isEmpty {
+                    let requestShort = String(requestId.prefix(10))
+                    return "q:\(queueShort) • r:\(requestShort)"
+                }
+                return "q:\(queueShort)"
+            }
+
+            var copyText: String {
+                if let requestId, !requestId.isEmpty {
+                    return "queue_id=\(queueId)\nrequest_id=\(requestId)"
+                }
+                return "queue_id=\(queueId)"
+            }
+        }
+
         let queueId: String
         let kind: Kind
         let timestamp: Date
-        let label: String
+        let title: String
+        let receipt: ActionReceipt?
 
         enum Kind { case resolved, dismissed, escalated, skipped }
     }
@@ -137,6 +169,19 @@ final class CardTriageViewModel {
         service.writesLockedBannerText
     }
 
+    func recoverWriteAccess() async -> BootstrapWriteRecoveryOutcome {
+        let outcome = await service.recoverWriteAccess()
+        switch outcome {
+        case .unlocked:
+            error = nil
+        case .stillLocked(let state):
+            error = BootstrapServiceError.writesLocked(state).errorDescription
+        case .failed(let message, _, _):
+            error = message
+        }
+        return outcome
+    }
+
     /// Cards resolved per hour based on session elapsed time.
     var resolveRatePerHour: Double {
         let elapsed = Date().timeIntervalSince(sessionStartTime)
@@ -149,6 +194,10 @@ final class CardTriageViewModel {
         guard !activityLog.isEmpty else { return 0 }
         let total = activityLog.reduce(0) { $0 + $1.timeSpentSec }
         return total / activityLog.count
+    }
+
+    init() {
+        loadRecentProjectIds()
     }
 
     // MARK: - Load
@@ -215,6 +264,9 @@ final class CardTriageViewModel {
 
     func resolve(_ card: CardItem, to projectId: String, notes: String? = nil) async {
         if let banner = service.writesLockedBannerText {
+            CardTriageLearningLoopMetrics.log(
+                "KPI_EVENT AUTH_LOCK_BLOCKED surface=triage_cards action=resolve queue=\(card.queueId)"
+            )
             error = banner
             return
         }
@@ -236,13 +288,25 @@ final class CardTriageViewModel {
             queueId: card.queueId,
             kind: .resolved,
             timestamp: Date(),
-            label: projectName(for: projectId) ?? "project"
+            title: "Saved",
+            receipt: .init(queueId: card.queueId, requestId: nil)
         )
         undoDeadline = Date().addingTimeInterval(25)
         startUndoTimer()
 
         do {
             let response = try await service.resolve(queueId: card.queueId, projectId: projectId, notes: notes)
+            rememberProjectSelection(projectId)
+            lastAction = TriageAction(
+                queueId: card.queueId,
+                kind: .resolved,
+                timestamp: Date(),
+                title: "Saved",
+                receipt: .init(queueId: card.queueId, requestId: response.requestId)
+            )
+            CardTriageLearningLoopMetrics.log(
+                "KPI_EVENT WRITE_ACTION surface=triage_cards action=resolve queue=\(card.queueId) request_id=\(response.requestId ?? "missing")"
+            )
             if CardTriageSmokeAutomation.isEnabled {
                 let requestId = response.requestId ?? "missing"
                 CardTriageSmokeAutomation.logger.log(
@@ -269,6 +333,9 @@ final class CardTriageViewModel {
 
     func dismiss(_ card: CardItem, reason: String? = nil, notes: String? = nil) async {
         if let banner = service.writesLockedBannerText {
+            CardTriageLearningLoopMetrics.log(
+                "KPI_EVENT AUTH_LOCK_BLOCKED surface=triage_cards action=dismiss queue=\(card.queueId)"
+            )
             error = banner
             return
         }
@@ -290,13 +357,24 @@ final class CardTriageViewModel {
             queueId: card.queueId,
             kind: .dismissed,
             timestamp: Date(),
-            label: card.contactName
+            title: "Saved",
+            receipt: .init(queueId: card.queueId, requestId: nil)
         )
         undoDeadline = Date().addingTimeInterval(25)
         startUndoTimer()
 
         do {
             let response = try await service.dismiss(queueId: card.queueId, reason: reason, notes: notes)
+            lastAction = TriageAction(
+                queueId: card.queueId,
+                kind: .dismissed,
+                timestamp: Date(),
+                title: "Saved",
+                receipt: .init(queueId: card.queueId, requestId: response.requestId)
+            )
+            CardTriageLearningLoopMetrics.log(
+                "KPI_EVENT WRITE_ACTION surface=triage_cards action=dismiss queue=\(card.queueId) request_id=\(response.requestId ?? "missing")"
+            )
             if CardTriageSmokeAutomation.isEnabled {
                 let requestId = response.requestId ?? "missing"
                 CardTriageSmokeAutomation.logger.log(
@@ -327,6 +405,9 @@ final class CardTriageViewModel {
 
     func escalate(_ card: CardItem, reason: String) async {
         if let banner = service.writesLockedBannerText {
+            CardTriageLearningLoopMetrics.log(
+                "KPI_EVENT AUTH_LOCK_BLOCKED surface=triage_cards action=escalate queue=\(card.queueId)"
+            )
             error = banner
             return
         }
@@ -349,16 +430,27 @@ final class CardTriageViewModel {
             queueId: card.queueId,
             kind: .escalated,
             timestamp: Date(),
-            label: "escalated"
+            title: "Saved",
+            receipt: .init(queueId: card.queueId, requestId: nil)
         )
         undoDeadline = Date().addingTimeInterval(25)
         startUndoTimer()
 
         do {
-            try await service.dismiss(
+            let response = try await service.dismiss(
                 queueId: card.queueId,
                 reason: "escalated",
                 notes: reason
+            )
+            CardTriageLearningLoopMetrics.log(
+                "KPI_EVENT WRITE_ACTION surface=triage_cards action=escalate queue=\(card.queueId) request_id=\(response.requestId ?? "missing")"
+            )
+            lastAction = TriageAction(
+                queueId: card.queueId,
+                kind: .escalated,
+                timestamp: Date(),
+                title: "Saved",
+                receipt: .init(queueId: card.queueId, requestId: response.requestId)
             )
         } catch {
             if let banner = service.writesLockedBannerText {
@@ -398,7 +490,8 @@ final class CardTriageViewModel {
             queueId: card.queueId,
             kind: .skipped,
             timestamp: Date(),
-            label: "skipped"
+            title: "Skipped",
+            receipt: nil
         )
         // No undo for skip — card is still in queue
         undoDeadline = nil
@@ -408,9 +501,18 @@ final class CardTriageViewModel {
         guard let action = lastAction, canUndo else { return }
         lastAction = nil
         undoDeadline = nil
+        let undoneKind: String = switch action.kind {
+        case .resolved: "resolved"
+        case .dismissed: "dismissed"
+        case .escalated: "escalated"
+        case .skipped: "skipped"
+        }
 
         do {
             let response = try await service.undo(queueId: action.queueId)
+            CardTriageLearningLoopMetrics.log(
+                "KPI_EVENT UNDO_COMMIT surface=triage_cards queue=\(action.queueId) undo_of=\(undoneKind) request_id=\(response.requestId ?? "missing")"
+            )
             if CardTriageSmokeAutomation.isEnabled {
                 let requestId = response.requestId ?? "missing"
                 CardTriageSmokeAutomation.logger.log(
@@ -424,6 +526,9 @@ final class CardTriageViewModel {
             await loadQueue()
         } catch {
             if let banner = service.writesLockedBannerText {
+                CardTriageLearningLoopMetrics.log(
+                    "KPI_EVENT AUTH_LOCK_BLOCKED surface=triage_cards action=undo queue=\(action.queueId)"
+                )
                 self.error = banner
             } else {
                 self.error = "Undo failed: \(error.localizedDescription)"
@@ -436,6 +541,62 @@ final class CardTriageViewModel {
     func projectName(for projectId: String?) -> String? {
         guard let projectId else { return nil }
         return projectNameById[projectId]
+    }
+
+    func suggestedProject(for card: CardItem) -> ReviewProject? {
+        guard let suggestedProjectId = card.projectId?.trimmingCharacters(in: .whitespacesAndNewlines),
+              !suggestedProjectId.isEmpty else {
+            return nil
+        }
+
+        if let projectName = projectNameById[suggestedProjectId] {
+            return ReviewProject(id: suggestedProjectId, name: projectName)
+        }
+
+        if let candidate = card.candidates.first(where: { $0.projectId == suggestedProjectId }) {
+            return ReviewProject(id: suggestedProjectId, name: candidate.name)
+        }
+
+        return ReviewProject(id: suggestedProjectId, name: "Suggested Project")
+    }
+
+    func recentProjects(for card: CardItem, limit: Int = 5) -> [ReviewProject] {
+        var projectById: [String: ReviewProject] = [:]
+        for option in projectOptions(for: card) {
+            projectById[option.id] = option
+        }
+        for (projectId, projectName) in projectNameById {
+            if projectById[projectId] == nil {
+                projectById[projectId] = ReviewProject(id: projectId, name: projectName)
+            }
+        }
+
+        let suggestedProjectId = card.projectId?.trimmingCharacters(in: .whitespacesAndNewlines)
+        var recentProjects: [ReviewProject] = []
+        for projectId in recentProjectIds {
+            if let suggestedProjectId, suggestedProjectId == projectId {
+                continue
+            }
+            guard let project = projectById[projectId] else { continue }
+            recentProjects.append(project)
+            if recentProjects.count >= limit {
+                break
+            }
+        }
+
+        return recentProjects
+    }
+
+    func rememberProjectSelection(_ projectId: String) {
+        let trimmedProjectId = projectId.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmedProjectId.isEmpty else { return }
+
+        recentProjectIds.removeAll(where: { $0 == trimmedProjectId })
+        recentProjectIds.insert(trimmedProjectId, at: 0)
+        if recentProjectIds.count > 8 {
+            recentProjectIds = Array(recentProjectIds.prefix(8))
+        }
+        persistRecentProjectIds()
     }
 
     func projectOptions(for card: CardItem) -> [ReviewProject] {
@@ -499,6 +660,15 @@ final class CardTriageViewModel {
                 undoDeadline = nil
             }
         }
+    }
+
+    private func persistRecentProjectIds() {
+        UserDefaults.standard.set(recentProjectIds, forKey: recentProjectsDefaultsKey)
+    }
+
+    private func loadRecentProjectIds() {
+        let stored = UserDefaults.standard.stringArray(forKey: recentProjectsDefaultsKey) ?? []
+        recentProjectIds = stored.filter { !$0.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty }
     }
 }
 
