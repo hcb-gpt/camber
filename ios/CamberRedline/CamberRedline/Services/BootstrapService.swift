@@ -68,9 +68,15 @@ final class BootstrapService {
     private(set) var writeLockState: BootstrapWriteLockState?
 
     var writesLockedBannerText: String? {
-        guard let state = writeLockState else { return nil }
+        guard let state = effectiveWriteLockState else { return nil }
 
-        var message = "Attribution writes temporarily locked. Truth surface remains readable."
+        var message = state.error.trimmingCharacters(in: .whitespacesAndNewlines)
+        if message.isEmpty {
+            message = "Attribution writes temporarily locked."
+        }
+        if !message.contains("Truth surface remains readable") {
+            message += " Truth surface remains readable."
+        }
         #if DEBUG
         if shouldUseWriteStubWhenLocked {
             message = "Attribution writes temporarily locked. Local write stub is active for UI testing only (no server writes)."
@@ -143,11 +149,28 @@ final class BootstrapService {
         case bootstrapWritesOnly
     }
 
+    private var recoveryProbeReviewQueueId: String {
+        #if DEBUG
+        if let override = ProcessInfo.processInfo.environment["SMOKE_RECOVERY_PROBE_QUEUE_ID"]?
+            .trimmingCharacters(in: .whitespacesAndNewlines),
+           !override.isEmpty
+        {
+            return override
+        }
+        #endif
+        // UUID-shaped sentinel lets backend reach handler validation path after auth gate.
+        return "00000000-0000-0000-0000-000000000000"
+    }
+
     func clearWriteLock() {
         writeLockState = nil
     }
 
     func recoverWriteAccess() async -> BootstrapWriteRecoveryOutcome {
+        if let preflightLockState {
+            return .stillLocked(preflightLockState)
+        }
+
         guard writeLockState != nil else {
             return .unlocked(statusCode: nil, requestId: nil)
         }
@@ -169,7 +192,7 @@ final class BootstrapService {
 
         do {
             request.httpBody = try encoder.encode(
-                UndoRequest(reviewQueueId: "__write_lock_recovery_probe__")
+                UndoRequest(reviewQueueId: recoveryProbeReviewQueueId)
             )
         } catch {
             return .failed(
@@ -204,12 +227,28 @@ final class BootstrapService {
                 return .stillLocked(lockState)
             }
 
-            // Any non-auth response means privileged auth checks passed.
-            writeLockState = nil
+            let payload = try? decoder.decode(RecoveryProbePayload.self, from: data)
+            if isRecoveryProbeSuccess(statusCode: http.statusCode, payload: payload) {
+                writeLockState = nil
+                BootstrapLearningLoopMetrics.log(
+                    "KPI_EVENT AUTH_LOCK_RECOVERY_UNLOCKED status_code=\(http.statusCode) request_id=\(requestId ?? payload?.requestId ?? "missing")"
+                )
+                return .unlocked(
+                    statusCode: http.statusCode,
+                    requestId: requestId ?? payload?.requestId
+                )
+            }
+
+            let errorCode = payload?.errorCode ?? "missing"
+            let effectiveRequestId = requestId ?? payload?.requestId
             BootstrapLearningLoopMetrics.log(
-                "KPI_EVENT AUTH_LOCK_RECOVERY_UNLOCKED status_code=\(http.statusCode) request_id=\(requestId ?? "missing")"
+                "KPI_EVENT AUTH_LOCK_RECOVERY_PRESERVED status_code=\(http.statusCode) request_id=\(effectiveRequestId ?? "missing") error_code=\(errorCode)"
             )
-            return .unlocked(statusCode: http.statusCode, requestId: requestId)
+            return .failed(
+                message: recoveryProbeFailureMessage(statusCode: http.statusCode, payload: payload),
+                statusCode: http.statusCode,
+                requestId: effectiveRequestId
+            )
         } catch {
             BootstrapLearningLoopMetrics.log(
                 "KPI_EVENT AUTH_LOCK_RECOVERY_FAILED message=\(error.localizedDescription)"
@@ -312,6 +351,37 @@ final class BootstrapService {
         return data
     }
     #endif
+
+    private var preflightLockState: BootstrapWriteLockState? {
+        #if DEBUG
+        guard !BootstrapSmokeAutomation.truthSurfaceLocalEnabled else { return nil }
+        guard isInternalModeEnabled() else {
+            return BootstrapWriteLockState(
+                statusCode: 403,
+                errorCode: "invalid_auth",
+                error: "Privileged attribution writes disabled (Internal Mode off).",
+                functionVersion: nil,
+                requestId: nil,
+                observedAt: Date()
+            )
+        }
+        guard edgeSecretForWriteRequest() == nil else { return nil }
+        return BootstrapWriteLockState(
+            statusCode: 403,
+            errorCode: "invalid_auth",
+            error: "Privileged attribution writes enabled, but no X-Edge-Secret is stored.",
+            functionVersion: nil,
+            requestId: nil,
+            observedAt: Date()
+        )
+        #else
+        nil
+        #endif
+    }
+
+    private var effectiveWriteLockState: BootstrapWriteLockState? {
+        writeLockState ?? preflightLockState
+    }
 
     private func applyAuthHeaders(
         to request: inout URLRequest,
@@ -618,15 +688,16 @@ final class BootstrapService {
 
     private func post<T: Encodable>(action: String, body: T) async throws -> Data {
         let bodyData = try encoder.encode(body)
+        let lockState = effectiveWriteLockState
 
         #if DEBUG
-        if shouldUseWriteStub(hasLockState: writeLockState != nil) {
+        if shouldUseWriteStub(hasLockState: lockState != nil) {
             return try stubWriteResponse(action: action, bodyData: bodyData)
         }
         #endif
 
-        if let writeLockState {
-            throw BootstrapServiceError.writesLocked(writeLockState)
+        if let lockState {
+            throw BootstrapServiceError.writesLocked(lockState)
         }
 
         var components = URLComponents(url: baseURL, resolvingAgainstBaseURL: false)!
@@ -733,6 +804,38 @@ final class BootstrapService {
         }
     }
 
+    private func isRecoveryProbeSuccess(
+        statusCode: Int,
+        payload: RecoveryProbePayload?
+    ) -> Bool {
+        if (200...299).contains(statusCode), payload?.ok == true {
+            return true
+        }
+
+        // Probe sends a UUID sentinel; item_not_found means auth gate passed.
+        if statusCode == 404, payload?.errorCode == "item_not_found" {
+            return true
+        }
+
+        return false
+    }
+
+    private func recoveryProbeFailureMessage(
+        statusCode: Int,
+        payload: RecoveryProbePayload?
+    ) -> String {
+        if let errorCode = payload?.errorCode, let error = payload?.error, !error.isEmpty {
+            return "Recovery probe failed (\(statusCode)): \(errorCode): \(error)"
+        }
+        if let error = payload?.error, !error.isEmpty {
+            return "Recovery probe failed (\(statusCode)): \(error)"
+        }
+        if let errorCode = payload?.errorCode {
+            return "Recovery probe failed (\(statusCode)): \(errorCode)"
+        }
+        return "Recovery probe failed (HTTP \(statusCode))."
+    }
+
     private func makeWriteLockState(
         statusCode: Int,
         data: Data?,
@@ -775,6 +878,20 @@ private struct EdgeFunctionErrorPayload: Decodable {
         case error
         case errorCode = "error_code"
         case functionVersion = "function_version"
+    }
+}
+
+private struct RecoveryProbePayload: Decodable {
+    let ok: Bool?
+    let error: String?
+    let errorCode: String?
+    let requestId: String?
+
+    enum CodingKeys: String, CodingKey {
+        case ok
+        case error
+        case errorCode = "error_code"
+        case requestId = "request_id"
     }
 }
 
