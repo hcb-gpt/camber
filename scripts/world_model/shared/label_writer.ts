@@ -62,16 +62,33 @@ export async function getLabeledSpanIds(
   db: SupabaseClient,
   batchRunId: string,
 ): Promise<Set<string>> {
-  const { data, error } = await db
-    .from("labeling_results")
-    .select("span_id")
-    .eq("batch_run_id", batchRunId)
-    .neq("label_decision", "unlabeled");
+  const pageSize = 1000;
+  const spanIds: string[] = [];
+  let page = 0;
 
-  if (error) {
-    console.warn("Failed to query existing labels:", error.message);
-    return new Set();
+  while (true) {
+    const { data, error } = await db
+      .from("labeling_results")
+      .select("span_id")
+      .eq("batch_run_id", batchRunId)
+      .neq("label_decision", "unlabeled")
+      .order("span_id")
+      .range(page * pageSize, page * pageSize + pageSize - 1);
+
+    if (error) {
+      console.warn("Failed to query existing labels:", error.message);
+      return new Set();
+    }
+
+    if (!data || data.length === 0) {
+      break;
+    }
+    spanIds.push(...data.map((r: { span_id: string }) => r.span_id));
+    if (data.length < pageSize) {
+      break;
+    }
+    page++;
   }
 
-  return new Set((data || []).map((r: { span_id: string }) => r.span_id));
+  return new Set(spanIds);
 }
