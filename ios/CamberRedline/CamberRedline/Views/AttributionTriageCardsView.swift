@@ -1,5 +1,8 @@
 import SwiftUI
 import os
+#if canImport(UIKit)
+import UIKit
+#endif
 
 private enum TriageSmokeAutomation {
     static let launchFlag = "--smoke-drive"
@@ -36,6 +39,14 @@ private enum TriageSmokeAutomation {
     }
 }
 
+private enum TriageLearningLoopMetrics {
+    static let logger = Logger(subsystem: "CamberRedline", category: "learning_loop")
+
+    static func log(_ message: String) {
+        logger.log("\(message, privacy: .public)")
+    }
+}
+
 private extension Color {
     static let cardsBg = Color.black
     static let cardFace = Color(red: 0.082, green: 0.082, blue: 0.09)     // #151517
@@ -65,6 +76,9 @@ struct AttributionTriageCardsView: View {
     @State private var analysisCard: CardItem?
     @State private var showEvidenceTokens = false
     @State private var evidenceCard: CardItem?
+    @State private var triageSurfaceAppearedAt: Date?
+    @State private var didRecordFirstValidPick = false
+    @State private var didLogAuthLockVisible = false
 
     var body: some View {
         NavigationStack {
@@ -99,6 +113,30 @@ struct AttributionTriageCardsView: View {
                 }
             }
             .navigationTitle("Triage")
+            .onAppear {
+                triageSurfaceAppearedAt = Date()
+                didRecordFirstValidPick = false
+                didLogAuthLockVisible = false
+                TriageLearningLoopMetrics.log(
+                    "KPI_EVENT PICK_SURFACE_APPEAR surface=triage_cards queue_depth=\(viewModel.queue.count)"
+                )
+                if viewModel.isAttributionWritesLocked {
+                    didLogAuthLockVisible = true
+                    TriageLearningLoopMetrics.log(
+                        "KPI_EVENT AUTH_LOCK_UI_DISABLED surface=triage_cards queue_depth=\(viewModel.queue.count)"
+                    )
+                }
+            }
+            .onChange(of: viewModel.isAttributionWritesLocked) { _, isLocked in
+                if isLocked, !didLogAuthLockVisible {
+                    didLogAuthLockVisible = true
+                    TriageLearningLoopMetrics.log(
+                        "KPI_EVENT AUTH_LOCK_UI_DISABLED surface=triage_cards queue_depth=\(viewModel.queue.count)"
+                    )
+                } else if !isLocked {
+                    didLogAuthLockVisible = false
+                }
+            }
             .task {
                 if viewModel.queue.isEmpty {
                     await viewModel.loadQueue()
@@ -115,8 +153,12 @@ struct AttributionTriageCardsView: View {
                     ProjectPickerSheet(
                         card: card,
                         projects: viewModel.projectOptions(for: card),
+                        recentProjects: viewModel.recentProjects(for: card),
+                        suggestedProject: viewModel.suggestedProject(for: card),
                         onSelect: { projectId in
+                            viewModel.rememberProjectSelection(projectId)
                             selectedProjectIdByCardId[card.id] = projectId
+                            recordFirstValidPickIfNeeded(card: card, projectId: projectId, source: "picker_select")
                             let notes = pendingResolveNoteByCardId[card.id]
                             let shouldResolveNow = pickerMode == .commentOnly
 
@@ -332,11 +374,15 @@ struct AttributionTriageCardsView: View {
                     isTop: isTop,
                     writesLocked: viewModel.isAttributionWritesLocked,
                     onBlockedWrite: {
+                        TriageLearningLoopMetrics.log(
+                            "KPI_EVENT AUTH_LOCK_BLOCKED surface=triage_cards action=confirm_swipe queue=\(card.queueId)"
+                        )
                         if let banner = viewModel.attributionWritesLockedBannerText {
                             viewModel.error = banner
                         }
                     },
                     onConfirm: { projectId in
+                        viewModel.rememberProjectSelection(projectId)
                         let note = pendingResolveNoteByCardId[card.id] ?? nil
                         Task {
                             await viewModel.resolve(card, to: projectId, notes: note)
@@ -352,7 +398,9 @@ struct AttributionTriageCardsView: View {
                         showProjectPicker = true
                     },
                     onUseSuggestedProject: { suggestedProjectId in
+                        viewModel.rememberProjectSelection(suggestedProjectId)
                         selectedProjectIdByCardId[card.id] = suggestedProjectId
+                        recordFirstValidPickIfNeeded(card: card, projectId: suggestedProjectId, source: "suggested_tap")
                     },
                     onTapEvidenceTokens: {
                         evidenceCard = card
@@ -447,21 +495,65 @@ struct AttributionTriageCardsView: View {
     // MARK: - Undo Banner
 
     private func undoBanner(_ action: CardTriageViewModel.TriageAction) -> some View {
-        Button {
-            Task { await viewModel.undo() }
-        } label: {
-            HStack(spacing: 8) {
-                Image(systemName: "arrow.uturn.backward")
+        HStack(spacing: 10) {
+            Image(systemName: "checkmark.circle.fill")
+                .font(.caption)
+                .foregroundStyle(Color.yesGreen)
+
+            VStack(alignment: .leading, spacing: 2) {
+                Text(action.title)
                     .font(.caption)
-                Text("Undo \(action.label)")
-                    .font(.caption)
-                    .fontWeight(.medium)
+                    .fontWeight(.semibold)
+                    .foregroundStyle(.white)
+                if let receipt = action.receipt {
+                    Text(receipt.compactLabel)
+                        .font(.caption2.monospaced())
+                        .foregroundStyle(.secondary)
+                }
             }
+
+            Spacer(minLength: 0)
+
+            #if DEBUG
+            if let receipt = action.receipt {
+                Button("Copy receipt") {
+                    #if canImport(UIKit)
+                    UIPasteboard.general.string = receipt.copyText
+                    #endif
+                }
+                .font(.caption2)
+                .foregroundStyle(Color.commentBlue)
+                .buttonStyle(.plain)
+            }
+            #endif
+
+            Button("Undo") {
+                let actionName: String = switch action.kind {
+                case .resolved: "resolved"
+                case .dismissed: "dismissed"
+                case .escalated: "escalated"
+                case .skipped: "skipped"
+                }
+                let ageMs = max(0, Int(Date().timeIntervalSince(action.timestamp) * 1000))
+                TriageLearningLoopMetrics.log(
+                    "KPI_EVENT UNDO_TAP surface=triage_cards queue=\(action.queueId) undo_of=\(actionName) age_ms=\(ageMs)"
+                )
+                Task { await viewModel.undo() }
+            }
+            .font(.caption)
+            .fontWeight(.semibold)
             .foregroundStyle(.black)
-            .padding(.horizontal, 16)
-            .padding(.vertical, 10)
+            .padding(.horizontal, 12)
+            .padding(.vertical, 8)
             .background(Color.undoAmber, in: Capsule())
         }
+        .padding(.horizontal, 12)
+        .padding(.vertical, 10)
+        .background(Color.cardFace.opacity(0.94), in: Capsule())
+        .overlay(
+            Capsule().stroke(Color.cardStroke, lineWidth: 1)
+        )
+        .padding(.horizontal, 16)
         .padding(.bottom, 16)
     }
 
@@ -498,6 +590,20 @@ struct AttributionTriageCardsView: View {
             .padding(.horizontal, 16)
             .padding(.bottom, 60)
             .onTapGesture { viewModel.error = nil }
+    }
+
+    private func recordFirstValidPickIfNeeded(card: CardItem, projectId: String, source: String) {
+        let trimmedProjectId = projectId.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmedProjectId.isEmpty else { return }
+        guard !didRecordFirstValidPick else { return }
+        guard let appearedAt = triageSurfaceAppearedAt else { return }
+
+        let elapsedMs = max(0, Int(Date().timeIntervalSince(appearedAt) * 1000))
+        let aiSuggested = ((card.projectId ?? "").trimmingCharacters(in: .whitespacesAndNewlines).isEmpty == false) ? 1 : 0
+        TriageLearningLoopMetrics.log(
+            "KPI_EVENT PICK_TIME_SAMPLE surface=triage_cards elapsed_ms=\(elapsedMs) queue=\(card.queueId) card=\(card.id) source=\(source) had_ai_suggestion=\(aiSuggested) evidence_count=\(card.evidenceAnchors.count)"
+        )
+        didRecordFirstValidPick = true
     }
 
     private func runSmokeSwipes() async {
@@ -645,16 +751,12 @@ struct AttributionTriageCardsView: View {
             TriageSmokeAutomation.logger.log(
                 "SMOKE_EVENT TRUTH_SURFACE_CONFIRM_LOCAL queue=\(card.queueId, privacy: .public) project=\(pickedProjectId, privacy: .public)"
             )
-            await MainActor.run {
-                viewModel.queue.removeAll(where: { $0.id == card.id })
-                viewModel.resolvedCount += 1
-            }
         } else {
             TriageSmokeAutomation.logger.log(
                 "SMOKE_EVENT TRUTH_SURFACE_CONFIRM queue=\(card.queueId, privacy: .public) project=\(pickedProjectId, privacy: .public)"
             )
-            await viewModel.resolve(card, to: pickedProjectId, notes: "smoke_truth_surface")
         }
+        await viewModel.resolve(card, to: pickedProjectId, notes: "smoke_truth_surface")
     }
 
     private enum PickerMode {
@@ -1087,7 +1189,7 @@ private struct SwipeableTriageCard: View {
 
     private var confirmBlockedMessage: String {
         if writesLocked {
-            return "Writes are locked (read-only mode)."
+            return "Attribution writes temporarily locked. Truth surface remains readable."
         }
         if evidenceTokenCount == 0 {
             return "No evidence tokens on this card. Escalate or skip instead of confirming."
