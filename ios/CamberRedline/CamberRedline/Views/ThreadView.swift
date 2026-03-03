@@ -546,8 +546,9 @@ struct ThreadView: View {
                 )
                 if viewModel.isAttributionWritesLocked {
                     didLogThreadAuthLockVisible = true
+                    let statusCode = viewModel.attributionWritesLockedStatusCode ?? -1
                     ThreadLearningLoopMetrics.log(
-                        "KPI_EVENT AUTH_LOCK_UI_DISABLED surface=thread queue_depth=\(displayGroups.count)"
+                        "KPI_EVENT AUTH_LOCK_UI_DISABLED surface=thread status_code=\(statusCode) queue_depth=\(displayGroups.count)"
                     )
                 }
 
@@ -578,8 +579,9 @@ struct ThreadView: View {
             .onChange(of: viewModel.isAttributionWritesLocked) { _, isLocked in
                 if isLocked, !didLogThreadAuthLockVisible {
                     didLogThreadAuthLockVisible = true
+                    let statusCode = viewModel.attributionWritesLockedStatusCode ?? -1
                     ThreadLearningLoopMetrics.log(
-                        "KPI_EVENT AUTH_LOCK_UI_DISABLED surface=thread queue_depth=\(displayGroups.count)"
+                        "KPI_EVENT AUTH_LOCK_UI_DISABLED surface=thread status_code=\(statusCode) queue_depth=\(displayGroups.count)"
                     )
                 } else if !isLocked {
                     didLogThreadAuthLockVisible = false
@@ -716,7 +718,7 @@ struct ThreadView: View {
             Button("Undo") {
                 let ageMs = max(0, Int(Date().timeIntervalSince(action.createdAt) * 1000))
                 ThreadLearningLoopMetrics.log(
-                    "KPI_EVENT UNDO_TAP surface=thread queue=\(action.reviewQueueId) undo_of=\(action.kind.rawValue) age_ms=\(ageMs)"
+                    "KPI_EVENT UNDO_TAP surface=thread queue=\(LearningLoopIdHash.short(action.reviewQueueId)) undo_of=\(action.kind.rawValue) age_ms=\(ageMs)"
                 )
                 undoAction(action)
             }
@@ -1255,7 +1257,7 @@ struct ThreadView: View {
 
         let elapsedMs = max(0, Int(Date().timeIntervalSince(appearedAt) * 1000))
         ThreadLearningLoopMetrics.log(
-            "KPI_EVENT PICK_TIME_SAMPLE surface=thread elapsed_ms=\(elapsedMs) queue=\(queueId) source=\(source)"
+            "KPI_EVENT PICK_TIME_SAMPLE surface=thread elapsed_ms=\(elapsedMs) queue=\(LearningLoopIdHash.short(queueId)) source=\(source)"
         )
         didRecordFirstThreadPick = true
     }
