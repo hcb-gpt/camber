@@ -116,11 +116,11 @@ Deno.test("top-level gate (edge-secret-or-anon) allows publishable non-JWT anon 
   const originalFetch = globalThis.fetch;
   let seenApiKey: string | null = null;
   let seenAuthorization: string | null = null;
-  globalThis.fetch = (async (_input: RequestInfo | URL, init?: RequestInit) => {
+  globalThis.fetch = ((_input: RequestInfo | URL, init?: RequestInit) => {
     const headers = new Headers(init?.headers);
     seenApiKey = headers.get("apikey");
     seenAuthorization = headers.get("Authorization");
-    return new Response("[]", { status: 200, headers: { "Content-Type": "application/json" } });
+    return Promise.resolve(new Response("[]", { status: 200, headers: { "Content-Type": "application/json" } }));
   }) as typeof fetch;
 
   try {
@@ -128,7 +128,7 @@ Deno.test("top-level gate (edge-secret-or-anon) allows publishable non-JWT anon 
       req,
       "expected-secret",
       "expected-anon",
-      "https://abc123.supabase.co",
+      "https://abc123.test",
       "test-v1",
     );
     const body = await resp.json();
@@ -153,9 +153,9 @@ Deno.test("top-level gate (edge-secret-or-anon) rejects JWT anon token with mism
 
   const originalFetch = globalThis.fetch;
   let fetchCalls = 0;
-  globalThis.fetch = (async () => {
+  globalThis.fetch = (() => {
     fetchCalls += 1;
-    return new Response("[]", { status: 200, headers: { "Content-Type": "application/json" } });
+    return Promise.resolve(new Response("[]", { status: 200, headers: { "Content-Type": "application/json" } }));
   }) as typeof fetch;
 
   try {
@@ -163,7 +163,7 @@ Deno.test("top-level gate (edge-secret-or-anon) rejects JWT anon token with mism
       req,
       "expected-secret",
       undefined,
-      "https://abc123.supabase.co",
+      "https://abc123.test",
       "test-v1",
     );
     const body = await resp.json();
