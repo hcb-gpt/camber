@@ -100,7 +100,6 @@ struct AttributionTriageCardsView: View {
                         activityRail
                         progressBar
                         cardStack
-                        actionHints
                     }
                 }
 
@@ -377,11 +376,11 @@ struct AttributionTriageCardsView: View {
                     aiSuggestedProjectName: viewModel.projectName(for: card.projectId),
                     selectedProjectId: selectedProjectId,
                     selectedProjectName: selectedProjectName,
-                    isTop: isTop,
                     writesLocked: viewModel.isAttributionWritesLocked,
+                    quickProjectChoices: viewModel.projectOptions(for: card),
                     onBlockedWrite: {
                         TriageLearningLoopMetrics.log(
-                            "KPI_EVENT AUTH_LOCK_BLOCKED surface=triage_cards action=confirm_swipe queue=\(card.queueId)"
+                            "KPI_EVENT AUTH_LOCK_BLOCKED surface=triage_cards action=confirm_button queue=\(card.queueId)"
                         )
                         if let banner = viewModel.attributionWritesLockedBannerText {
                             viewModel.error = banner
@@ -403,27 +402,15 @@ struct AttributionTriageCardsView: View {
                         pickerCard = card
                         showProjectPicker = true
                     },
-                    onUseSuggestedProject: { suggestedProjectId in
-                        viewModel.rememberProjectSelection(suggestedProjectId)
-                        selectedProjectIdByCardId[card.id] = suggestedProjectId
-                        recordFirstValidPickIfNeeded(card: card, projectId: suggestedProjectId, source: "suggested_tap")
+                    onSelectProject: { projectId in
+                        viewModel.rememberProjectSelection(projectId)
+                        selectedProjectIdByCardId[card.id] = projectId
+                        recordFirstValidPickIfNeeded(card: card, projectId: projectId, source: "choice_tap")
                     },
-                    onTapEvidenceTokens: {
-                        evidenceCard = card
-                        showEvidenceTokens = true
-                    },
-                    onSwipeUp: {
-                        escalateCard = card
-                        showEscalateSheet = true
-                    },
-                    onSwipeDown: {
+                    onSkip: {
                         selectedProjectIdByCardId[card.id] = nil
                         pendingResolveNoteByCardId[card.id] = nil
                         viewModel.skip(card)
-                    },
-                    onTapAnalysis: {
-                        analysisCard = card
-                        showAnalysisDrawer = true
                     }
                 )
                 .zIndex(isTop ? 1 : 0)
@@ -434,38 +421,6 @@ struct AttributionTriageCardsView: View {
         }
         .padding(.horizontal, 16)
         .frame(maxHeight: .infinity)
-    }
-
-    // MARK: - Action Hints
-
-    private var actionHints: some View {
-        VStack(spacing: 6) {
-            HStack(spacing: 0) {
-                Label("PICK", systemImage: "arrow.left")
-                    .font(.caption)
-                    .fontWeight(.semibold)
-                    .foregroundStyle(Color.noRed.opacity(0.7))
-                Spacer()
-                Label("CONFIRM", systemImage: "arrow.right")
-                    .font(.caption)
-                    .fontWeight(.semibold)
-                    .foregroundStyle(Color.commentBlue.opacity(0.8))
-            }
-            HStack(spacing: 0) {
-                Label("ESCALATE", systemImage: "arrow.up")
-                    .font(.caption2)
-                    .fontWeight(.semibold)
-                    .foregroundStyle(Color.escalateOrange.opacity(0.8))
-                Spacer()
-                Label("SKIP", systemImage: "arrow.down")
-                    .font(.caption2)
-                    .fontWeight(.semibold)
-                    .foregroundStyle(Color.skipGray.opacity(0.8))
-            }
-        }
-        .padding(.horizontal, 40)
-        .padding(.bottom, 12)
-        .opacity(viewModel.isAttributionWritesLocked ? 0.35 : 1)
     }
 
     private func writesLockedBanner(_ text: String) -> some View {
@@ -788,40 +743,19 @@ private struct SwipeableTriageCard: View {
     let aiSuggestedProjectName: String?
     let selectedProjectId: String?
     let selectedProjectName: String?
-    let isTop: Bool
     let writesLocked: Bool
+    let quickProjectChoices: [ReviewProject]
     let onBlockedWrite: () -> Void
     let onConfirm: (String) -> Void
     let onOpenPicker: () -> Void
-    let onUseSuggestedProject: (String) -> Void
-    let onTapEvidenceTokens: () -> Void
-    let onSwipeUp: () -> Void
-    let onSwipeDown: () -> Void
-    let onTapAnalysis: () -> Void
+    let onSelectProject: (String) -> Void
+    let onSkip: () -> Void
 
-    @State private var offset: CGSize = .zero
-    @State private var rotation: Double = 0
-    @State private var showAlternatives = false
     @State private var transcriptExpanded = false
-    @State private var showConfirmBlockedAlert = false
-
-    private let horizontalSwipeThreshold: CGFloat = 100
-    private let verticalSwipeThreshold: CGFloat = 90
 
     var body: some View {
         cardChrome
-            .offset(x: offset.width, y: offset.height)
-            .rotationEffect(.degrees(rotation))
-            .gesture(dragGesture)
-            .animation(.interactiveSpring(response: 0.4, dampingFraction: 0.7), value: offset)
-            .alert("Can’t confirm yet", isPresented: $showConfirmBlockedAlert) {
-                Button("OK", role: .cancel) {}
-            } message: {
-                Text(confirmBlockedMessage)
-            }
     }
-
-    // MARK: - Card Sections
 
     private var cardChrome: some View {
         cardContent
@@ -829,493 +763,232 @@ private struct SwipeableTriageCard: View {
             .background(Color.cardFace, in: RoundedRectangle(cornerRadius: 16))
             .overlay(
                 RoundedRectangle(cornerRadius: 16)
-                    .stroke(swipeIndicatorColor, lineWidth: swipeIndicatorOpacity > 0 ? 2 : 1)
+                    .stroke(Color.cardStroke, lineWidth: 1)
             )
-            .overlay(alignment: .topLeading) {
-                if offset.width < -40 {
-                    swipeLabel("PICK", icon: "arrow.left.arrow.right", color: .noRed)
-                        .padding(16)
-                        .opacity(min(1, Double(-offset.width - 40) / 60))
-                }
-            }
-            .overlay(alignment: .topTrailing) {
-                if offset.width > 40 {
-                    Group {
-                        if canConfirm {
-                            swipeLabel("CONFIRM", icon: "checkmark", color: .commentBlue)
-                        } else {
-                            swipeLabel("BLOCKED", icon: "xmark", color: .noRed)
-                        }
-                    }
-                    .padding(16)
-                    .opacity(min(1, Double(offset.width - 40) / 60))
-                }
-            }
-            .overlay(alignment: .top) {
-                if offset.height < -40 {
-                    swipeLabel("ESCALATE", icon: "exclamationmark.triangle", color: .escalateOrange)
-                        .padding(.top, 16)
-                        .opacity(min(1, Double(-offset.height - 40) / 60))
-                }
-            }
-            .overlay(alignment: .bottom) {
-                if offset.height > 40 {
-                    swipeLabel("SKIP", icon: "arrow.down.to.line", color: .skipGray)
-                        .padding(.bottom, 16)
-                        .opacity(min(1, Double(offset.height - 40) / 60))
-                }
-            }
     }
 
     private var cardContent: some View {
-        VStack(alignment: .leading, spacing: 12) {
-            // Header: contact + confidence
-            HStack(alignment: .top) {
-                VStack(alignment: .leading, spacing: 2) {
-                    Text(card.contactName)
-                        .font(.headline)
-                        .foregroundStyle(.white)
-                    if let date = card.eventDate {
-                        Text(date, style: .relative)
-                            .font(.caption2)
-                            .foregroundStyle(.secondary)
-                    }
+        VStack(alignment: .leading, spacing: 14) {
+            VStack(alignment: .leading, spacing: 4) {
+                Text(card.contactName)
+                    .font(.headline)
+                    .foregroundStyle(.white)
+
+                if let eventDate = card.eventDate {
+                    Text("Received \(eventDate, style: .relative)")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                } else {
+                    Text("Received recently")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
                 }
-                Spacer()
-                confidenceBadge
             }
 
-            // Reason codes
-            if !card.reasonCodes.isEmpty {
-                reasonCodesRow
+            if let aiSuggestedProjectName {
+                Text("Suggested project: \(aiSuggestedProjectName)")
+                    .font(.subheadline)
+                    .foregroundStyle(.white.opacity(0.9))
+                    .lineLimit(1)
             }
 
-            truthSurfaceRail
-
-            // Transcript (tap to expand/collapse)
             Text(card.transcriptSegment)
                 .font(.subheadline)
                 .foregroundStyle(.white.opacity(0.85))
-                .lineLimit(transcriptExpanded ? nil : 6)
+                .lineLimit(transcriptExpanded ? nil : 5)
                 .frame(maxWidth: .infinity, alignment: .leading)
                 .contentShape(Rectangle())
                 .onTapGesture { transcriptExpanded.toggle() }
                 .animation(.easeInOut(duration: 0.2), value: transcriptExpanded)
 
-            // Evidence anchors
-            if !card.evidenceAnchors.isEmpty {
-                evidenceSection
+            if shouldShowChoiceSet {
+                choiceSetSection
+            }
+
+            if let selectedProjectName {
+                HStack(spacing: 6) {
+                    Image(systemName: "checkmark.circle.fill")
+                        .font(.caption)
+                        .foregroundStyle(Color.commentBlue.opacity(0.9))
+                    Text("Selected project: \(selectedProjectName)")
+                        .font(.subheadline)
+                        .foregroundStyle(.white.opacity(0.95))
+                        .lineLimit(1)
+                }
+            }
+
+            if writesLocked {
+                Text("Writes temporarily locked. You can still review this card.")
+                    .font(.caption)
+                    .foregroundStyle(Color.noRed.opacity(0.95))
             }
 
             Divider().background(Color.cardStroke)
 
-            selectionSection
-
-            // Collapsible alternatives
-            if !card.candidates.isEmpty {
-                alternativesSection
-            }
-
-            // Analysis tap target
-            Button {
-                onTapAnalysis()
-            } label: {
-                HStack(spacing: 4) {
-                    Image(systemName: "magnifyingglass")
-                        .font(.system(size: 10))
-                    Text("Analysis")
-                        .font(.caption2)
-                        .fontWeight(.medium)
-                }
-                .foregroundStyle(Color.commentBlue.opacity(0.8))
-                .padding(.horizontal, 10)
-                .padding(.vertical, 5)
-                .background(Color.commentBlue.opacity(0.1), in: Capsule())
-            }
+            actionRow
         }
-    }
-
-    private var dragGesture: some Gesture {
-        DragGesture()
-            .onChanged { value in
-                guard isTop else { return }
-                guard !writesLocked else { return }
-                offset = value.translation
-                rotation = Double(value.translation.width / 20)
-            }
-            .onEnded { value in
-                guard isTop else { return }
-                if writesLocked {
-                    if value.translation.height > verticalSwipeThreshold,
-                       abs(value.translation.height) > abs(value.translation.width) {
-                        snapBack()
-                        onSwipeDown()
-                        return
-                    }
-
-                    if value.translation.width > horizontalSwipeThreshold
-                        || value.translation.width < -horizontalSwipeThreshold
-                        || value.translation.height < -verticalSwipeThreshold
-                    {
-                        snapBack()
-                        onBlockedWrite()
-                        return
-                    }
-
-                    snapBack()
-                    return
-                }
-
-                if value.translation.width > horizontalSwipeThreshold,
-                   abs(value.translation.width) >= abs(value.translation.height) {
-                    guard canConfirm else {
-                        snapBack()
-                        showConfirmBlockedAlert = true
-                        return
-                    }
-                    swipeAway(direction: .right)
-                } else if value.translation.width < -horizontalSwipeThreshold,
-                          abs(value.translation.width) >= abs(value.translation.height) {
-                    swipeAway(direction: .left)
-                } else if value.translation.height < -verticalSwipeThreshold,
-                          abs(value.translation.height) > abs(value.translation.width) {
-                    // UP: snap back then open escalation sheet
-                    snapBack()
-                    onSwipeUp()
-                } else if value.translation.height > verticalSwipeThreshold,
-                          abs(value.translation.height) > abs(value.translation.width) {
-                    // DOWN: skip — snap back and reorder
-                    snapBack()
-                    onSwipeDown()
-                } else {
-                    snapBack()
-                }
-            }
-    }
-
-    private var truthSurfaceRail: some View {
-        HStack(spacing: 8) {
-            statusChip
-            Button {
-                onOpenPicker()
-            } label: {
-                chip(
-                    selectedProjectId == nil ? "Pick" : "Change",
-                    icon: "arrow.left.arrow.right",
-                    color: .commentBlue
-                )
-            }
-            Button {
-                onTapEvidenceTokens()
-            } label: {
-                chip(
-                    "Evidence \(evidenceTokenCount) · \(evidenceFreshnessText)",
-                    icon: "doc.text.magnifyingglass",
-                    color: evidenceTokenCount > 0 ? .commentBlue : .skipGray
-                )
-            }
-            Spacer()
-        }
-    }
-
-    private var selectionSection: some View {
-        VStack(alignment: .leading, spacing: 10) {
-            HStack(spacing: 8) {
-                Image(systemName: selectedProjectId == nil ? "circle.dashed" : "checkmark.circle.fill")
-                    .font(.caption)
-                    .foregroundStyle(selectedProjectId == nil ? Color.skipGray.opacity(0.8) : Color.commentBlue.opacity(0.9))
-
-                VStack(alignment: .leading, spacing: 1) {
-                    Text(selectedProjectId == nil ? "Pick required" : "Selected")
-                        .font(.caption2)
-                        .foregroundStyle(.secondary)
-                    Text(selectedProjectName ?? "—")
-                        .font(.subheadline)
-                        .fontWeight(.medium)
-                        .foregroundStyle(selectedProjectId == nil ? Color.secondary : Color.white)
-                        .lineLimit(1)
-                }
-
-                Spacer()
-
-                if canConfirm {
-                    Text("Swipe \(Image(systemName: "arrow.right")) to confirm")
-                        .font(.caption2)
-                        .foregroundStyle(.secondary)
-                } else {
-                    Button {
-                        showConfirmBlockedAlert = true
-                    } label: {
-                        Text("Swipe \(Image(systemName: "arrow.right")) to confirm")
-                            .font(.caption2)
-                            .foregroundStyle(.secondary)
-                    }
-                    .buttonStyle(.plain)
-                }
-            }
-
-            if let suggestedProjectId = card.projectId, let name = aiSuggestedProjectName {
-                HStack(spacing: 8) {
-                    Image(systemName: "cpu")
-                        .font(.caption)
-                        .foregroundStyle(Color.skipGray.opacity(0.8))
-                    Text("AI suggests")
-                        .font(.caption2)
-                        .foregroundStyle(.secondary)
-                    Text(name)
-                        .font(.caption)
-                        .fontWeight(.semibold)
-                        .foregroundStyle(.white.opacity(0.85))
-                        .lineLimit(1)
-                    Spacer()
-                    if selectedProjectId == nil {
-                        Button("Use") {
-                            onUseSuggestedProject(suggestedProjectId)
-                        }
-                        .font(.caption2)
-                        .fontWeight(.semibold)
-                        .foregroundStyle(Color.commentBlue)
-                        .buttonStyle(.plain)
-                    }
-                }
-            } else {
-                HStack(spacing: 8) {
-                    Image(systemName: "questionmark.circle")
-                        .font(.caption)
-                        .foregroundStyle(Color.skipGray.opacity(0.8))
-                    Text("No AI suggestion")
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
-                }
-            }
-        }
-    }
-
-    private var reasonCodesRow: some View {
-        ScrollView(.horizontal, showsIndicators: false) {
-            HStack(spacing: 4) {
-                ForEach(card.reasonCodes, id: \.self) { code in
-                    Text(formatReasonCode(code))
-                        .font(.system(size: 9, weight: .semibold))
-                        .foregroundStyle(reasonCodeColor(code))
-                        .padding(.horizontal, 6)
-                        .padding(.vertical, 3)
-                        .background(reasonCodeColor(code).opacity(0.12), in: Capsule())
-                }
-            }
-        }
-    }
-
-    private var evidenceSection: some View {
-        VStack(alignment: .leading, spacing: 4) {
-            ForEach(Array(card.evidenceAnchors.prefix(4).enumerated()), id: \.offset) { _, anchor in
-                HStack(alignment: .top, spacing: 6) {
-                    Image(systemName: "quote.opening")
-                        .font(.system(size: 8))
-                        .foregroundStyle(Color.commentBlue.opacity(0.5))
-                        .padding(.top, 2)
-                    VStack(alignment: .leading, spacing: 1) {
-                        Text(anchor.quote ?? anchor.text ?? "")
-                            .font(.caption2)
-                            .foregroundStyle(.white.opacity(0.7))
-                            .lineLimit(2)
-                        if let matchType = anchor.matchType {
-                            Text(matchType)
-                                .font(.system(size: 8))
-                                .foregroundStyle(.secondary)
-                        }
-                    }
-                }
-            }
-        }
-        .padding(8)
-        .background(Color.chipBg.opacity(0.5), in: RoundedRectangle(cornerRadius: 8))
-    }
-
-    private var alternativesSection: some View {
-        VStack(alignment: .leading, spacing: 4) {
-            Button {
-                withAnimation(.easeInOut(duration: 0.2)) {
-                    showAlternatives.toggle()
-                }
-            } label: {
-                HStack(spacing: 4) {
-                    Image(systemName: showAlternatives ? "chevron.down" : "chevron.right")
-                        .font(.system(size: 9))
-                    Text("\(card.candidates.count) alternative\(card.candidates.count == 1 ? "" : "s")")
-                        .font(.caption2)
-                        .fontWeight(.medium)
-                }
-                .foregroundStyle(.secondary)
-            }
-
-            if showAlternatives {
-                HStack(spacing: 6) {
-                    ForEach(card.candidates.prefix(4), id: \.projectId) { candidate in
-                        VStack(alignment: .leading, spacing: 2) {
-                            Text(candidate.name)
-                                .font(.caption2)
-                                .foregroundStyle(.white.opacity(0.7))
-                            if let tags = candidate.evidenceTags, !tags.isEmpty {
-                                Text(tags.prefix(2).joined(separator: ", "))
-                                    .font(.system(size: 8))
-                                    .foregroundStyle(.secondary)
-                            }
-                        }
-                        .padding(.horizontal, 8)
-                        .padding(.vertical, 5)
-                        .background(Color.chipBg, in: RoundedRectangle(cornerRadius: 6))
-                    }
-                }
-            }
-        }
-    }
-
-    private var confidenceBadge: some View {
-        let pct = Int(card.confidence * 100)
-        let color: Color = pct >= 70 ? .yesGreen : pct >= 40 ? .undoAmber : .noRed
-        return Text("\(pct)%")
-            .font(.caption)
-            .fontWeight(.bold)
-            .foregroundStyle(color)
-            .padding(.horizontal, 8)
-            .padding(.vertical, 4)
-            .background(color.opacity(0.15), in: Capsule())
-    }
-
-    private var evidenceTokenCount: Int { card.evidenceAnchors.count }
-
-    private var evidenceFreshnessText: String {
-        guard let date = card.eventDate else { return "—" }
-        let seconds = max(0, Date().timeIntervalSince(date))
-        let minutes = Int(seconds / 60)
-        if minutes < 60 { return "\(minutes)m" }
-        let hours = minutes / 60
-        if hours < 48 { return "\(hours)h" }
-        let days = hours / 24
-        return "\(days)d"
     }
 
     private var canConfirm: Bool {
         guard !writesLocked else { return false }
         guard selectedProjectId != nil else { return false }
-        guard evidenceTokenCount > 0 else { return false }
         return true
     }
 
-    private var confirmBlockedMessage: String {
-        if writesLocked {
-            return "Attribution writes temporarily locked. Truth surface remains readable."
-        }
-        if evidenceTokenCount == 0 {
-            return "No evidence tokens on this card. Escalate or skip instead of confirming."
-        }
-        return "Pick a project first."
-    }
-
-    private var statusChip: some View {
-        let label: String
-        let color: Color
-        if writesLocked || evidenceTokenCount == 0 {
-            label = "Blocked"
-            color = .noRed
-        } else if selectedProjectId != nil {
-            label = "Ready"
-            color = .commentBlue
-        } else {
-            label = "Pending"
-            color = .skipGray
-        }
-        return chip(label, icon: "circle.fill", color: color)
-    }
-
-    private func chip(_ text: String, icon: String, color: Color) -> some View {
-        HStack(spacing: 4) {
-            Image(systemName: icon)
-                .font(.system(size: 8))
-            Text(text)
-                .font(.caption2)
-                .fontWeight(.semibold)
-                .lineLimit(1)
-        }
-        .foregroundStyle(color)
-        .padding(.horizontal, 10)
-        .padding(.vertical, 6)
-        .background(color.opacity(0.12), in: Capsule())
-    }
-
-    private var swipeIndicatorColor: Color {
-        if offset.width > 40 { return Color.commentBlue.opacity(swipeIndicatorOpacity) }
-        if offset.width < -40 { return Color.noRed.opacity(swipeIndicatorOpacity) }
-        if offset.height < -40 { return Color.escalateOrange.opacity(swipeIndicatorOpacity) }
-        if offset.height > 40 { return Color.skipGray.opacity(swipeIndicatorOpacity) }
-        return Color.cardStroke
-    }
-
-    private var swipeIndicatorOpacity: Double {
-        let magnitude = max(abs(offset.width), abs(offset.height))
-        guard magnitude > 40 else { return 0 }
-        return min(1, Double(magnitude - 40) / 60)
-    }
-
-    private func swipeLabel(_ text: String, icon: String, color: Color) -> some View {
-        Label(text, systemImage: icon)
-            .font(.title2)
-            .fontWeight(.black)
-            .foregroundStyle(color)
-    }
-
-    private func swipeAway(direction: SwipeDirection) {
-        let offscreenX: CGFloat
-        let offscreenY: CGFloat
-        switch direction {
-        case .right:
-            offscreenX = 500
-            offscreenY = 0
-        case .left:
-            offscreenX = -500
-            offscreenY = 0
-        }
-        withAnimation(.easeIn(duration: 0.25)) {
-            offset = CGSize(width: offscreenX, height: offscreenY)
-            rotation = direction == .right ? 15 : -15
-        }
-        DispatchQueue.main.asyncAfter(deadline: .now() + 0.25) {
-            offset = .zero
-            rotation = 0
-            switch direction {
-            case .right:
-                if let selectedProjectId {
-                    onConfirm(selectedProjectId)
+    private var actionRow: some View {
+        VStack(spacing: 10) {
+            Button {
+                if writesLocked {
+                    onBlockedWrite()
+                    return
                 }
-            case .left:
-                onOpenPicker()
+                guard let selectedProjectId else {
+                    onOpenPicker()
+                    return
+                }
+                onConfirm(selectedProjectId)
+            } label: {
+                Label(primaryActionText, systemImage: writesLocked ? "lock.fill" : "checkmark.circle.fill")
+                    .font(.headline)
+                    .frame(maxWidth: .infinity)
+                    .padding(.vertical, 10)
+            }
+            .buttonStyle(.borderedProminent)
+            .tint(writesLocked ? .noRed : .commentBlue)
+
+            Button("Skip for now") {
+                onSkip()
+            }
+            .font(.subheadline)
+            .fontWeight(.semibold)
+            .foregroundStyle(Color.skipGray)
+            .buttonStyle(.plain)
+        }
+    }
+
+    private var primaryActionText: String {
+        if writesLocked {
+            return "Writes temporarily locked"
+        }
+        if let selectedProjectName {
+            return "Confirm \(selectedProjectName)"
+        }
+        return "Choose a project to confirm"
+    }
+
+    private var shouldShowChoiceSet: Bool {
+        let uncertainCodes: Set<String> = ["low_confidence", "unknown_project", "cross_project", "no_match"]
+        if selectedProjectId == nil { return true }
+        if card.candidates.count > 1 { return true }
+        return card.reasonCodes.contains { uncertainCodes.contains($0) }
+    }
+
+    private var choiceSetSection: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            Text("Choose the right project")
+                .font(.caption)
+                .foregroundStyle(.secondary)
+
+            ForEach(choiceRows) { choice in
+                switch choice {
+                case .project(let id, let name):
+                    Button {
+                        onSelectProject(id)
+                    } label: {
+                        HStack {
+                            Text(name)
+                                .lineLimit(1)
+                            Spacer()
+                            if selectedProjectId == id {
+                                Image(systemName: "checkmark.circle.fill")
+                                    .foregroundStyle(Color.commentBlue)
+                            }
+                        }
+                        .font(.subheadline)
+                        .foregroundStyle(.white)
+                        .padding(.horizontal, 12)
+                        .padding(.vertical, 10)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                        .background(
+                            RoundedRectangle(cornerRadius: 10)
+                                .fill(selectedProjectId == id ? Color.commentBlue.opacity(0.22) : Color.chipBg)
+                        )
+                    }
+                    .buttonStyle(.plain)
+                case .picker(let label):
+                    Button {
+                        onOpenPicker()
+                    } label: {
+                        HStack {
+                            Text(label)
+                            Spacer()
+                            Image(systemName: "chevron.right")
+                                .font(.caption)
+                        }
+                        .font(.subheadline)
+                        .foregroundStyle(.white.opacity(0.9))
+                        .padding(.horizontal, 12)
+                        .padding(.vertical, 10)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                        .background(
+                            RoundedRectangle(cornerRadius: 10)
+                                .fill(Color.chipBg)
+                        )
+                    }
+                    .buttonStyle(.plain)
+                }
             }
         }
     }
 
-    private func snapBack() {
-        withAnimation(.interactiveSpring(response: 0.35, dampingFraction: 0.8)) {
-            offset = .zero
-            rotation = 0
+    private var choiceRows: [ChoiceRow] {
+        var rows: [ChoiceRow] = []
+        var seen = Set<String>()
+
+        func appendProject(id: String?, name: String?) {
+            guard let id else { return }
+            let trimmedId = id.trimmingCharacters(in: .whitespacesAndNewlines)
+            guard !trimmedId.isEmpty else { return }
+            guard !seen.contains(trimmedId) else { return }
+            let trimmedName = (name ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
+            guard !trimmedName.isEmpty else { return }
+            seen.insert(trimmedId)
+            rows.append(.project(id: trimmedId, name: trimmedName))
+        }
+
+        appendProject(id: card.projectId, name: aiSuggestedProjectName)
+        for candidate in card.candidates {
+            appendProject(id: candidate.projectId, name: candidate.name)
+        }
+        for option in quickProjectChoices {
+            appendProject(id: option.id, name: option.name)
+        }
+
+        rows = Array(rows.prefix(2))
+        if rows.count == 1 {
+            rows.append(.picker(label: "Choose another project"))
+        } else if rows.isEmpty {
+            rows = [
+                .picker(label: "Choose project"),
+                .picker(label: "Choose another project")
+            ]
+        }
+        return rows
+    }
+
+    private enum ChoiceRow: Identifiable {
+        case project(id: String, name: String)
+        case picker(label: String)
+
+        var id: String {
+            switch self {
+            case .project(let id, _):
+                return "project_\(id)"
+            case .picker(let label):
+                return "picker_\(label)"
+            }
         }
     }
-
-    private func formatReasonCode(_ code: String) -> String {
-        code.replacingOccurrences(of: "_", with: " ")
-    }
-
-    private func reasonCodeColor(_ code: String) -> Color {
-        switch code {
-        case "low_confidence": return .noRed
-        case "unknown_project": return .undoAmber
-        case "cross_project": return .commentBlue
-        case "no_match": return .noRed
-        default: return .skipGray
-        }
-    }
-
-    private enum SwipeDirection { case left, right }
 }
 
 // MARK: - EvidenceTokensSheet
