@@ -733,6 +733,7 @@ struct AttributionTriageCardsView: View {
 
         await MainActor.run {
             selectedProjectIdByCardId[card.id] = pickedProjectId
+            recordFirstValidPickIfNeeded(card: card, projectId: pickedProjectId, source: "truth_surface_auto_pick")
         }
         TriageSmokeAutomation.logger.log(
             "SMOKE_EVENT TRUTH_SURFACE_STAGE stage=picked project=\(pickedProjectId, privacy: .public) evidence_count=\(evidenceCount, privacy: .public)"
