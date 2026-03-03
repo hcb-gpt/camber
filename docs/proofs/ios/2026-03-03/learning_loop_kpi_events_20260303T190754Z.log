@@ -4,11 +4,3 @@
 2026-03-03 14:08:32.800 Df CamberRedline[55788:1c530c6] [CamberRedline:learning_loop] KPI_EVENT WRITE_ACTION surface=triage_cards action=resolve queue=bf6995a65d028524 request_id=stub_resolve__rq_smoke_truth_surface_v1
 2026-03-03 14:08:34.551 Df CamberRedline[55788:1c530c6] [CamberRedline:learning_loop] KPI_EVENT WRITE_STUB_USED action=undo queue=rq_smoke_truth_surface_v1 request_id=stub_undo__rq_smoke_truth_surface_v1
 2026-03-03 14:08:34.556 Df CamberRedline[55788:1c530c6] [CamberRedline:learning_loop] KPI_EVENT UNDO_COMMIT surface=triage_cards queue=bf6995a65d028524 undo_of=resolved request_id=stub_undo__rq_smoke_truth_surface_v1
-2026-03-03 14:09:27.381 Df CamberRedline[61275:1c5613c] [CamberRedline:learning_loop] KPI_EVENT PICK_SURFACE_APPEAR surface=triage_cards queue_depth=0
-2026-03-03 14:09:27.381 Df CamberRedline[61275:1c5613c] [CamberRedline:learning_loop] KPI_EVENT AUTH_LOCK_UI_DISABLED surface=triage_cards status_code=403 queue_depth=0
-2026-03-03 14:09:29.767 Df CamberRedline[61275:1c5613c] [CamberRedline:learning_loop] KPI_EVENT AUTH_LOCK_RECOVERY_UNLOCKED status_code=400 request_id=019cb51a-f897-76d6-952c-9fc2902df956
-2026-03-03 14:09:36.916 Df CamberRedline[61275:1c5613c] [CamberRedline:learning_loop] KPI_EVENT WRITE_ACTION surface=triage_cards action=resolve queue=840713f2b153ea57 request_id=019cb51b-10f8-78e1-846e-11fa3a71de6c
-2026-03-03 14:09:38.356 Df CamberRedline[61275:1c5613c] [CamberRedline:learning_loop] KPI_EVENT UNDO_COMMIT surface=triage_cards queue=840713f2b153ea57 undo_of=resolved request_id=019cb51b-18b6-71f9-8192-e80472f6e3da
-2026-03-03 14:13:14.511 Df CamberRedline[78271:1c5eec6] [CamberRedline:learning_loop] KPI_EVENT PICK_SURFACE_APPEAR surface=thread queue_depth=0
-2026-03-03 14:14:25.206 Df CamberRedline[78271:1c5eec6] [CamberRedline:learning_loop] KPI_EVENT WRITE_ACTION surface=thread action=resolve_single queue=1e568f8e1313100f request_id=019cb51f-76bd-70f1-bb20-f9b87d949947
-2026-03-03 14:14:26.841 Df CamberRedline[78271:1c5eec6] [CamberRedline:learning_loop] KPI_EVENT UNDO_COMMIT surface=thread queue=1e568f8e1313100f request_id=019cb51f-7f30-7fad-b479-cb0f01392ab2
