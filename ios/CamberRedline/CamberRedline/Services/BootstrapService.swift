@@ -5,6 +5,7 @@ import os
 private enum BootstrapSmokeAutomation {
     static let launchFlag = "--smoke-drive"
     static let truthSurfaceLocalFlag = "--smoke-truth-surface-local"
+    static let writeLockRecoveryFlag = "--smoke-write-lock-recovery"
     static let logger = Logger(subsystem: "CamberRedline", category: "smoke")
 
     static var isEnabled: Bool {
@@ -13,6 +14,14 @@ private enum BootstrapSmokeAutomation {
 
     static var truthSurfaceLocalEnabled: Bool {
         ProcessInfo.processInfo.arguments.contains(truthSurfaceLocalFlag)
+    }
+
+    static var writeLockRecoveryEnabled: Bool {
+        ProcessInfo.processInfo.arguments.contains(writeLockRecoveryFlag)
+    }
+
+    static var shouldForceWriteLock: Bool {
+        writeLockRecoveryEnabled && ProcessInfo.processInfo.environment["SMOKE_FORCE_WRITE_LOCK"] == "1"
     }
 }
 
@@ -100,6 +109,23 @@ final class BootstrapService {
         session = URLSession.shared
         decoder = JSONDecoder()
         encoder = JSONEncoder()
+
+        #if DEBUG
+        if BootstrapSmokeAutomation.writeLockRecoveryEnabled {
+            // Keep smoke runs deterministic: enable internal mode so X-Edge-Secret can be sent when available.
+            UserDefaults.standard.set(true, forKey: InternalModeConfig.enabledKey)
+        }
+        if BootstrapSmokeAutomation.shouldForceWriteLock {
+            writeLockState = BootstrapWriteLockState(
+                statusCode: 403,
+                errorCode: "invalid_auth",
+                error: "Write actions require X-Edge-Secret",
+                functionVersion: "bootstrap-review_v1.3.2",
+                requestId: "smoke-forced-lock",
+                observedAt: Date()
+            )
+        }
+        #endif
     }
 
     private var edgeSharedSecret: String? {
@@ -172,13 +198,22 @@ final class BootstrapService {
                 requestId: requestId
             ) {
                 writeLockState = lockState
+                BootstrapLearningLoopMetrics.log(
+                    "KPI_EVENT AUTH_LOCK_RECOVERY_LOCKED status_code=\(lockState.statusCode) request_id=\(lockState.requestId ?? "missing") error_code=\(lockState.errorCode ?? "missing")"
+                )
                 return .stillLocked(lockState)
             }
 
             // Any non-auth response means privileged auth checks passed.
             writeLockState = nil
+            BootstrapLearningLoopMetrics.log(
+                "KPI_EVENT AUTH_LOCK_RECOVERY_UNLOCKED status_code=\(http.statusCode) request_id=\(requestId ?? "missing")"
+            )
             return .unlocked(statusCode: http.statusCode, requestId: requestId)
         } catch {
+            BootstrapLearningLoopMetrics.log(
+                "KPI_EVENT AUTH_LOCK_RECOVERY_FAILED message=\(error.localizedDescription)"
+            )
             return .failed(
                 message: error.localizedDescription,
                 statusCode: nil,
