@@ -1,0 +1,4 @@
+3407:2026-03-03 01:41:03.780 Df CamberRedline[51597:1839e9f] [CamberRedline:learning_loop] KPI_EVENT AUTH_LOCK_RECOVERY_UNLOCKED status_code=400 request_id=019cb26d-c279-70b7-ae3d-5c7b47f2889d
+3902:2026-03-03 01:41:11.127 Df CamberRedline[51597:1839e9f] [CamberRedline:smoke] SMOKE_EVENT TRIAGE_ACTION kind=resolve queue=0ffa6d6a-b5d8-4b80-aad4-5ae8df83075c interaction=cll_SYNTH_SYNTH_FLOATER_CONTIN_1772335448 request_id=019cb26d-d9f3-7413-9e54-dc9c49d01a17
+15268:2026-03-03 01:52:47.951 Df CamberRedline[93573:1850e0f] [CamberRedline:learning_loop] KPI_EVENT AUTH_LOCK_SET status_code=403 error_code=invalid_auth request_id=019cb278-8139-71ff-8590-f85a0193833e function_version=bootstrap-review_v1.3.2
+15269:2026-03-03 01:52:47.951 Df CamberRedline[93573:1850e0f] [CamberRedline:smoke] SMOKE_EVENT TRIAGE_WRITE_LOCKED banner=Attribution writes temporarily locked. Truth surface remains readable. (bootstrap-review_v1.3.2, request_id: 019cb278-8139-71ff-8590-f85a0193833e)
