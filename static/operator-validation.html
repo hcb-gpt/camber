@@ -447,11 +447,16 @@
   </div>
 
   <script>
-    var SUPABASE_URL = "https://rjhdwidddtfetbwqolof.supabase.co";
-    var SUPABASE_ANON_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InJqaGR3aWRkZHRmZXRid3FvbG9mIiwicm9sZSI6ImFub24iLCJpYXQiOjE3MzE3OTQxMjMsImV4cCI6MjA0NzM3MDEyM30.G5G1ehbOSNPdqm3gCnurNFTgOQGyyqhq02BYDXQR8eg";
+    var runtimeCfg = window.__CAMBER_RUNTIME__ || {};
+    var SUPABASE_URL = runtimeCfg.supabaseUrl || "https://rjhdwidddtfetbwqolof.supabase.co";
+    var SUPABASE_ANON_KEY = runtimeCfg.supabaseAnonKey || "";
+    var OPERATOR_VALIDATION_UI_URL = SUPABASE_URL + "/functions/v1/operator-validation-ui";
     var API_URL = SUPABASE_URL + "/functions/v1/operator-validation";
 
-    var sb = supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
+    var sb = null;
+    if (SUPABASE_ANON_KEY) {
+      sb = supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
+    }
     var currentToken = null;
     var feedbackMap = {};
 
@@ -459,6 +464,17 @@
     var authEl = document.getElementById("auth-section");
     var mainEl = document.getElementById("main-section");
     var authErrorEl = document.getElementById("auth-error");
+    var loginFormEl = document.getElementById("login-form");
+
+    function showRuntimeConfigError() {
+      showSection("auth");
+      authErrorEl.style.display = "block";
+      authErrorEl.textContent =
+        "Missing runtime Supabase config for this static page. Open operator-validation-ui for env-backed auth: " +
+        OPERATOR_VALIDATION_UI_URL;
+      var controls = loginFormEl.querySelectorAll("input, button");
+      for (var i = 0; i < controls.length; i++) controls[i].disabled = true;
+    }
 
     function showSection(name) {
       loadingEl.style.display = name === "loading" ? "block" : "none";
@@ -713,12 +729,14 @@
     }
 
     async function handleSession(session) {
+      if (!sb) { showRuntimeConfigError(); return; }
       if (!session) { showSection("auth"); return; }
       currentToken = session.access_token;
       await loadSpans();
     }
 
     document.getElementById("signout-btn").addEventListener("click", async function() {
+      if (!sb) return;
       await sb.auth.signOut();
       currentToken = null;
       showSection("auth");
@@ -731,6 +749,10 @@
     });
     document.getElementById("login-form").addEventListener("submit", async function(e) {
       e.preventDefault();
+      if (!sb) {
+        showRuntimeConfigError();
+        return;
+      }
       authErrorEl.style.display = "none";
       var email = document.getElementById("email").value;
       var password = document.getElementById("password").value;
@@ -744,6 +766,10 @@
     });
 
     (async function() {
+      if (!sb) {
+        showRuntimeConfigError();
+        return;
+      }
       var result = await sb.auth.getSession();
       handleSession(result.data.session);
     })();
