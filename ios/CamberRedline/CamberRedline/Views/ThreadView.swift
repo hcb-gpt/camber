@@ -11,6 +11,14 @@ private enum ThreadSwipeSmokeAutomation {
     }
 }
 
+private enum ThreadLearningLoopMetrics {
+    static let logger = Logger(subsystem: "CamberRedline", category: "learning_loop")
+
+    static func log(_ message: String) {
+        logger.log("\(message, privacy: .public)")
+    }
+}
+
 // MARK: - Display Group
 
 /// Project attribution for SMS zebra striping (dummy until API provides data).
@@ -117,6 +125,9 @@ struct ThreadView: View {
     @State private var pendingUndo: PendingUndoAction?
     @State private var undoClearTask: Task<Void, Never>?
     @State private var didRunThreadSwipeSmoke = false
+    @State private var threadSurfaceAppearedAt: Date?
+    @State private var didRecordFirstThreadPick = false
+    @State private var didLogThreadAuthLockVisible = false
     private let bottomAnchorID = "thread-bottom-anchor"
     private let topLoadThreshold: CGFloat = -80
     private static let smsStripeColors: [Color] = [
@@ -389,6 +400,19 @@ struct ThreadView: View {
                 .padding()
             }
             .task(id: contact.contactId) {
+                threadSurfaceAppearedAt = Date()
+                didRecordFirstThreadPick = false
+                didLogThreadAuthLockVisible = false
+                ThreadLearningLoopMetrics.log(
+                    "KPI_EVENT PICK_SURFACE_APPEAR surface=thread queue_depth=\(displayGroups.count)"
+                )
+                if viewModel.isAttributionWritesLocked {
+                    didLogThreadAuthLockVisible = true
+                    ThreadLearningLoopMetrics.log(
+                        "KPI_EVENT AUTH_LOCK_UI_DISABLED surface=thread queue_depth=\(displayGroups.count)"
+                    )
+                }
+
                 hasScrolledToLatest = false
                 didTriggerTopPagination = false
                 hasUserScrolledThread = false
@@ -412,6 +436,16 @@ struct ThreadView: View {
                 hasScrolledToLatest = true
 
                 await runThreadSwipeSmokeIfEnabled()
+            }
+            .onChange(of: viewModel.isAttributionWritesLocked) { _, isLocked in
+                if isLocked, !didLogThreadAuthLockVisible {
+                    didLogThreadAuthLockVisible = true
+                    ThreadLearningLoopMetrics.log(
+                        "KPI_EVENT AUTH_LOCK_UI_DISABLED surface=thread queue_depth=\(displayGroups.count)"
+                    )
+                } else if !isLocked {
+                    didLogThreadAuthLockVisible = false
+                }
             }
             .onChange(of: viewModel.threadItems.count) { _, newCount in
                 guard newCount > 0 else { return }
@@ -499,6 +533,10 @@ struct ThreadView: View {
                 .foregroundStyle(Color(.systemGray2))
             Spacer()
             Button("Undo") {
+                let ageMs = max(0, Int(Date().timeIntervalSince(action.createdAt) * 1000))
+                ThreadLearningLoopMetrics.log(
+                    "KPI_EVENT UNDO_TAP surface=thread queue=\(action.reviewQueueId) undo_of=\(action.kind.rawValue) age_ms=\(ageMs)"
+                )
                 undoAction(action)
             }
             .font(.caption)
@@ -768,6 +806,7 @@ struct ThreadView: View {
             viewModel.showTransientError("Select a project before applying attribution.")
             return
         }
+        recordFirstThreadPickIfNeeded(queueId: queueId, source: "span_picker")
         let rawNotes = viewModel.noteText(targetType: .span, targetId: span.spanId.uuidString)
             .trimmingCharacters(in: .whitespacesAndNewlines)
         let notes = rawNotes.isEmpty ? nil : rawNotes
@@ -804,6 +843,7 @@ struct ThreadView: View {
         let optimisticAssignment = reviewProjectOptions.first(where: { $0.projectId == projectId })
             ?? SMSProjectAssignment(projectId: projectId, name: span.projectName ?? "Assigned", colorIndex: nil)
         spanOverrides[span.spanId] = optimisticAssignment
+        recordFirstThreadPickIfNeeded(queueId: queueId, source: "span_confirm_guess")
 
         let rawNotes = viewModel.noteText(targetType: .span, targetId: span.spanId.uuidString)
             .trimmingCharacters(in: .whitespacesAndNewlines)
@@ -871,6 +911,7 @@ struct ThreadView: View {
                 return entry.reviewQueueId
             }
         guard !queueIds.isEmpty else { return }
+        recordFirstThreadPickIfNeeded(queueId: queueIds[0], source: "sms_picker")
         Task {
             let didResolve = await viewModel.resolveAttributions(
                 reviewQueueIds: queueIds,
@@ -1024,6 +1065,18 @@ struct ThreadView: View {
             return Color(red: 0.22, green: 0.22, blue: 0.24)
         }
         return Self.smsStripeColors[colorIndex % Self.smsStripeColors.count]
+    }
+
+    private func recordFirstThreadPickIfNeeded(queueId: String, source: String) {
+        guard !queueId.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return }
+        guard !didRecordFirstThreadPick else { return }
+        guard let appearedAt = threadSurfaceAppearedAt else { return }
+
+        let elapsedMs = max(0, Int(Date().timeIntervalSince(appearedAt) * 1000))
+        ThreadLearningLoopMetrics.log(
+            "KPI_EVENT PICK_TIME_SAMPLE surface=thread elapsed_ms=\(elapsedMs) queue=\(queueId) source=\(source)"
+        )
+        didRecordFirstThreadPick = true
     }
 
     private func openNoteEditor(title: String, targets: [ThreadNoteTarget]) {
