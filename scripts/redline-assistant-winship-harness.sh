@@ -12,6 +12,11 @@ if ! command -v jq >/dev/null 2>&1; then
   exit 1
 fi
 
+if ! command -v awk >/dev/null 2>&1; then
+  echo "ERROR: awk is required" >&2
+  exit 1
+fi
+
 SUPABASE_BASE="${SUPABASE_URL:-https://rjhdwidddtfetbwqolof.supabase.co}"
 FUNCTION_URL="${REDLINE_ASSISTANT_URL:-${SUPABASE_BASE}/functions/v1/redline-assistant}"
 OUT_DIR="${OUT_DIR:-${ROOT_DIR}/artifacts/redline_assistant_harness/$(date -u +%Y%m%dT%H%M%SZ)}"
@@ -26,6 +31,15 @@ if [[ -n "${SUPABASE_ANON_KEY:-}" ]]; then
   CURL_HEADERS+=(-H "apikey: ${SUPABASE_ANON_KEY}")
   CURL_HEADERS+=(-H "Authorization: Bearer ${SUPABASE_ANON_KEY}")
 fi
+
+BANNED_RE='UTC|\binbound\b|\boutbound\b|\binteraction(s)?\b|these interactions show'
+ISO_DATE_RE='\b[0-9]{4}-[0-9]{2}-[0-9]{2}([T ][0-9]{2}:[0-9]{2}(:[0-9]{2})?)?(Z)?\b'
+NEXT_STEP_RE='(^|[[:space:]])(Next:|Want me to|I can)'
+HUMAN_TIME_RE='(this morning|this afternoon|this evening|today|tonight|tomorrow|yesterday|last night|[0-9]+[[:space:]]+days?[[:space:]]+ago|over a week ago)'
+MAX_WORDS=200
+
+PROMPT_SLUGS=("q1_permar_status" "q2_hurley_schedule")
+PROMPT_TEXTS=("tell me about permar" "whos at hurley tomorrow")
 
 header_value() {
   local header_file="$1"
@@ -45,8 +59,8 @@ header_value() {
 }
 
 run_prompt() {
-  local prompt="$1"
-  local slug="$2"
+  local slug="$1"
+  local prompt="$2"
   local payload
   payload="$(jq -n --arg message "${prompt}" '{message: $message}')"
 
@@ -65,78 +79,84 @@ run_prompt() {
     | jq -r '.choices[0].delta.content // empty' \
     > "${text_file}" || true
 
-  tr -d '\r\n' < "${text_file}"
+  tr '\n' ' ' < "${text_file}" | tr -s ' ' | sed 's/^ //; s/ $//'
 }
-
-PROMPT_A="Tell me about winship"
-PROMPT_B="What projects do you have"
 
 echo "== redline-assistant harness =="
 echo "FUNCTION_URL=${FUNCTION_URL}"
 echo "OUT_DIR=${OUT_DIR}"
 
-ANSWER_A="$(run_prompt "${PROMPT_A}" "q1_winship_hardscape")"
-ANSWER_B="$(run_prompt "${PROMPT_B}" "q2_projects_roster")"
-
-echo
-echo "Q1: ${PROMPT_A}"
-echo "A1: ${ANSWER_A}"
-echo
-echo "Q2: ${PROMPT_B}"
-echo "A2: ${ANSWER_B}"
-echo
-
-PASS_A=0
-PASS_B=0
-PASS_A_STYLE=0
-
-if grep -qi "winship" <<<"${ANSWER_A}"; then PASS_A=1; fi
-if grep -qi "winship" <<<"${ANSWER_B}"; then PASS_B=1; fi
-
-if ! grep -Eiq 'UTC|interaction|inbound|outbound|These interactions show' <<<"${ANSWER_A}" \
-  && grep -Eiq '(^|[[:space:]])(Next:|Want me to)' <<<"${ANSWER_A}" \
-  && [[ "${#ANSWER_A}" -le 1200 ]]; then
-  PASS_A_STYLE=1
-fi
-
-REQ_A="$(header_value "${OUT_DIR}/q1_winship_hardscape.headers" "x-request-id")"
-REQ_B="$(header_value "${OUT_DIR}/q2_projects_roster.headers" "x-request-id")"
-CTX_REQ_A="$(header_value "${OUT_DIR}/q1_winship_hardscape.headers" "x-assistant-context-request-id")"
-CTX_REQ_B="$(header_value "${OUT_DIR}/q2_projects_roster.headers" "x-assistant-context-request-id")"
-CONTRACT_A="$(header_value "${OUT_DIR}/q1_winship_hardscape.headers" "x-assistant-context-contract-version")"
-CONTRACT_B="$(header_value "${OUT_DIR}/q2_projects_roster.headers" "x-assistant-context-contract-version")"
-MODEL_A="$(header_value "${OUT_DIR}/q1_winship_hardscape.headers" "x-model-id")"
-MODEL_B="$(header_value "${OUT_DIR}/q2_projects_roster.headers" "x-model-id")"
-
-echo "CHECK_WINSHIP_Q1=${PASS_A}"
-echo "CHECK_WINSHIP_Q2=${PASS_B}"
-echo "CHECK_STYLE_Q1=${PASS_A_STYLE}"
-echo "REQUEST_ID_Q1=${REQ_A:-NONE}"
-echo "REQUEST_ID_Q2=${REQ_B:-NONE}"
-echo "ASSISTANT_CONTEXT_REQUEST_ID_Q1=${CTX_REQ_A:-NONE}"
-echo "ASSISTANT_CONTEXT_REQUEST_ID_Q2=${CTX_REQ_B:-NONE}"
-echo "CONTRACT_VERSION_Q1=${CONTRACT_A:-NONE}"
-echo "CONTRACT_VERSION_Q2=${CONTRACT_B:-NONE}"
-echo "MODEL_Q1=${MODEL_A:-NONE}"
-echo "MODEL_Q2=${MODEL_B:-NONE}"
-
 SUMMARY_FILE="${OUT_DIR}/summary.txt"
-cat > "${SUMMARY_FILE}" <<EOF
-CHECK_WINSHIP_Q1=${PASS_A}
-CHECK_WINSHIP_Q2=${PASS_B}
-CHECK_STYLE_Q1=${PASS_A_STYLE}
-REQUEST_ID_Q1=${REQ_A:-NONE}
-REQUEST_ID_Q2=${REQ_B:-NONE}
-ASSISTANT_CONTEXT_REQUEST_ID_Q1=${CTX_REQ_A:-NONE}
-ASSISTANT_CONTEXT_REQUEST_ID_Q2=${CTX_REQ_B:-NONE}
-CONTRACT_VERSION_Q1=${CONTRACT_A:-NONE}
-CONTRACT_VERSION_Q2=${CONTRACT_B:-NONE}
-MODEL_Q1=${MODEL_A:-NONE}
-MODEL_Q2=${MODEL_B:-NONE}
-EOF
+: > "${SUMMARY_FILE}"
+
+HARNESS_STATUS=PASS
+for i in "${!PROMPT_SLUGS[@]}"; do
+  slug="${PROMPT_SLUGS[$i]}"
+  prompt="${PROMPT_TEXTS[$i]}"
+  answer="$(run_prompt "${slug}" "${prompt}")"
+  text_file="${OUT_DIR}/${slug}.txt"
+  header_file="${OUT_DIR}/${slug}.headers"
+
+  word_count="$(awk '{c += NF} END {print c+0}' "${text_file}")"
+  check_banned=1
+  check_next=1
+  check_human_time=1
+  check_word_cap=1
+
+  if grep -Eiq "${BANNED_RE}" <<<"${answer}" || grep -Eiq "${ISO_DATE_RE}" <<<"${answer}"; then
+    check_banned=0
+  fi
+  if ! grep -Eiq "${NEXT_STEP_RE}" <<<"${answer}"; then
+    check_next=0
+  fi
+  if ! grep -Eiq "${HUMAN_TIME_RE}" <<<"${answer}"; then
+    check_human_time=0
+  fi
+  if [[ "${word_count}" -gt "${MAX_WORDS}" ]]; then
+    check_word_cap=0
+  fi
+
+  check_style=1
+  if [[ "${check_banned}" -ne 1 || "${check_next}" -ne 1 || "${check_human_time}" -ne 1 || "${check_word_cap}" -ne 1 ]]; then
+    check_style=0
+    HARNESS_STATUS=FAIL
+  fi
+
+  req_id="$(header_value "${header_file}" "x-request-id")"
+  ctx_req_id="$(header_value "${header_file}" "x-assistant-context-request-id")"
+  contract_ver="$(header_value "${header_file}" "x-assistant-context-contract-version")"
+  model_id="$(header_value "${header_file}" "x-model-id")"
+
+  echo
+  echo "PROMPT_${slug}=${prompt}"
+  echo "ANSWER_${slug}=${answer}"
+  echo "CHECK_${slug}_NO_DUMP_TOKENS=${check_banned}"
+  echo "CHECK_${slug}_HAS_NEXT_STEP=${check_next}"
+  echo "CHECK_${slug}_HAS_HUMAN_TIME=${check_human_time}"
+  echo "CHECK_${slug}_WORD_CAP=${check_word_cap} (words=${word_count}, cap=${MAX_WORDS})"
+  echo "CHECK_${slug}_STYLE=${check_style}"
+  echo "REQUEST_ID_${slug}=${req_id:-NONE}"
+  echo "ASSISTANT_CONTEXT_REQUEST_ID_${slug}=${ctx_req_id:-NONE}"
+  echo "CONTRACT_VERSION_${slug}=${contract_ver:-NONE}"
+  echo "MODEL_${slug}=${model_id:-NONE}"
+
+  {
+    echo "PROMPT_${slug}=${prompt}"
+    echo "CHECK_${slug}_NO_DUMP_TOKENS=${check_banned}"
+    echo "CHECK_${slug}_HAS_NEXT_STEP=${check_next}"
+    echo "CHECK_${slug}_HAS_HUMAN_TIME=${check_human_time}"
+    echo "CHECK_${slug}_WORD_CAP=${check_word_cap}"
+    echo "CHECK_${slug}_STYLE=${check_style}"
+    echo "REQUEST_ID_${slug}=${req_id:-NONE}"
+    echo "ASSISTANT_CONTEXT_REQUEST_ID_${slug}=${ctx_req_id:-NONE}"
+    echo "CONTRACT_VERSION_${slug}=${contract_ver:-NONE}"
+    echo "MODEL_${slug}=${model_id:-NONE}"
+  } >> "${SUMMARY_FILE}"
+done
+
 echo "SUMMARY_FILE=${SUMMARY_FILE}"
 
-if [[ "${PASS_A}" -eq 1 && "${PASS_B}" -eq 1 && "${PASS_A_STYLE}" -eq 1 ]]; then
+if [[ "${HARNESS_STATUS}" == "PASS" ]]; then
   echo "HARNESS_STATUS=PASS"
 else
   echo "HARNESS_STATUS=FAIL"

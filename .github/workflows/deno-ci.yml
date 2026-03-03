@@ -83,23 +83,34 @@ jobs:
   # Source: STRAT TURN:85 tasking
   invariant-gates:
     runs-on: ubuntu-latest
-    # Triggers on changes to functions, migrations, or scripts
-    if: |
-      github.event_name == 'workflow_dispatch' ||
-      (github.event_name == 'pull_request' && (
-        contains(github.event.pull_request.changed_files, 'supabase/functions/') ||
-        contains(github.event.pull_request.changed_files, 'supabase/migrations/') ||
-        contains(github.event.pull_request.changed_files, 'scripts/') ||
-        contains(github.event.pull_request.changed_files, '.camber/')
-      ))
+    # Always evaluate on PR + manual runs; scope filtering happens in steps.
+    if: github.event_name == 'pull_request' || github.event_name == 'workflow_dispatch'
     env:
       SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
       SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
     steps:
       - uses: actions/checkout@v4
 
+      - name: Detect invariant-gate scoped changes
+        id: changes
+        if: github.event_name == 'pull_request'
+        uses: dorny/paths-filter@v3
+        with:
+          filters: |
+            gate_scope:
+              - 'supabase/functions/**'
+              - 'supabase/migrations/**'
+              - 'scripts/**'
+              - '.camber/**'
+
+      - name: Scoped-change summary
+        if: github.event_name == 'pull_request'
+        run: |
+          echo "gate_scope=${{ steps.changes.outputs.gate_scope }}"
+
       - name: Verify secrets configured
         id: check-secrets
+        if: github.event_name == 'workflow_dispatch' || steps.changes.outputs.gate_scope == 'true'
         run: |
           if [[ -z "$SUPABASE_URL" || -z "$SUPABASE_SERVICE_ROLE_KEY" ]]; then
             echo "::warning::Secrets not configured - invariant gates will be skipped"
@@ -108,21 +119,27 @@ jobs:
             echo "secrets_ok=true" >> $GITHUB_OUTPUT
           fi
 
+      - name: Skip invariant gates (no scoped changes)
+        if: github.event_name == 'pull_request' && steps.changes.outputs.gate_scope != 'true'
+        run: |
+          echo "No supabase/functions, supabase/migrations, scripts, or .camber changes in this PR."
+          echo "Invariant gates intentionally skipped."
+
       - name: Run invariant gates
-        if: steps.check-secrets.outputs.secrets_ok == 'true'
+        if: (github.event_name == 'workflow_dispatch' || steps.changes.outputs.gate_scope == 'true') && steps.check-secrets.outputs.secrets_ok == 'true'
         run: |
           chmod +x ./scripts/invariant_gates.sh
           ./scripts/invariant_gates.sh --verbose
         continue-on-error: false
 
       - name: Save gate results (JSON)
-        if: always() && steps.check-secrets.outputs.secrets_ok == 'true'
+        if: always() && (github.event_name == 'workflow_dispatch' || steps.changes.outputs.gate_scope == 'true') && steps.check-secrets.outputs.secrets_ok == 'true'
         run: |
           mkdir -p /tmp/gate-results
           ./scripts/invariant_gates.sh --json > /tmp/gate-results/gates.json 2>/dev/null || true
 
       - name: Upload gate results
-        if: always() && steps.check-secrets.outputs.secrets_ok == 'true'
+        if: always() && (github.event_name == 'workflow_dispatch' || steps.changes.outputs.gate_scope == 'true') && steps.check-secrets.outputs.secrets_ok == 'true'
         uses: actions/upload-artifact@v4
         with:
           name: invariant-gates-${{ github.run_id }}
