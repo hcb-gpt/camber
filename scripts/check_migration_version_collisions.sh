@@ -52,18 +52,31 @@ find "${MIG_DIR}" -maxdepth 1 -type f -name '*.sql' -print0 \
 
 collisions="$(
   awk -F'|' '
-    {
-      files[$1] = files[$1] "\n  - " $2
-      count[$1]++
-    }
-    END {
-      for (v in count) {
-        if (count[v] > 1) {
-          print v "|" count[v] files[v]
-        }
+    function flush() {
+      if (current != "" && count > 1) {
+        printf "- version %s has %d files:%s\n", current, count, files
       }
     }
-  ' "${tmp_file}" | sort
+    {
+      version = $1
+      file = $2
+
+      if (current == "") current = version
+
+      if (version != current) {
+        flush()
+        current = version
+        count = 0
+        files = ""
+      }
+
+      count++
+      files = files "\n  - " file
+    }
+    END {
+      flush()
+    }
+  ' "${tmp_file}"
 )"
 
 if [[ -z "${collisions}" ]]; then
@@ -72,8 +85,6 @@ if [[ -z "${collisions}" ]]; then
 fi
 
 echo "FAIL: duplicate migration version prefixes detected:"
-echo "${collisions}" | while IFS='|' read -r version n rest; do
-  echo "- version ${version} has ${n} files:${rest}"
-done
+printf "%s\n" "${collisions}"
 
 exit 1
