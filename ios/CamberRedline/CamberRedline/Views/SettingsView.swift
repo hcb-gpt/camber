@@ -10,6 +10,7 @@ struct SettingsView: View {
     @State private var edgeSecretDraft = ""
     @State private var hasStoredEdgeSecret = BootstrapService.shared.hasStoredEdgeSecret()
     @State private var internalModeStatusMessage: String?
+    @AppStorage("triage_surface_mode_v1") private var triageSurfaceModeRawValue = TriageSurfaceMode.contractor.rawValue
     #endif
 
     private let bgColor = Color(white: 0.06)
@@ -119,6 +120,20 @@ struct SettingsView: View {
                                 .foregroundStyle(.secondary)
                         }
                     }
+                }
+                #endif
+
+                #if DEBUG
+                Section("Triage Surface (DEBUG)") {
+                    Picker("Mode", selection: $triageSurfaceModeRawValue) {
+                        Text("Contractor").tag(TriageSurfaceMode.contractor.rawValue)
+                        Text("Dev").tag(TriageSurfaceMode.dev.rawValue)
+                    }
+                    .pickerStyle(.segmented)
+
+                    Text("Contractor hides model/confidence/evidence metadata. Dev exposes diagnostics.")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
                 }
                 #endif
 
