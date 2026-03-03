@@ -1,6 +1,16 @@
 import { assert, assertEquals } from "https://deno.land/std@0.218.0/assert/mod.ts";
 import { runTopLevelEdgeSecretOrAnonKeyProbe, runTopLevelEdgeSecretProbe } from "./auth_gate.ts";
 
+function toB64Url(input: string): string {
+  return btoa(input).replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/g, "");
+}
+
+function makeUnsignedJwt(payload: Record<string, unknown>): string {
+  const header = toB64Url(JSON.stringify({ alg: "none", typ: "JWT" }));
+  const body = toB64Url(JSON.stringify(payload));
+  return `${header}.${body}.sig`;
+}
+
 Deno.test("redline-thread keeps auth gate before non-health service-role client create", () => {
   const source = Deno.readTextFileSync(new URL("./index.ts", import.meta.url));
   const authCheckIdx = source.indexOf("checkTopLevelEdgeSecret(req)");
@@ -93,6 +103,78 @@ Deno.test("top-level gate (edge-secret-or-anon) rejects junk Bearer tokens", asy
   assertEquals(resp.status, 403);
   assertEquals(body.ok, false);
   assertEquals(body.error_code, "invalid_auth");
+});
+
+Deno.test("top-level gate (edge-secret-or-anon) allows publishable non-JWT anon keys via REST probe", async () => {
+  const publishableKey = "sb_publishable_test_123";
+  const req = new Request("https://example.test/functions/v1/redline-thread?action=contacts", {
+    headers: {
+      Authorization: `Bearer ${publishableKey}`,
+    },
+  });
+
+  const originalFetch = globalThis.fetch;
+  let seenApiKey: string | null = null;
+  let seenAuthorization: string | null = null;
+  globalThis.fetch = ((_input: RequestInfo | URL, init?: RequestInit) => {
+    const headers = new Headers(init?.headers);
+    seenApiKey = headers.get("apikey");
+    seenAuthorization = headers.get("Authorization");
+    return Promise.resolve(new Response("[]", { status: 200, headers: { "Content-Type": "application/json" } }));
+  }) as typeof fetch;
+
+  try {
+    const resp = await runTopLevelEdgeSecretOrAnonKeyProbe(
+      req,
+      "expected-secret",
+      "expected-anon",
+      "https://abc123.test",
+      "test-v1",
+    );
+    const body = await resp.json();
+
+    assertEquals(resp.status, 200);
+    assertEquals(body.ok, true);
+    assertEquals(body.auth, "bearer");
+    assertEquals(seenApiKey, publishableKey);
+    assertEquals(seenAuthorization, null);
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
+Deno.test("top-level gate (edge-secret-or-anon) rejects JWT anon token with mismatched project ref", async () => {
+  const token = makeUnsignedJwt({ role: "anon", ref: "wrongref" });
+  const req = new Request("https://example.test/functions/v1/redline-thread?action=contacts", {
+    headers: {
+      Authorization: `Bearer ${token}`,
+    },
+  });
+
+  const originalFetch = globalThis.fetch;
+  let fetchCalls = 0;
+  globalThis.fetch = (() => {
+    fetchCalls += 1;
+    return Promise.resolve(new Response("[]", { status: 200, headers: { "Content-Type": "application/json" } }));
+  }) as typeof fetch;
+
+  try {
+    const resp = await runTopLevelEdgeSecretOrAnonKeyProbe(
+      req,
+      "expected-secret",
+      undefined,
+      "https://abc123.test",
+      "test-v1",
+    );
+    const body = await resp.json();
+
+    assertEquals(resp.status, 403);
+    assertEquals(body.ok, false);
+    assertEquals(body.error_code, "invalid_auth");
+    assertEquals(fetchCalls, 0);
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
 });
 
 Deno.test("redline-thread allows anon-key for truth_graph action", () => {
