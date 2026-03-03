@@ -4,10 +4,23 @@ import os
 
 private enum BootstrapSmokeAutomation {
     static let launchFlag = "--smoke-drive"
+    static let truthSurfaceLocalFlag = "--smoke-truth-surface-local"
     static let logger = Logger(subsystem: "CamberRedline", category: "smoke")
 
     static var isEnabled: Bool {
         ProcessInfo.processInfo.arguments.contains(launchFlag)
+    }
+
+    static var truthSurfaceLocalEnabled: Bool {
+        ProcessInfo.processInfo.arguments.contains(truthSurfaceLocalFlag)
+    }
+}
+
+private enum BootstrapLearningLoopMetrics {
+    static let logger = Logger(subsystem: "CamberRedline", category: "learning_loop")
+
+    static func log(_ message: String) {
+        logger.log("\(message, privacy: .public)")
     }
 }
 
@@ -27,6 +40,7 @@ final class BootstrapService {
     #if DEBUG
     private enum InternalModeConfig {
         static let enabledKey = "bootstrap_internal_mode_enabled_v1"
+        static let writeStubEnabledKey = "bootstrap_internal_mode_write_stub_enabled_v1"
         static let keychainService = "CamberRedline"
         static let keychainAccount = "bootstrap_edge_secret_v1"
     }
@@ -47,7 +61,12 @@ final class BootstrapService {
     var writesLockedBannerText: String? {
         guard let state = writeLockState else { return nil }
 
-        var message = "Attribution writes temporarily locked (needs privileged auth). Reads still available."
+        var message = "Attribution writes temporarily locked. Truth surface remains readable."
+        #if DEBUG
+        if shouldUseWriteStubWhenLocked {
+            message = "Attribution writes temporarily locked. Local write stub is active for UI testing only (no server writes)."
+        }
+        #endif
         var meta: [String] = []
         if let functionVersion = state.functionVersion?.trimmingCharacters(in: .whitespacesAndNewlines),
            !functionVersion.isEmpty {
@@ -114,6 +133,14 @@ final class BootstrapService {
         }
     }
 
+    func isWriteStubEnabled() -> Bool {
+        UserDefaults.standard.bool(forKey: InternalModeConfig.writeStubEnabledKey)
+    }
+
+    func setWriteStubEnabled(_ enabled: Bool) {
+        UserDefaults.standard.set(enabled, forKey: InternalModeConfig.writeStubEnabledKey)
+    }
+
     func hasStoredEdgeSecret() -> Bool {
         (try? KeychainStore.readString(service: InternalModeConfig.keychainService, account: InternalModeConfig.keychainAccount)) != nil
     }
@@ -142,6 +169,46 @@ final class BootstrapService {
             return edgeSharedSecret
         }
         return try? KeychainStore.readString(service: InternalModeConfig.keychainService, account: InternalModeConfig.keychainAccount)
+    }
+
+    private var shouldUseWriteStubWhenLocked: Bool {
+        isInternalModeEnabled() && isWriteStubEnabled()
+    }
+
+    private func shouldUseWriteStub(hasLockState: Bool) -> Bool {
+        if BootstrapSmokeAutomation.truthSurfaceLocalEnabled {
+            return true
+        }
+        return hasLockState && shouldUseWriteStubWhenLocked
+    }
+
+    private func stubWriteResponse(action: String, bodyData: Data) throws -> Data {
+        let payload = (try? JSONSerialization.jsonObject(with: bodyData) as? [String: Any]) ?? [:]
+        let queueId = (payload["review_queue_id"] as? String)?.trimmingCharacters(in: .whitespacesAndNewlines) ?? "unknown_queue"
+        let requestId = "stub_\(action)__\(queueId)"
+
+        var object: [String: Any] = [
+            "ok": true,
+            "request_id": requestId
+        ]
+        switch action {
+        case "resolve":
+            object["review_queue_id"] = queueId
+            object["was_already_resolved"] = false
+            if let chosenProjectId = payload["project_id"] as? String {
+                object["chosen_project_id"] = chosenProjectId
+            }
+        case "dismiss", "undo", "skip":
+            break
+        default:
+            break
+        }
+
+        let data = try JSONSerialization.data(withJSONObject: object)
+        BootstrapLearningLoopMetrics.log(
+            "KPI_EVENT WRITE_STUB_USED action=\(action) queue=\(queueId) request_id=\(requestId)"
+        )
+        return data
     }
     #endif
 
@@ -449,6 +516,14 @@ final class BootstrapService {
     // MARK: - Helpers
 
     private func post<T: Encodable>(action: String, body: T) async throws -> Data {
+        let bodyData = try encoder.encode(body)
+
+        #if DEBUG
+        if shouldUseWriteStub(hasLockState: writeLockState != nil) {
+            return try stubWriteResponse(action: action, bodyData: bodyData)
+        }
+        #endif
+
         if let writeLockState {
             throw BootstrapServiceError.writesLocked(writeLockState)
         }
@@ -464,10 +539,22 @@ final class BootstrapService {
         request.httpMethod = "POST"
         request.setValue("application/json", forHTTPHeaderField: "Content-Type")
         applyAuthHeaders(to: &request, edgeSecretPolicy: .bootstrapWritesOnly, isWrite: true)
-        request.httpBody = try encoder.encode(body)
+        request.httpBody = bodyData
 
         let (data, response) = try await session.data(for: request)
-        try validateHTTPResponse(response, data: data, isWrite: true)
+        do {
+            try validateHTTPResponse(response, data: data, isWrite: true)
+        } catch let error as BootstrapServiceError {
+            guard case .writesLocked = error else {
+                throw error
+            }
+            #if DEBUG
+            if shouldUseWriteStub(hasLockState: true) {
+                return try stubWriteResponse(action: action, bodyData: bodyData)
+            }
+            #endif
+            throw error
+        }
 
         guard let http = response as? HTTPURLResponse else {
             return data
@@ -530,6 +617,9 @@ final class BootstrapService {
                         observedAt: Date()
                     )
                     writeLockState = lockState
+                    BootstrapLearningLoopMetrics.log(
+                        "KPI_EVENT AUTH_LOCK_SET status_code=\(http.statusCode) error_code=\(payload.errorCode ?? "missing") request_id=\(requestId ?? "missing") function_version=\(payload.functionVersion ?? "missing")"
+                    )
                     throw BootstrapServiceError.writesLocked(lockState)
                 }
 
@@ -658,7 +748,7 @@ enum BootstrapServiceError: LocalizedError {
         case .apiError(let message):
             return message
         case .writesLocked(let state):
-            var message = "Attribution writes temporarily locked (needs privileged auth). Reads still available."
+            var message = "Attribution writes temporarily locked. Truth surface remains readable."
             if let functionVersion = state.functionVersion?.trimmingCharacters(in: .whitespacesAndNewlines),
                !functionVersion.isEmpty {
                 message += " (\(functionVersion))"

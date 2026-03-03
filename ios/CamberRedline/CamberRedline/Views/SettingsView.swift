@@ -6,6 +6,7 @@ struct SettingsView: View {
     @State private var showResetConfirmation = false
     #if DEBUG
     @State private var internalModeEnabled = BootstrapService.shared.isInternalModeEnabled()
+    @State private var writeStubEnabled = BootstrapService.shared.isWriteStubEnabled()
     @State private var edgeSecretDraft = ""
     @State private var hasStoredEdgeSecret = BootstrapService.shared.hasStoredEdgeSecret()
     @State private var internalModeStatusMessage: String?
@@ -37,7 +38,17 @@ struct SettingsView: View {
                     Toggle("Enable privileged attribution writes", isOn: $internalModeEnabled)
                         .onChange(of: internalModeEnabled) { _, newValue in
                             BootstrapService.shared.setInternalModeEnabled(newValue)
+                            if !newValue {
+                                writeStubEnabled = false
+                                BootstrapService.shared.setWriteStubEnabled(false)
+                            }
                         }
+
+                    Toggle("Allow local write stub when auth lock is active", isOn: $writeStubEnabled)
+                        .onChange(of: writeStubEnabled) { _, newValue in
+                            BootstrapService.shared.setWriteStubEnabled(newValue)
+                        }
+                        .disabled(!internalModeEnabled)
 
                     VStack(alignment: .leading, spacing: 6) {
                         SecureField("X-Edge-Secret (stored in Keychain)", text: $edgeSecretDraft)
@@ -89,6 +100,8 @@ struct SettingsView: View {
                         Group {
                             if let banner = BootstrapService.shared.writesLockedBannerText {
                                 Text(banner)
+                            } else if internalModeEnabled && writeStubEnabled {
+                                Text("Local write stub armed. It activates only when auth lock is observed.")
                             } else if !internalModeEnabled {
                                 Text("Privileged attribution writes disabled (Internal Mode off).")
                             } else if !hasStoredEdgeSecret {
