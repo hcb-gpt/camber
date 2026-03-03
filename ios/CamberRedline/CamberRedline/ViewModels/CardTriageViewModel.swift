@@ -162,7 +162,7 @@ final class CardTriageViewModel {
     }
 
     var isAttributionWritesLocked: Bool {
-        service.writeLockState != nil
+        service.writesLockedBannerText != nil
     }
 
     var attributionWritesLockedBannerText: String? {
