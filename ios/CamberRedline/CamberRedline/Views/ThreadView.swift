@@ -19,6 +19,137 @@ private enum ThreadLearningLoopMetrics {
     }
 }
 
+private struct WriteLockRecoveryDetails {
+    let statusCode: Int?
+    let requestId: String?
+    let error: String?
+}
+
+struct WriteLockRecoverySheet: View {
+    let onRecover: () async -> BootstrapWriteRecoveryOutcome
+
+    @Environment(\.dismiss) private var dismiss
+    @State private var isChecking = false
+    @State private var outcome: BootstrapWriteRecoveryOutcome?
+
+    var body: some View {
+        NavigationStack {
+            VStack(alignment: .leading, spacing: 14) {
+                Text("Writes are temporarily locked")
+                    .font(.headline)
+
+                if isChecking {
+                    HStack(spacing: 10) {
+                        ProgressView()
+                        Text("Checking access…")
+                            .font(.subheadline)
+                    }
+                    .foregroundStyle(.secondary)
+                } else {
+                    statusView
+                }
+
+                if let details {
+                    DisclosureGroup("Details") {
+                        VStack(alignment: .leading, spacing: 6) {
+                            if let statusCode = details.statusCode {
+                                Text("HTTP \(statusCode)")
+                            }
+                            if let requestId = details.requestId, !requestId.isEmpty {
+                                Text("request_id: \(requestId)")
+                            }
+                            if let error = details.error, !error.isEmpty {
+                                Text(error)
+                                    .fixedSize(horizontal: false, vertical: true)
+                            }
+                        }
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                        .padding(.top, 4)
+                    }
+                }
+
+                Spacer(minLength: 0)
+            }
+            .padding()
+            .navigationTitle("Recover Writes")
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                ToolbarItem(placement: .cancellationAction) {
+                    Button("Close") {
+                        dismiss()
+                    }
+                }
+                ToolbarItem(placement: .confirmationAction) {
+                    if canRetry {
+                        Button("Try again") {
+                            Task { await runRecovery() }
+                        }
+                    }
+                }
+            }
+        }
+        .task {
+            guard outcome == nil else { return }
+            await runRecovery()
+        }
+    }
+
+    @ViewBuilder
+    private var statusView: some View {
+        switch outcome {
+        case .unlocked:
+            Label("Writes unlocked.", systemImage: "checkmark.circle.fill")
+                .foregroundStyle(.green)
+        case .stillLocked:
+            Label("Still read-only. Try again later.", systemImage: "lock.fill")
+                .foregroundStyle(.orange)
+        case .failed(let message, _, _):
+            Label("Still read-only. Try again later.", systemImage: "exclamationmark.triangle.fill")
+                .foregroundStyle(.orange)
+            Text(message)
+                .font(.caption)
+                .foregroundStyle(.secondary)
+        case nil:
+            Text("Checking access…")
+                .font(.subheadline)
+                .foregroundStyle(.secondary)
+        }
+    }
+
+    private var details: WriteLockRecoveryDetails? {
+        switch outcome {
+        case .unlocked(let statusCode, let requestId):
+            return WriteLockRecoveryDetails(statusCode: statusCode, requestId: requestId, error: nil)
+        case .stillLocked(let state):
+            return WriteLockRecoveryDetails(statusCode: state.statusCode, requestId: state.requestId, error: state.error)
+        case .failed(let message, let statusCode, let requestId):
+            return WriteLockRecoveryDetails(statusCode: statusCode, requestId: requestId, error: message)
+        case nil:
+            return nil
+        }
+    }
+
+    private var canRetry: Bool {
+        guard !isChecking else { return false }
+        switch outcome {
+        case .stillLocked, .failed:
+            return true
+        case .unlocked, .none:
+            return false
+        }
+    }
+
+    private func runRecovery() async {
+        isChecking = true
+        let result = await onRecover()
+        await MainActor.run {
+            outcome = result
+            isChecking = false
+        }
+    }
+}
+
 // MARK: - Display Group
 
 /// Project attribution for SMS zebra striping (dummy until API provides data).
@@ -128,6 +259,7 @@ struct ThreadView: View {
     @State private var threadSurfaceAppearedAt: Date?
     @State private var didRecordFirstThreadPick = false
     @State private var didLogThreadAuthLockVisible = false
+    @State private var showWriteRecoverySheet = false
     private let bottomAnchorID = "thread-bottom-anchor"
     private let topLoadThreshold: CGFloat = -80
     private static let smsStripeColors: [Color] = [
@@ -302,6 +434,12 @@ struct ThreadView: View {
                     .padding(.horizontal, 16)
                     .padding(.top, 12)
                     .padding(.bottom, 10)
+
+                    if let banner = viewModel.attributionWritesLockedBannerText {
+                        threadWritesLockedBanner(banner)
+                            .padding(.horizontal, 16)
+                            .padding(.bottom, 8)
+                    }
 
                     if ThreadSwipeSmokeAutomation.isEnabled {
                         Text("SMOKE contact_key: \(contact.contactKey)")
@@ -485,6 +623,11 @@ struct ThreadView: View {
         .sheet(isPresented: $isContactInfoPresented) {
             ContactInfoView(contact: contact)
         }
+        .sheet(isPresented: $showWriteRecoverySheet) {
+            WriteLockRecoverySheet {
+                await viewModel.recoverWriteAccess()
+            }
+        }
         .sheet(item: $activeNoteContext) { context in
             NoteEditorSheet(
                 title: context.title,
@@ -517,6 +660,44 @@ struct ThreadView: View {
             guard pendingUndo?.id == actionId else { return }
             pendingUndo = nil
         }
+    }
+
+    @ViewBuilder
+    private func threadWritesLockedBanner(_ text: String) -> some View {
+        HStack(alignment: .top, spacing: 10) {
+            Image(systemName: "lock.fill")
+                .font(.caption)
+                .foregroundStyle(Color.orange.opacity(0.9))
+
+            VStack(alignment: .leading, spacing: 2) {
+                Text("Writes are temporarily locked")
+                    .font(.caption)
+                    .fontWeight(.semibold)
+                    .foregroundStyle(.white)
+                Text(text)
+                    .font(.caption2)
+                    .foregroundStyle(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+
+            Spacer(minLength: 0)
+
+            Button("Recover") {
+                showWriteRecoverySheet = true
+            }
+            .font(.caption2)
+            .fontWeight(.semibold)
+            .foregroundStyle(.black)
+            .padding(.horizontal, 10)
+            .padding(.vertical, 6)
+            .background(Color.orange, in: Capsule())
+        }
+        .padding(10)
+        .background(Color.orange.opacity(0.12), in: RoundedRectangle(cornerRadius: 12))
+        .overlay(
+            RoundedRectangle(cornerRadius: 12)
+                .stroke(Color.orange.opacity(0.35), lineWidth: 1)
+        )
     }
 
     @ViewBuilder

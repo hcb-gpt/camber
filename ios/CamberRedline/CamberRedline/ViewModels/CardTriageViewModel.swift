@@ -169,6 +169,19 @@ final class CardTriageViewModel {
         service.writesLockedBannerText
     }
 
+    func recoverWriteAccess() async -> BootstrapWriteRecoveryOutcome {
+        let outcome = await service.recoverWriteAccess()
+        switch outcome {
+        case .unlocked:
+            error = nil
+        case .stillLocked(let state):
+            error = BootstrapServiceError.writesLocked(state).errorDescription
+        case .failed(let message, _, _):
+            error = message
+        }
+        return outcome
+    }
+
     /// Cards resolved per hour based on session elapsed time.
     var resolveRatePerHour: Double {
         let elapsed = Date().timeIntervalSince(sessionStartTime)
