@@ -44,7 +44,7 @@ struct SettingsView: View {
                             }
                         }
 
-                    Toggle("Allow local write stub when auth lock is active", isOn: $writeStubEnabled)
+                    Toggle("Allow local write stub for non-locked UI testing", isOn: $writeStubEnabled)
                         .onChange(of: writeStubEnabled) { _, newValue in
                             BootstrapService.shared.setWriteStubEnabled(newValue)
                         }
@@ -101,7 +101,7 @@ struct SettingsView: View {
                             if let banner = BootstrapService.shared.writesLockedBannerText {
                                 Text(banner)
                             } else if internalModeEnabled && writeStubEnabled {
-                                Text("Local write stub armed. It activates only when auth lock is observed.")
+                                Text("Local write stub armed for non-locked UI testing only.")
                             } else if !internalModeEnabled {
                                 Text("Privileged attribution writes disabled (Internal Mode off).")
                             } else if !hasStoredEdgeSecret {

@@ -62,11 +62,6 @@ final class BootstrapService {
         guard let state = writeLockState else { return nil }
 
         var message = "Attribution writes temporarily locked. Truth surface remains readable."
-        #if DEBUG
-        if shouldUseWriteStubWhenLocked {
-            message = "Attribution writes temporarily locked. Local write stub is active for UI testing only (no server writes)."
-        }
-        #endif
         var meta: [String] = []
         if let functionVersion = state.functionVersion?.trimmingCharacters(in: .whitespacesAndNewlines),
            !functionVersion.isEmpty {
@@ -237,15 +232,14 @@ final class BootstrapService {
         return try? KeychainStore.readString(service: InternalModeConfig.keychainService, account: InternalModeConfig.keychainAccount)
     }
 
-    private var shouldUseWriteStubWhenLocked: Bool {
-        isInternalModeEnabled() && isWriteStubEnabled()
-    }
-
     private func shouldUseWriteStub(hasLockState: Bool) -> Bool {
         if BootstrapSmokeAutomation.truthSurfaceLocalEnabled {
             return true
         }
-        return hasLockState && shouldUseWriteStubWhenLocked
+        guard !hasLockState else {
+            return false
+        }
+        return isInternalModeEnabled() && isWriteStubEnabled()
     }
 
     private func stubWriteResponse(action: String, bodyData: Data) throws -> Data {
