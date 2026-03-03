@@ -70,12 +70,17 @@ async function validateSupabaseAnonKeyViaRest(
 
   try {
     const url = `${supabaseUrl.replace(/\/$/, "")}/rest/v1/`;
+    const headers: Record<string, string> = {
+      apikey: token,
+    };
+    // Publishable anon keys are not JWTs; probing with Authorization can
+    // cause false 401/403 even when apikey is valid.
+    if (parseJwtPayload(token)) {
+      headers.Authorization = `Bearer ${token}`;
+    }
     const resp = await fetch(url, {
       method: "GET",
-      headers: {
-        apikey: token,
-        Authorization: `Bearer ${token}`,
-      },
+      headers,
       signal: controller.signal,
     });
     if (resp.ok) {
@@ -172,23 +177,11 @@ export async function checkTopLevelEdgeSecretOrAnonKey(
   }
 
   const payload = parseJwtPayload(providedBearer);
-  const role = String(payload?.role || "").trim();
-  const ref = String(payload?.ref || "").trim();
+  if (payload) {
+    const role = String(payload.role || "").trim();
+    const ref = String(payload.ref || "").trim();
 
-  if (role !== "anon") {
-    return {
-      ok: false,
-      status: 403,
-      error_code: "invalid_auth",
-      error: "Valid X-Edge-Secret or Supabase anon key required",
-    };
-  }
-
-  // Defensive check: ensure the token claims match this Supabase project ref.
-  // NOTE: signature is implicitly verified by the `/rest/v1/` probe below.
-  try {
-    const hostRef = new URL(supabaseUrl).host.split(".")[0] || "";
-    if (ref && hostRef && ref !== hostRef) {
+    if (role !== "anon") {
       return {
         ok: false,
         status: 403,
@@ -196,14 +189,28 @@ export async function checkTopLevelEdgeSecretOrAnonKey(
         error: "Valid X-Edge-Secret or Supabase anon key required",
       };
     }
-  } catch {
-    // If SUPABASE_URL is malformed, treat as misconfigured.
-    return {
-      ok: false,
-      status: 500,
-      error_code: "server_misconfigured",
-      error: "SUPABASE_URL invalid",
-    };
+
+    // Defensive check: ensure JWT anon tokens match this project ref.
+    // NOTE: signature is implicitly verified by the `/rest/v1/` probe below.
+    try {
+      const hostRef = new URL(supabaseUrl).host.split(".")[0] || "";
+      if (ref && hostRef && ref !== hostRef) {
+        return {
+          ok: false,
+          status: 403,
+          error_code: "invalid_auth",
+          error: "Valid X-Edge-Secret or Supabase anon key required",
+        };
+      }
+    } catch {
+      // If SUPABASE_URL is malformed, treat as misconfigured.
+      return {
+        ok: false,
+        status: 500,
+        error_code: "server_misconfigured",
+        error: "SUPABASE_URL invalid",
+      };
+    }
   }
 
   const restOk = await validateSupabaseAnonKeyViaRest(supabaseUrl, providedBearer);

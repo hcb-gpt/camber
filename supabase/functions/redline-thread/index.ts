@@ -4,7 +4,7 @@ import { computeTruthGraph, type TruthGraphHydration, type TruthGraphRepairActio
 import { requireEdgeSecret } from "../_shared/auth.ts";
 import { checkTopLevelEdgeSecret, checkTopLevelEdgeSecretOrAnonKey } from "./auth_gate.ts";
 
-const FUNCTION_VERSION = "redline-thread_v3.4.5";
+const FUNCTION_VERSION = "redline-thread_v3.4.6";
 /**
  * v3.2.1 - Fix typo interactionClaims -> _interactionClaims
  * v3.1.2 - iOS Contract Fix (P0 Unbrick)
@@ -17,6 +17,7 @@ const FUNCTION_VERSION = "redline-thread_v3.4.5";
  * v3.4.3 - Hotfix: validate iOS Bearer/apikey against SUPABASE_ANON_KEY (reject junk tokens)
  * v3.4.4 - Hotfix: validate iOS Bearer/apikey via Supabase REST probe (avoid env-key mismatch)
  * v3.4.5 - Hotfix: increase REST probe timeout + avoid negative-caching transient failures
+ * v3.4.6 - Hotfix: accept non-JWT publishable anon keys; JWT checks only when claims exist
  */
 const OWNER_SMS_USER_IDS = ["+17066889158", "usr_4PCSTDQ8N161KAC4GG7AF9CR94"];
 const OUTBOUND_INFERENCE_WINDOW_MS = 30 * 60 * 1000;
