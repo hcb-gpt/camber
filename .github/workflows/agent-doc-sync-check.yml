@@ -1,0 +1,33 @@
+name: Agent doc sync check
+
+on:
+  pull_request:
+    paths:
+      - "AGENTS.md"
+      - "CLAUDE.md"
+      - ".agent-doc-sync-target"
+  push:
+    paths:
+      - "AGENTS.md"
+      - "CLAUDE.md"
+      - ".agent-doc-sync-target"
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 1
+          path: camber
+
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 1
+          repository: hcb-gpt/orbit
+          path: orbit
+
+      - name: Check agent doc drift
+        run: |
+          bash orbit/scripts/agent-doc-sync.sh --check --repo-root "$GITHUB_WORKSPACE"
+

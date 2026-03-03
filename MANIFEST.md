@@ -33,6 +33,7 @@ camber/
 │   └── identity/             #   identity subsystem docs
 │
 ├── MANIFEST.md               # THIS FILE
+├── AGENTS.md                 # Agent config (generated via ORBIT doc sync)
 ├── CLAUDE.md                 # Boot + operating manual
 ├── README.md                 # Repo overview
 ├── RELEASES.md               # Release changelog
@@ -53,7 +54,7 @@ camber/
 
 ## Prohibited
 
-- **No files in repo root** except the 5 listed (MANIFEST, CLAUDE, README, RELEASES, .env.example).
+- **No files in repo root** except: MANIFEST, AGENTS, CLAUDE, README, RELEASES, .env.example.
 - **No new top-level directories** without STRAT approval.
 - **No credentials or secrets** — use `.env.example` as template only.
 - **No TRAM messages** — TRAM lives in orbit, not here.
