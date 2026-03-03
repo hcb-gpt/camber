@@ -2,7 +2,7 @@ import "jsr:@supabase/functions-js/edge-runtime.d.ts";
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
 import { checkTopLevelEdgeSecretOrAnonKey } from "./auth_gate.ts";
 
-const FUNCTION_VERSION = "bootstrap-review_v1.3.2";
+const FUNCTION_VERSION = "bootstrap-review_v1.3.3";
 type ReviewQueueSource = "pipeline" | "redline";
 
 // ─── Helpers ─────────────────────────────────────────────────────────
@@ -1678,6 +1678,8 @@ Deno.serve(async (req: Request) => {
   const t0 = Date.now();
   const url = new URL(req.url);
   const action = url.searchParams.get("action");
+  const isWriteAction = req.method === "POST" &&
+    (action === "resolve" || action === "dismiss" || action === "undo");
 
   // Auth gate
   // Health check — fast path, no auth
@@ -1686,25 +1688,9 @@ Deno.serve(async (req: Request) => {
   }
 
   const topLevelAuthResult = await checkTopLevelEdgeSecretOrAnonKey(req);
-  if (!topLevelAuthResult.ok) {
-    return json(
-      {
-        ok: false,
-        error_code: topLevelAuthResult.error_code,
-        error: topLevelAuthResult.error,
-        function_version: FUNCTION_VERSION,
-      },
-      topLevelAuthResult.status,
-    );
-  }
-
-  // P0 security hotfix: write actions must NOT accept anon bearer.
-  // Reject anon before parsing body so requests cannot reach missing_* body validation errors.
-  if (
-    req.method === "POST" &&
-    (action === "resolve" || action === "dismiss" || action === "undo") &&
-    topLevelAuthResult.auth !== "edge_secret"
-  ) {
+  // Write actions are edge-secret only.
+  // Canonicalize all missing/invalid write auth failures to a deterministic 403 payload.
+  if (isWriteAction && (!topLevelAuthResult.ok || topLevelAuthResult.auth !== "edge_secret")) {
     return json(
       {
         ok: false,
@@ -1714,6 +1700,18 @@ Deno.serve(async (req: Request) => {
         ms: Date.now() - t0,
       },
       403,
+    );
+  }
+
+  if (!topLevelAuthResult.ok) {
+    return json(
+      {
+        ok: false,
+        error_code: topLevelAuthResult.error_code,
+        error: topLevelAuthResult.error,
+        function_version: FUNCTION_VERSION,
+      },
+      topLevelAuthResult.status,
     );
   }
 
