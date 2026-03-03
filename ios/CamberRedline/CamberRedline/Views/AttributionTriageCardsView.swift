@@ -76,6 +76,7 @@ struct AttributionTriageCardsView: View {
     @State private var analysisCard: CardItem?
     @State private var showEvidenceTokens = false
     @State private var evidenceCard: CardItem?
+    @State private var showWriteRecoverySheet = false
     @State private var triageSurfaceAppearedAt: Date?
     @State private var didRecordFirstValidPick = false
     @State private var didLogAuthLockVisible = false
@@ -264,6 +265,11 @@ struct AttributionTriageCardsView: View {
             .sheet(isPresented: $showEvidenceTokens) {
                 if let card = evidenceCard {
                     EvidenceTokensSheet(card: card)
+                }
+            }
+            .sheet(isPresented: $showWriteRecoverySheet) {
+                WriteLockRecoverySheet {
+                    await viewModel.recoverWriteAccess()
                 }
             }
         }
@@ -469,7 +475,7 @@ struct AttributionTriageCardsView: View {
                 .foregroundStyle(Color.undoAmber.opacity(0.9))
 
             VStack(alignment: .leading, spacing: 2) {
-                Text("Read-only mode")
+                Text("Writes are temporarily locked")
                     .font(.caption)
                     .fontWeight(.semibold)
                     .foregroundStyle(.white)
@@ -480,6 +486,16 @@ struct AttributionTriageCardsView: View {
             }
 
             Spacer(minLength: 0)
+
+            Button("Recover") {
+                showWriteRecoverySheet = true
+            }
+            .font(.caption2)
+            .fontWeight(.semibold)
+            .foregroundStyle(.black)
+            .padding(.horizontal, 10)
+            .padding(.vertical, 6)
+            .background(Color.undoAmber, in: Capsule())
         }
         .padding(12)
         .background(Color.undoAmber.opacity(0.12), in: RoundedRectangle(cornerRadius: 14))
