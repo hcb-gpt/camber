@@ -1,0 +1,29 @@
+2026-03-03 00:55:53.922 Df CamberRedline[40350:17c8011] [CamberRedline:smoke] SMOKE_EVENT START
+2026-03-03 00:55:54.973 Df CamberRedline[40350:17c8011] [CamberRedline:smoke] SMOKE_EVENT OPEN_TRIAGE
+2026-03-03 00:55:55.185 Df CamberRedline[40350:17c8011] [CamberRedline:smoke] SMOKE_EVENT TRIAGE_LOCAL_QUEUE_READY items=1
+2026-03-03 00:55:55.882 Df CamberRedline[40350:17c8011] [CamberRedline:smoke] SMOKE_EVENT TRIAGE_TARGET queue=rq_smoke_truth_surface_v1 interaction=cll_smoke_truth_surface_v1 event_at=2026-03-03T04:55:55Z
+2026-03-03 00:55:55.883 Df CamberRedline[40350:17c8011] [CamberRedline:smoke] SMOKE_EVENT TRUTH_SURFACE_START queue=rq_smoke_truth_surface_v1 interaction=cll_smoke_truth_surface_v1 ai_suggested=1 ai_project=proj_smoke_truth_surface_v1 evidence_count=1
+2026-03-03 00:55:55.883 Df CamberRedline[40350:17c8011] [CamberRedline:smoke] SMOKE_EVENT TRUTH_SURFACE_STAGE stage=unpicked selected=missing
+2026-03-03 00:55:59.890 Df CamberRedline[40350:17c8011] [CamberRedline:smoke] SMOKE_EVENT TRUTH_SURFACE_STAGE stage=picked project=proj_smoke_truth_surface_v1 evidence_count=1
+2026-03-03 00:56:03.902 Df CamberRedline[40350:17c8011] [CamberRedline:smoke] SMOKE_EVENT TRUTH_SURFACE_CONFIRM_LOCAL queue=rq_smoke_truth_surface_v1 project=proj_smoke_truth_surface_v1
+2026-03-03 00:56:03.912 Df CamberRedline[40350:17c8011] [CamberRedline:smoke] SMOKE_EVENT TRIAGE_ACTION kind=resolve queue=rq_smoke_truth_surface_v1 interaction=cll_smoke_truth_surface_v1 request_id=stub_resolve__rq_smoke_truth_surface_v1
+2026-03-03 00:56:05.222 Df CamberRedline[40350:17c8011] [CamberRedline:smoke] SMOKE_EVENT TRIAGE_UNDO_START queue=rq_smoke_truth_surface_v1
+2026-03-03 00:56:06.077 Df CamberRedline[40350:17c8011] [CamberRedline:smoke] SMOKE_EVENT TRIAGE_ACTION kind=undo queue=rq_smoke_truth_surface_v1 request_id=stub_undo__rq_smoke_truth_surface_v1
+2026-03-03 00:56:06.077 Df CamberRedline[40350:17c8011] [CamberRedline:smoke] SMOKE_EVENT TRIAGE_LOCAL_QUEUE_READY items=1
+2026-03-03 00:56:06.711 Df CamberRedline[40350:17c8011] [CamberRedline:smoke] SMOKE_EVENT TRIAGE_DONE remaining=1
+2026-03-03 00:56:06.712 Df CamberRedline[40350:17c8011] [CamberRedline:smoke] SMOKE_EVENT TRIAGE_PHASE_COMPLETE
+2026-03-03 00:56:07.365 Df CamberRedline[40350:17c8011] [CamberRedline:smoke] SMOKE_EVENT OPEN_ASSISTANT
+2026-03-03 00:56:08.203 Df CamberRedline[40350:17c8011] [CamberRedline:smoke] SMOKE_EVENT ASSISTANT_OPEN_CONTEXT_PACKET
+2026-03-03 00:56:08.203 Df CamberRedline[40350:17c8011] [CamberRedline:smoke] SMOKE_EVENT ASSISTANT_CONTEXT_FETCH
+2026-03-03 00:56:13.759 Df CamberRedline[40350:17c8011] [CamberRedline:smoke] SMOKE_EVENT ASSISTANT_CONTEXT request_id=019cb244-a1cf-77c8-bbd2-45492912105a version=assistant-context_v1.0.0
+2026-03-03 00:56:14.867 Df CamberRedline[40350:17c8011] [CamberRedline:smoke] SMOKE_EVENT ASSISTANT_CONTEXT request_id=019cb244-b761-7f8b-82bd-d7951d9711c4 version=assistant-context_v1.0.0
+2026-03-03 00:56:18.753 Df CamberRedline[40350:17c8011] [CamberRedline:smoke] SMOKE_EVENT ASSISTANT_PROMPT prompt=Winship hardscape
+2026-03-03 00:56:22.286 Df CamberRedline[40350:17c8011] [CamberRedline:smoke] SMOKE_EVENT ASSISTANT_REQUEST_ID request_id=8a7d6d1a-c86d-4ef3-9feb-a80dadd498ef prompt=Winship hardscape
+2026-03-03 00:56:23.355 Df CamberRedline[40350:17c8011] [CamberRedline:smoke] SMOKE_EVENT ASSISTANT_PROMPT prompt=What projects do you have
+2026-03-03 00:56:23.866 Df CamberRedline[40350:17c8011] [CamberRedline:smoke] SMOKE_EVENT ASSISTANT_REQUEST_ID request_id=8edbc51e-1ee1-495f-a7a0-8a800713523a prompt=What projects do you have
+2026-03-03 00:56:28.902 Df CamberRedline[43608:17c9ab7] [CamberRedline:smoke] SMOKE_EVENT START
+2026-03-03 00:56:29.907 Df CamberRedline[43608:17c9ab7] [CamberRedline:smoke] SMOKE_EVENT OPEN_TRIAGE
+2026-03-03 00:56:30.134 Df CamberRedline[43608:17c9ab7] [CamberRedline:smoke] SMOKE_EVENT TRIAGE_LOCAL_QUEUE_READY items=1
+2026-03-03 00:56:30.821 Df CamberRedline[43608:17c9ab7] [CamberRedline:smoke] SMOKE_EVENT TRIAGE_TARGET queue=rq_smoke_truth_surface_v1 interaction=cll_smoke_truth_surface_v1 event_at=2026-03-03T04:56:30Z
+2026-03-03 00:56:30.821 Df CamberRedline[43608:17c9ab7] [CamberRedline:smoke] SMOKE_EVENT TRUTH_SURFACE_START queue=rq_smoke_truth_surface_v1 interaction=cll_smoke_truth_surface_v1 ai_suggested=1 ai_project=proj_smoke_truth_surface_v1 evidence_count=1
+2026-03-03 00:56:30.821 Df CamberRedline[43608:17c9ab7] [CamberRedline:smoke] SMOKE_EVENT TRUTH_SURFACE_STAGE stage=unpicked selected=missing
