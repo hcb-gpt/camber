@@ -81,6 +81,19 @@ final class ThreadViewModel {
         bootstrapService.writesLockedBannerText
     }
 
+    func recoverWriteAccess() async -> BootstrapWriteRecoveryOutcome {
+        let outcome = await bootstrapService.recoverWriteAccess()
+        switch outcome {
+        case .unlocked:
+            error = nil
+        case .stillLocked(let state):
+            error = BootstrapServiceError.writesLocked(state).errorDescription
+        case .failed(let message, _, _):
+            error = message
+        }
+        return outcome
+    }
+
     // MARK: - Dependencies
 
     private let service = SupabaseService.shared
