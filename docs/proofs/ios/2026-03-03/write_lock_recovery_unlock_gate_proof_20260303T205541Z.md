@@ -31,22 +31,22 @@
 ```
 
 ## Regression Results
-- Harness summary: `artifacts/ios_write_lock_recovery_regression/20260303T205541Z/summary.txt`
+- Harness summary: `artifacts/ios_write_lock_recovery_regression/20260303T210141Z/summary.txt`
 
 ### Case 1: non-auth failure preserves lock
-- Smoke run: `artifacts/ios_simulator_smoke/20260303T205541Z/`
+- Smoke run: `artifacts/ios_simulator_smoke/20260303T210141Z/`
 - Marker evidence (`smoke_markers.log`):
   - `SMOKE_EVENT WRITE_LOCK_RECOVERY_RESULT unlocked=0 wait_seconds=15`
   - `SMOKE_EVENT WRITE_LOCK_RECOVERY_ABORT reason=still_locked`
 
 ### Case 2: explicit success unlocks
-- Smoke run: `artifacts/ios_simulator_smoke/20260303T205654Z/`
+- Smoke run: `artifacts/ios_simulator_smoke/20260303T210306Z/`
 - Marker evidence (`smoke_markers.log`):
   - `SMOKE_EVENT WRITE_LOCK_RECOVERY_RESULT unlocked=1 wait_seconds=0`
   - `SMOKE_EVENT WRITE_LOCK_RECOVERY_RETRY ...`
 
 ## Artifacts
-- Case 1 video: `artifacts/ios_simulator_smoke/20260303T205541Z/session.mp4`
-- Case 2 video: `artifacts/ios_simulator_smoke/20260303T205654Z/session.mp4`
-- Case 1 summary: `artifacts/ios_write_lock_recovery_regression/20260303T205541Z/non_auth_failure_preserves_lock.summary.txt`
-- Case 2 summary: `artifacts/ios_write_lock_recovery_regression/20260303T205541Z/explicit_success_unlocks.summary.txt`
+- Case 1 video: `artifacts/ios_simulator_smoke/20260303T210141Z/session.mp4`
+- Case 2 video: `artifacts/ios_simulator_smoke/20260303T210306Z/session.mp4`
+- Case 1 summary: `artifacts/ios_write_lock_recovery_regression/20260303T210141Z/non_auth_failure_preserves_lock.summary.txt`
+- Case 2 summary: `artifacts/ios_write_lock_recovery_regression/20260303T210141Z/explicit_success_unlocks.summary.txt`
