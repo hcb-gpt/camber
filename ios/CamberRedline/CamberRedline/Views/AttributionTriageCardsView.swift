@@ -9,6 +9,7 @@ private enum TriageSmokeAutomation {
     static let syntheticIdsFlag = "--smoke-synthetic-ids"
     static let truthSurfaceFlag = "--smoke-truth-surface"
     static let truthSurfaceLocalFlag = "--smoke-truth-surface-local"
+    static let writeLockRecoveryFlag = "--smoke-write-lock-recovery"
     static let triageNotification = Notification.Name("camber.smoke.runTriage")
     static let triageDoneNotification = Notification.Name("camber.smoke.triageDone")
     static let logger = Logger(subsystem: "CamberRedline", category: "smoke")
@@ -23,6 +24,10 @@ private enum TriageSmokeAutomation {
 
     static var truthSurfaceLocalEnabled: Bool {
         ProcessInfo.processInfo.arguments.contains(truthSurfaceLocalFlag)
+    }
+
+    static var writeLockRecoveryEnabled: Bool {
+        ProcessInfo.processInfo.arguments.contains(writeLockRecoveryFlag)
     }
 
     static var targetInteractionIds: Set<String> {
@@ -676,7 +681,9 @@ struct AttributionTriageCardsView: View {
             "SMOKE_EVENT TRIAGE_TARGET queue=\(card.queueId, privacy: .public) interaction=\(card.interactionId, privacy: .public) event_at=\(eventAt, privacy: .public)"
         )
 
-        if TriageSmokeAutomation.truthSurfaceEnabled {
+        if TriageSmokeAutomation.writeLockRecoveryEnabled {
+            await runWriteLockRecoverySmoke(card: card)
+        } else if TriageSmokeAutomation.truthSurfaceEnabled {
             await runTruthSurfaceSmoke(card: card)
         } else {
             if let projectId = card.projectId, !projectId.isEmpty {
@@ -707,6 +714,82 @@ struct AttributionTriageCardsView: View {
 
         TriageSmokeAutomation.logger.log("SMOKE_EVENT TRIAGE_DONE remaining=\(viewModel.queue.count, privacy: .public)")
         NotificationCenter.default.post(name: TriageSmokeAutomation.triageDoneNotification, object: nil)
+    }
+
+    private func runWriteLockRecoverySmoke(card: CardItem) async {
+        let retryProjectId: String? = {
+            if let pid = card.projectId, !pid.isEmpty { return pid }
+            if let candidate = card.candidates.first?.projectId, !candidate.isEmpty { return candidate }
+            return nil
+        }()
+
+        if !viewModel.isAttributionWritesLocked {
+            if let retryProjectId {
+                TriageSmokeAutomation.logger.log(
+                    "SMOKE_EVENT WRITE_LOCK_RECOVERY_PRIME_RESOLVE queue=\(card.queueId, privacy: .public) interaction=\(card.interactionId, privacy: .public) project=\(retryProjectId, privacy: .public)"
+                )
+                await viewModel.resolve(card, to: retryProjectId, notes: "smoke_write_lock_recovery_prime")
+            } else {
+                TriageSmokeAutomation.logger.log(
+                    "SMOKE_EVENT WRITE_LOCK_RECOVERY_PRIME_DISMISS queue=\(card.queueId, privacy: .public) interaction=\(card.interactionId, privacy: .public)"
+                )
+                await viewModel.dismiss(card, reason: "smoke_write_lock_recovery_prime", notes: "no_project")
+            }
+            try? await Task.sleep(for: .milliseconds(600))
+        }
+
+        if let banner = viewModel.attributionWritesLockedBannerText {
+            TriageSmokeAutomation.logger.log(
+                "SMOKE_EVENT WRITE_LOCK_RECOVERY_LOCKED banner=\(banner, privacy: .public)"
+            )
+
+            await MainActor.run {
+                showWriteRecoverySheet = true
+            }
+
+            // Hold while sheet runs its initial auto-recovery.
+            try? await Task.sleep(for: .seconds(4))
+
+            var waitSeconds = 0
+            while viewModel.isAttributionWritesLocked && waitSeconds < 15 {
+                try? await Task.sleep(for: .seconds(1))
+                waitSeconds += 1
+            }
+
+            let unlocked = !viewModel.isAttributionWritesLocked
+            TriageSmokeAutomation.logger.log(
+                "SMOKE_EVENT WRITE_LOCK_RECOVERY_RESULT unlocked=\(unlocked ? 1 : 0, privacy: .public) wait_seconds=\(waitSeconds, privacy: .public)"
+            )
+
+            try? await Task.sleep(for: .seconds(2))
+            await MainActor.run {
+                showWriteRecoverySheet = false
+            }
+        } else {
+            TriageSmokeAutomation.logger.log("SMOKE_EVENT WRITE_LOCK_RECOVERY_LOCKED missing_lock_state=1")
+        }
+
+        guard !viewModel.isAttributionWritesLocked else {
+            TriageSmokeAutomation.logger.log("SMOKE_EVENT WRITE_LOCK_RECOVERY_ABORT reason=still_locked")
+            return
+        }
+
+        guard let retryProjectId else {
+            TriageSmokeAutomation.logger.log("SMOKE_EVENT WRITE_LOCK_RECOVERY_ABORT reason=no_project_for_retry")
+            return
+        }
+
+        guard let retryCard = viewModel.queue.first(where: { $0.id == card.id }) else {
+            TriageSmokeAutomation.logger.log(
+                "SMOKE_EVENT WRITE_LOCK_RECOVERY_RETRY_SKIPPED reason=card_missing queue=\(card.queueId, privacy: .public)"
+            )
+            return
+        }
+
+        TriageSmokeAutomation.logger.log(
+            "SMOKE_EVENT WRITE_LOCK_RECOVERY_RETRY queue=\(retryCard.queueId, privacy: .public) interaction=\(retryCard.interactionId, privacy: .public) project=\(retryProjectId, privacy: .public)"
+        )
+        await viewModel.resolve(retryCard, to: retryProjectId, notes: "smoke_write_lock_recovery_retry")
     }
 
     private func runTruthSurfaceSmoke(card: CardItem) async {

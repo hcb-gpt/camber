@@ -12,6 +12,8 @@ SYNTHETIC_IDS="${SYNTHETIC_IDS:-}"
 DRY_RUN=0
 TRUTH_SURFACE=0
 TRUTH_SURFACE_LOCAL=0
+WRITE_LOCK_RECOVERY=0
+RECOVERY_PROBE_QUEUE_ID="${SMOKE_RECOVERY_PROBE_QUEUE_ID:-}"
 SCREEN_STEPS=7
 SCREEN_INTERVAL_SECONDS=4
 
@@ -23,6 +25,8 @@ Options:
   --synthetic-ids <csv>   Comma-separated interaction IDs to target in triage smoke.
   --truth-surface         Run picker-first truth surface smoke (adds --smoke-truth-surface).
   --truth-surface-local   Run truth surface smoke with a local synthetic queue (no network).
+  --write-lock-recovery   Run write-lock recovery smoke (adds --smoke-write-lock-recovery).
+  --recovery-probe-queue-id <id>  Override recovery probe review_queue_id (debug regression aid).
   --dry-run               Print chosen simulator and exit (no build).
   --help, -h              Show this help.
 EOF
@@ -48,6 +52,19 @@ while [[ $# -gt 0 ]]; do
       TRUTH_SURFACE_LOCAL=1
       shift 1
       ;;
+    --write-lock-recovery)
+      WRITE_LOCK_RECOVERY=1
+      shift 1
+      ;;
+    --recovery-probe-queue-id)
+      if [[ $# -lt 2 || -z "${2:-}" ]]; then
+        echo "ERROR: --recovery-probe-queue-id requires a value" >&2
+        usage >&2
+        exit 2
+      fi
+      RECOVERY_PROBE_QUEUE_ID="${2}"
+      shift 2
+      ;;
     --dry-run)
       DRY_RUN=1
       shift
@@ -67,6 +84,12 @@ done
 if [[ "${TRUTH_SURFACE}" -eq 1 ]]; then
   # Truth-surface proof wants tighter sampling around the triage sheet.
   SCREEN_STEPS=12
+  SCREEN_INTERVAL_SECONDS=2
+fi
+
+if [[ "${WRITE_LOCK_RECOVERY}" -eq 1 ]]; then
+  # Recovery proof needs extra captures while the sheet transitions through checking -> unlocked.
+  SCREEN_STEPS=14
   SCREEN_INTERVAL_SECONDS=2
 fi
 
@@ -157,10 +180,26 @@ fi
 if [[ "${TRUTH_SURFACE_LOCAL}" -eq 1 ]]; then
   LAUNCH_ARGS+=(--smoke-truth-surface-local)
 fi
+if [[ "${WRITE_LOCK_RECOVERY}" -eq 1 ]]; then
+  LAUNCH_ARGS+=(--smoke-write-lock-recovery)
+fi
 if [[ -n "${SYNTHETIC_IDS}" ]]; then
   LAUNCH_ARGS+=(--smoke-synthetic-ids "${SYNTHETIC_IDS}")
 fi
+
+if [[ "${WRITE_LOCK_RECOVERY}" -eq 1 ]]; then
+  export SIMCTL_CHILD_SMOKE_FORCE_WRITE_LOCK=1
+  if [[ -n "${EDGE_SHARED_SECRET:-}" ]]; then
+    export SIMCTL_CHILD_EDGE_SHARED_SECRET="${EDGE_SHARED_SECRET}"
+  fi
+  if [[ -n "${RECOVERY_PROBE_QUEUE_ID}" ]]; then
+    export SIMCTL_CHILD_SMOKE_RECOVERY_PROBE_QUEUE_ID="${RECOVERY_PROBE_QUEUE_ID}"
+  fi
+fi
 simctl launch "${DEVICE_UDID}" "${BUNDLE_ID}" "${LAUNCH_ARGS[@]}" > "${OUT_DIR}/launch.txt" 2>&1
+unset SIMCTL_CHILD_SMOKE_FORCE_WRITE_LOCK || true
+unset SIMCTL_CHILD_EDGE_SHARED_SECRET || true
+unset SIMCTL_CHILD_SMOKE_RECOVERY_PROBE_QUEUE_ID || true
 
 SMOKE_MARKER_PATTERN="SMOKE_EVENT START"
 SMOKE_MARKER_TIMEOUT_SECONDS=20
@@ -195,6 +234,8 @@ build_log=${OUT_DIR}/build.log
 app_log=${OUT_DIR}/app.log
 smoke_markers=${SMOKE_MARKERS}
 synthetic_ids=${SYNTHETIC_IDS}
+write_lock_recovery=${WRITE_LOCK_RECOVERY}
+recovery_probe_queue_id=${RECOVERY_PROBE_QUEUE_ID}
 launch_args=${LAUNCH_ARGS[*]}
 smoke_marker_pattern=${SMOKE_MARKER_PATTERN}
 smoke_marker_seen=${SMOKE_MARKER_SEEN}
