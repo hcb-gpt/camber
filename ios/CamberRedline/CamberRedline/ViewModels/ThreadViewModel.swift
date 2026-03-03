@@ -74,7 +74,7 @@ final class ThreadViewModel {
     var truthGraphError: String?
 
     var isAttributionWritesLocked: Bool {
-        bootstrapService.writeLockState != nil
+        bootstrapService.writesLockedBannerText != nil
     }
 
     var attributionWritesLockedBannerText: String? {

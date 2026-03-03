@@ -68,9 +68,15 @@ final class BootstrapService {
     private(set) var writeLockState: BootstrapWriteLockState?
 
     var writesLockedBannerText: String? {
-        guard let state = writeLockState else { return nil }
+        guard let state = effectiveWriteLockState else { return nil }
 
-        var message = "Attribution writes temporarily locked. Truth surface remains readable."
+        var message = state.error.trimmingCharacters(in: .whitespacesAndNewlines)
+        if message.isEmpty {
+            message = "Attribution writes temporarily locked."
+        }
+        if !message.contains("Truth surface remains readable") {
+            message += " Truth surface remains readable."
+        }
         #if DEBUG
         if shouldUseWriteStubWhenLocked {
             message = "Attribution writes temporarily locked. Local write stub is active for UI testing only (no server writes)."
@@ -148,6 +154,10 @@ final class BootstrapService {
     }
 
     func recoverWriteAccess() async -> BootstrapWriteRecoveryOutcome {
+        if let preflightLockState {
+            return .stillLocked(preflightLockState)
+        }
+
         guard writeLockState != nil else {
             return .unlocked(statusCode: nil, requestId: nil)
         }
@@ -312,6 +322,37 @@ final class BootstrapService {
         return data
     }
     #endif
+
+    private var preflightLockState: BootstrapWriteLockState? {
+        #if DEBUG
+        guard !BootstrapSmokeAutomation.truthSurfaceLocalEnabled else { return nil }
+        guard isInternalModeEnabled() else {
+            return BootstrapWriteLockState(
+                statusCode: 403,
+                errorCode: "invalid_auth",
+                error: "Privileged attribution writes disabled (Internal Mode off).",
+                functionVersion: nil,
+                requestId: nil,
+                observedAt: Date()
+            )
+        }
+        guard edgeSecretForWriteRequest() == nil else { return nil }
+        return BootstrapWriteLockState(
+            statusCode: 403,
+            errorCode: "invalid_auth",
+            error: "Privileged attribution writes enabled, but no X-Edge-Secret is stored.",
+            functionVersion: nil,
+            requestId: nil,
+            observedAt: Date()
+        )
+        #else
+        nil
+        #endif
+    }
+
+    private var effectiveWriteLockState: BootstrapWriteLockState? {
+        writeLockState ?? preflightLockState
+    }
 
     private func applyAuthHeaders(
         to request: inout URLRequest,
@@ -618,15 +659,16 @@ final class BootstrapService {
 
     private func post<T: Encodable>(action: String, body: T) async throws -> Data {
         let bodyData = try encoder.encode(body)
+        let lockState = effectiveWriteLockState
 
         #if DEBUG
-        if shouldUseWriteStub(hasLockState: writeLockState != nil) {
+        if shouldUseWriteStub(hasLockState: lockState != nil) {
             return try stubWriteResponse(action: action, bodyData: bodyData)
         }
         #endif
 
-        if let writeLockState {
-            throw BootstrapServiceError.writesLocked(writeLockState)
+        if let lockState {
+            throw BootstrapServiceError.writesLocked(lockState)
         }
 
         var components = URLComponents(url: baseURL, resolvingAgainstBaseURL: false)!

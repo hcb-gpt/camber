@@ -1,0 +1,27 @@
+2026-03-03 07:47:13.824 Df CamberRedline[48053:1ad950e] [CamberRedline:smoke] SMOKE_EVENT START
+2026-03-03 07:47:14.834 Df CamberRedline[48053:1ad950e] [CamberRedline:smoke] SMOKE_EVENT OPEN_TRIAGE
+2026-03-03 07:47:15.117 Df CamberRedline[48053:1ad950e] [CamberRedline:smoke] SMOKE_EVENT TRIAGE_LOCAL_QUEUE_READY items=1
+2026-03-03 07:47:15.737 Df CamberRedline[48053:1ad950e] [CamberRedline:smoke] SMOKE_EVENT TRIAGE_TARGET queue=rq_smoke_truth_surface_v1 interaction=cll_smoke_truth_surface_v1 event_at=2026-03-03T11:47:15Z
+2026-03-03 07:47:15.738 Df CamberRedline[48053:1ad950e] [CamberRedline:smoke] SMOKE_EVENT TRUTH_SURFACE_START queue=rq_smoke_truth_surface_v1 interaction=cll_smoke_truth_surface_v1 ai_suggested=1 ai_project=proj_smoke_truth_surface_v1 evidence_count=1
+2026-03-03 07:47:15.738 Df CamberRedline[48053:1ad950e] [CamberRedline:smoke] SMOKE_EVENT TRUTH_SURFACE_STAGE stage=unpicked selected=missing
+2026-03-03 07:47:19.905 Df CamberRedline[48053:1ad950e] [CamberRedline:smoke] SMOKE_EVENT TRUTH_SURFACE_STAGE stage=picked project=proj_smoke_truth_surface_v1 evidence_count=1
+2026-03-03 07:47:23.956 Df CamberRedline[48053:1ad950e] [CamberRedline:smoke] SMOKE_EVENT TRUTH_SURFACE_CONFIRM_LOCAL queue=rq_smoke_truth_surface_v1 project=proj_smoke_truth_surface_v1
+2026-03-03 07:47:23.972 Df CamberRedline[48053:1ad950e] [CamberRedline:smoke] SMOKE_EVENT TRIAGE_ACTION kind=resolve queue=rq_smoke_truth_surface_v1 interaction=cll_smoke_truth_surface_v1 request_id=stub_resolve__rq_smoke_truth_surface_v1
+2026-03-03 07:47:24.863 Df CamberRedline[48053:1ad950e] [CamberRedline:smoke] SMOKE_EVENT TRIAGE_UNDO_START queue=rq_smoke_truth_surface_v1
+2026-03-03 07:47:25.681 Df CamberRedline[48053:1ad950e] [CamberRedline:smoke] SMOKE_EVENT TRIAGE_ACTION kind=undo queue=rq_smoke_truth_surface_v1 request_id=stub_undo__rq_smoke_truth_surface_v1
+2026-03-03 07:47:25.681 Df CamberRedline[48053:1ad950e] [CamberRedline:smoke] SMOKE_EVENT TRIAGE_LOCAL_QUEUE_READY items=1
+2026-03-03 07:47:26.288 Df CamberRedline[48053:1ad950e] [CamberRedline:smoke] SMOKE_EVENT TRIAGE_DONE remaining=1
+2026-03-03 07:47:26.288 Df CamberRedline[48053:1ad950e] [CamberRedline:smoke] SMOKE_EVENT TRIAGE_PHASE_COMPLETE
+2026-03-03 07:47:26.903 Df CamberRedline[48053:1ad950e] [CamberRedline:smoke] SMOKE_EVENT OPEN_ASSISTANT
+2026-03-03 07:47:27.737 Df CamberRedline[48053:1ad950e] [CamberRedline:smoke] SMOKE_EVENT ASSISTANT_OPEN_CONTEXT_PACKET
+2026-03-03 07:47:27.737 Df CamberRedline[48053:1ad950e] [CamberRedline:smoke] SMOKE_EVENT ASSISTANT_CONTEXT_FETCH
+2026-03-03 07:47:31.552 Df CamberRedline[48053:1ad950e] [CamberRedline:smoke] SMOKE_EVENT ASSISTANT_CONTEXT request_id=019cb3bd-3aac-72f0-9c21-b19914ff5ebc version=assistant-context_v1.0.0
+2026-03-03 07:47:31.672 Df CamberRedline[48053:1ad950e] [CamberRedline:smoke] SMOKE_EVENT ASSISTANT_CONTEXT request_id=019cb3bd-3635-797f-89ab-13505e21f26c version=assistant-context_v1.0.0
+2026-03-03 07:47:36.642 Df CamberRedline[48053:1ad950e] [CamberRedline:smoke] SMOKE_EVENT ASSISTANT_PROMPT prompt=Winship hardscape
+2026-03-03 07:47:39.711 Df CamberRedline[48053:1ad950e] [CamberRedline:smoke] SMOKE_EVENT ASSISTANT_REQUEST_ID request_id=88e655ed-6d8a-49e8-a041-ab6af78506ba prompt=Winship hardscape
+2026-03-03 07:47:40.791 Df CamberRedline[48053:1ad950e] [CamberRedline:smoke] SMOKE_EVENT ASSISTANT_PROMPT prompt=What projects do you have
+2026-03-03 07:47:41.279 Df CamberRedline[48053:1ad950e] [CamberRedline:smoke] SMOKE_EVENT ASSISTANT_REQUEST_ID request_id=64af52fa-f12d-431d-9de4-6e7fe1da5714 prompt=What projects do you have
+2026-03-03 07:47:42.364 Df CamberRedline[48053:1ad950e] [CamberRedline:smoke] SMOKE_EVENT ASSISTANT_PROMPT prompt=What is going on recently?
+2026-03-03 07:47:43.742 Df CamberRedline[48053:1ad950e] [CamberRedline:smoke] SMOKE_EVENT ASSISTANT_REQUEST_ID request_id=fc3707ee-9f85-4e1f-8077-25b527e07d23 prompt=What is going on recently?
+2026-03-03 07:47:45.761 Df CamberRedline[48053:1ad950e] [CamberRedline:smoke] SMOKE_EVENT END
+2026-03-03 07:47:47.051 Df CamberRedline[48053:1ad950e] [CamberRedline:smoke] SMOKE_EVENT ASSISTANT_DONE messages=6

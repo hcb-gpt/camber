@@ -1,0 +1,24 @@
+2026-03-03 07:49:07.671 Df CamberRedline[66568:1ae0c4f] [CamberRedline:smoke] SMOKE_EVENT START
+2026-03-03 07:49:08.718 Df CamberRedline[66568:1ae0c4f] [CamberRedline:smoke] SMOKE_EVENT OPEN_TRIAGE
+2026-03-03 07:49:10.929 Df CamberRedline[66568:1ae0c4f] [CamberRedline:smoke] SMOKE_EVENT TRIAGE_TARGET queue=0ffa6d6a-b5d8-4b80-aad4-5ae8df83075c interaction=cll_SYNTH_SYNTH_FLOATER_CONTIN_1772335448 event_at=2026-03-01T03:25:50Z
+2026-03-03 07:49:10.930 Df CamberRedline[66568:1ae0c4f] [CamberRedline:smoke] SMOKE_EVENT WRITE_LOCK_RECOVERY_LOCKED banner=Write actions require X-Edge-Secret Truth surface remains readable. (bootstrap-review_v1.3.2, request_id: smoke-forced-lock)
+2026-03-03 07:49:15.137 Df CamberRedline[66568:1ae0c4f] [CamberRedline:smoke] SMOKE_EVENT WRITE_LOCK_RECOVERY_RESULT unlocked=1 wait_seconds=0
+2026-03-03 07:49:17.270 Df CamberRedline[66568:1ae0c4f] [CamberRedline:smoke] SMOKE_EVENT WRITE_LOCK_RECOVERY_RETRY queue=0ffa6d6a-b5d8-4b80-aad4-5ae8df83075c interaction=cll_SYNTH_SYNTH_FLOATER_CONTIN_1772335448 project=d8091a15-6a69-4634-8d5b-117abea35aa6
+2026-03-03 07:49:18.942 Df CamberRedline[66568:1ae0c4f] [CamberRedline:smoke] SMOKE_EVENT TRIAGE_ACTION kind=resolve queue=0ffa6d6a-b5d8-4b80-aad4-5ae8df83075c interaction=cll_SYNTH_SYNTH_FLOATER_CONTIN_1772335448 request_id=019cb3be-e229-70e2-93c8-6c88c917dd53
+2026-03-03 07:49:18.945 Df CamberRedline[66568:1ae0c4f] [CamberRedline:smoke] SMOKE_EVENT TRIAGE_UNDO_START queue=0ffa6d6a-b5d8-4b80-aad4-5ae8df83075c
+2026-03-03 07:49:20.497 Df CamberRedline[66568:1ae0c4f] [CamberRedline:smoke] SMOKE_EVENT TRIAGE_ACTION kind=undo queue=0ffa6d6a-b5d8-4b80-aad4-5ae8df83075c request_id=019cb3be-ec15-76b7-b5b9-a5fa6fb3eeb0
+2026-03-03 07:49:21.807 Df CamberRedline[66568:1ae0c4f] [CamberRedline:smoke] SMOKE_EVENT TRIAGE_DONE remaining=14
+2026-03-03 07:49:21.808 Df CamberRedline[66568:1ae0c4f] [CamberRedline:smoke] SMOKE_EVENT TRIAGE_PHASE_COMPLETE
+2026-03-03 07:49:22.438 Df CamberRedline[66568:1ae0c4f] [CamberRedline:smoke] SMOKE_EVENT OPEN_ASSISTANT
+2026-03-03 07:49:23.267 Df CamberRedline[66568:1ae0c4f] [CamberRedline:smoke] SMOKE_EVENT ASSISTANT_OPEN_CONTEXT_PACKET
+2026-03-03 07:49:23.267 Df CamberRedline[66568:1ae0c4f] [CamberRedline:smoke] SMOKE_EVENT ASSISTANT_CONTEXT_FETCH
+2026-03-03 07:49:26.141 Df CamberRedline[66568:1ae0c4f] [CamberRedline:smoke] SMOKE_EVENT ASSISTANT_CONTEXT request_id=019cb3be-f987-7f4e-ae13-f3593400d0ad version=assistant-context_v1.0.0
+2026-03-03 07:49:26.143 Df CamberRedline[66568:1ae0c4f] [CamberRedline:smoke] SMOKE_EVENT ASSISTANT_CONTEXT request_id=019cb3be-fac3-789f-9cb3-80941936970d version=assistant-context_v1.0.0
+2026-03-03 07:49:30.987 Df CamberRedline[66568:1ae0c4f] [CamberRedline:smoke] SMOKE_EVENT ASSISTANT_PROMPT prompt=Winship hardscape
+2026-03-03 07:49:33.323 Df CamberRedline[66568:1ae0c4f] [CamberRedline:smoke] SMOKE_EVENT ASSISTANT_REQUEST_ID request_id=7bdf555d-b4ed-4335-b40a-1b2b0725c0f5 prompt=Winship hardscape
+2026-03-03 07:49:34.356 Df CamberRedline[66568:1ae0c4f] [CamberRedline:smoke] SMOKE_EVENT ASSISTANT_PROMPT prompt=What projects do you have
+2026-03-03 07:49:34.917 Df CamberRedline[66568:1ae0c4f] [CamberRedline:smoke] SMOKE_EVENT ASSISTANT_REQUEST_ID request_id=951f5b5a-3178-44ce-b68f-119ec19a8c9a prompt=What projects do you have
+2026-03-03 07:49:35.971 Df CamberRedline[66568:1ae0c4f] [CamberRedline:smoke] SMOKE_EVENT ASSISTANT_PROMPT prompt=What is going on recently?
+2026-03-03 07:49:37.135 Df CamberRedline[66568:1ae0c4f] [CamberRedline:smoke] SMOKE_EVENT ASSISTANT_REQUEST_ID request_id=32dde218-782c-43ea-b6c8-1cd8cf18abc7 prompt=What is going on recently?
+2026-03-03 07:49:39.742 Df CamberRedline[66568:1ae0c4f] [CamberRedline:smoke] SMOKE_EVENT ASSISTANT_DONE messages=6
+2026-03-03 07:49:42.188 Df CamberRedline[66568:1ae0c4f] [CamberRedline:smoke] SMOKE_EVENT END
