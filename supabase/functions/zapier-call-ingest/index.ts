@@ -183,10 +183,10 @@ Deno.serve(async (req: Request) => {
     constantTimeEqual(incomingXSecret, expectedLegacySecret);
 
   // ---- BESIDE_RAW_PASSTHROUGH: detect Beside-format and insert directly ----
-  // Beside payloads must authenticate (canonical X-Edge-Secret or legacy X-Secret).
+  // SECURITY: Beside payloads must authenticate with canonical X-Edge-Secret.
   // Detection is body-based (fromPhoneNumber/toPhoneNumber/noteUrl).
   if (isBesidePayload(payload)) {
-    if (!canonicalValid && !legacyValid) {
+    if (!canonicalValid) {
       await logDiagnostic("BESIDE_AUTH_MISMATCH", {
         incoming: {
           x_edge_secret_len: incomingXEdgeSecret.length,
@@ -196,6 +196,7 @@ Deno.serve(async (req: Request) => {
           edge_shared_secret_set: true,
           zapier_legacy_secret_set: expectedLegacySecret.length > 0,
         },
+        action: "reject_beside_before_write",
       });
 
       return new Response(
