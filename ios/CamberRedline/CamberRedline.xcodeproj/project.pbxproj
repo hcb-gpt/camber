@@ -12,6 +12,7 @@
 		0F58E997CFCF95535981728E /* TriageView.swift in Sources */ = {isa = PBXBuildFile; fileRef = E79147BC2C70818C0A8A0E84 /* TriageView.swift */; };
 		1092BB6FCB219E4B99B16EDF /* ContactListView.swift in Sources */ = {isa = PBXBuildFile; fileRef = EF9A6045C507E720138741A1 /* ContactListView.swift */; };
 		13531F3AAFCDFA21ECFB9E65 /* ThreadView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 055EAEA048AB6BB4CA4EEE80 /* ThreadView.swift */; };
+		185CFFDA3F7D60F9D4D46321 /* KeychainStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = 4F0B85B1BDBCB368DD07F8B0 /* KeychainStore.swift */; };
 		193B96A4F6E1BC3B7A0B3B61 /* GradeIndicator.swift in Sources */ = {isa = PBXBuildFile; fileRef = 595848F3F46DFB87B0C65D55 /* GradeIndicator.swift */; };
 		1C7C72BCA9A6EDFBC2A43B96 /* CorrectionSheet.swift in Sources */ = {isa = PBXBuildFile; fileRef = A3F820DB38BA1EDB02EAE746 /* CorrectionSheet.swift */; };
 		235D7418A5D411C038ECD3C2 /* CallHeaderCard.swift in Sources */ = {isa = PBXBuildFile; fileRef = 6EC042AB1F53DF742C398B88 /* CallHeaderCard.swift */; };
@@ -20,6 +21,7 @@
 		318DEDE62A4D9753580B870D /* AssistantContext.swift in Sources */ = {isa = PBXBuildFile; fileRef = 286F14684E47ACD927777E89 /* AssistantContext.swift */; };
 		547C08130F2822252B3296F9 /* ClaimRow.swift in Sources */ = {isa = PBXBuildFile; fileRef = B70C4EA922BE454A904F95BB /* ClaimRow.swift */; };
 		54CEA22722BBC72BA5B92913 /* CallsView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 811F8ECECD49DD28083674CA /* CallsView.swift */; };
+		584FCCCFB1F786018EF880A2 /* TriageTelemetryService.swift in Sources */ = {isa = PBXBuildFile; fileRef = F65204156CC785EAD62C61E9 /* TriageTelemetryService.swift */; };
 		6810EA3F634A84FCB75E2AB9 /* ContactRow.swift in Sources */ = {isa = PBXBuildFile; fileRef = 64CAF4EB749EF62EB74ED822 /* ContactRow.swift */; };
 		685787AC4387F6EDEE201B93 /* AssistantChatView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 4A00522B1BB908D179B1DB3A /* AssistantChatView.swift */; };
 		6AA54D206A9C4FB91121750A /* AttributionTriageCardsView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 370CFEDE912C1156C1F30EB5 /* AttributionTriageCardsView.swift */; };
@@ -31,7 +33,6 @@
 		8677D6B99962EA63BD37567D /* ProjectPickerSheet.swift in Sources */ = {isa = PBXBuildFile; fileRef = A3B6E67F0EDF028F39994C5B /* ProjectPickerSheet.swift */; };
 		87C400F4F3874303B94EB83B /* SMSBubble.swift in Sources */ = {isa = PBXBuildFile; fileRef = C0B838D3F03C0D2CDB76E802 /* SMSBubble.swift */; };
 		8C920331FC246A2DDE612CC4 /* BootstrapService.swift in Sources */ = {isa = PBXBuildFile; fileRef = D46A39E4F7972B1C31B26A79 /* BootstrapService.swift */; };
-		5A01405A5DA404340C9E8489 /* KeychainStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = C313EB08FF4E7EFFEAA80B5A /* KeychainStore.swift */; };
 		930D6A53BC69DC25D29CBBF0 /* AssistantContextDebugView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 681533D1F455EC70B0983D2E /* AssistantContextDebugView.swift */; };
 		9729A9C737A2F3FB6C1A448C /* ThreadItem.swift in Sources */ = {isa = PBXBuildFile; fileRef = E620CD5610E49C34C8D6DD31 /* ThreadItem.swift */; };
 		986CB6A00F10B14F7508F67B /* Supabase in Frameworks */ = {isa = PBXBuildFile; productRef = 187F6B7C7E102040AC0AAD35 /* Supabase */; };
@@ -49,7 +50,6 @@
 
 /* Begin PBXFileReference section */
 		055EAEA048AB6BB4CA4EEE80 /* ThreadView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ThreadView.swift; sourceTree = "<group>"; };
-		DEADBEEF0001 /* Config.xcconfig */ = {isa = PBXFileReference; lastKnownFileType = text.xcconfig; path = Config.xcconfig; sourceTree = "<group>"; };
 		0AB89A707C416FD7AE32DD9B /* DialView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DialView.swift; sourceTree = "<group>"; };
 		164D5EB420B7255586578549 /* ReviewProject.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ReviewProject.swift; sourceTree = "<group>"; };
 		286F14684E47ACD927777E89 /* AssistantContext.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AssistantContext.swift; sourceTree = "<group>"; };
@@ -57,9 +57,11 @@
 		370CFEDE912C1156C1F30EB5 /* AttributionTriageCardsView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AttributionTriageCardsView.swift; sourceTree = "<group>"; };
 		49A9C46539AA007D7645122A /* SupabaseService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SupabaseService.swift; sourceTree = "<group>"; };
 		4A00522B1BB908D179B1DB3A /* AssistantChatView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AssistantChatView.swift; sourceTree = "<group>"; };
+		4F0B85B1BDBCB368DD07F8B0 /* KeychainStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = KeychainStore.swift; sourceTree = "<group>"; };
 		51E44482F637661C85D155F8 /* ThreadViewModel.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ThreadViewModel.swift; sourceTree = "<group>"; };
 		595848F3F46DFB87B0C65D55 /* GradeIndicator.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = GradeIndicator.swift; sourceTree = "<group>"; };
 		64CAF4EB749EF62EB74ED822 /* ContactRow.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ContactRow.swift; sourceTree = "<group>"; };
+		680C55C5F2E02D3C5447D47C /* Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist; path = Info.plist; sourceTree = "<group>"; };
 		681533D1F455EC70B0983D2E /* AssistantContextDebugView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AssistantContextDebugView.swift; sourceTree = "<group>"; };
 		6EC042AB1F53DF742C398B88 /* CallHeaderCard.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CallHeaderCard.swift; sourceTree = "<group>"; };
 		75C6B7FDB012B57B95706BE7 /* AIView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AIView.swift; sourceTree = "<group>"; };
@@ -79,12 +81,13 @@
 		C92779B3641C0D2DE6615612 /* CallSummaryCard.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CallSummaryCard.swift; sourceTree = "<group>"; };
 		D3AC87EECD3CC3F7CBD39A60 /* Assets.xcassets */ = {isa = PBXFileReference; lastKnownFileType = folder.assetcatalog; path = Assets.xcassets; sourceTree = "<group>"; };
 		D46A39E4F7972B1C31B26A79 /* BootstrapService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BootstrapService.swift; sourceTree = "<group>"; };
-		C313EB08FF4E7EFFEAA80B5A /* KeychainStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = KeychainStore.swift; sourceTree = "<group>"; };
+		E37440026F9FC584FC0CFD20 /* Config.xcconfig */ = {isa = PBXFileReference; lastKnownFileType = text.xcconfig; path = Config.xcconfig; sourceTree = "<group>"; };
 		E49C0E479C5BF9BBBEA78C7F /* ClaimGrade.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ClaimGrade.swift; sourceTree = "<group>"; };
 		E5142F02E2BCC00AA2D0B352 /* TriageViewModel.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TriageViewModel.swift; sourceTree = "<group>"; };
 		E620CD5610E49C34C8D6DD31 /* ThreadItem.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ThreadItem.swift; sourceTree = "<group>"; };
 		E79147BC2C70818C0A8A0E84 /* TriageView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TriageView.swift; sourceTree = "<group>"; };
 		EF9A6045C507E720138741A1 /* ContactListView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ContactListView.swift; sourceTree = "<group>"; };
+		F65204156CC785EAD62C61E9 /* TriageTelemetryService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TriageTelemetryService.swift; sourceTree = "<group>"; };
 		FB112EFBB100898B64A8727D /* InboxView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = InboxView.swift; sourceTree = "<group>"; };
 		FF5BA52015DDCF6F215FA113 /* CamberRedlineApp.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CamberRedlineApp.swift; sourceTree = "<group>"; };
 /* End PBXFileReference section */
@@ -134,7 +137,8 @@
 			children = (
 				D3AC87EECD3CC3F7CBD39A60 /* Assets.xcassets */,
 				FF5BA52015DDCF6F215FA113 /* CamberRedlineApp.swift */,
-				DEADBEEF0001 /* Config.xcconfig */,
+				E37440026F9FC584FC0CFD20 /* Config.xcconfig */,
+				680C55C5F2E02D3C5447D47C /* Info.plist */,
 				C32672D30BE75E53A0CBB17B /* Models */,
 				99BF2C7EF9F55A8850309EB3 /* Services */,
 				939AA6BCD9867C76C54DBD7E /* ViewModels */,
@@ -166,8 +170,9 @@
 			isa = PBXGroup;
 			children = (
 				D46A39E4F7972B1C31B26A79 /* BootstrapService.swift */,
-				C313EB08FF4E7EFFEAA80B5A /* KeychainStore.swift */,
+				4F0B85B1BDBCB368DD07F8B0 /* KeychainStore.swift */,
 				49A9C46539AA007D7645122A /* SupabaseService.swift */,
+				F65204156CC785EAD62C61E9 /* TriageTelemetryService.swift */,
 			);
 			path = Services;
 			sourceTree = "<group>";
@@ -276,7 +281,6 @@
 				2D1C18B8BA5D214E003BFCF4 /* AssistantViewModel.swift in Sources */,
 				6AA54D206A9C4FB91121750A /* AttributionTriageCardsView.swift in Sources */,
 				8C920331FC246A2DDE612CC4 /* BootstrapService.swift in Sources */,
-				5A01405A5DA404340C9E8489 /* KeychainStore.swift in Sources */,
 				235D7418A5D411C038ECD3C2 /* CallHeaderCard.swift in Sources */,
 				09304E51DC232ACF9D604391 /* CallSummaryCard.swift in Sources */,
 				54CEA22722BBC72BA5B92913 /* CallsView.swift in Sources */,
@@ -292,6 +296,7 @@
 				75E8F27A4E113F161D378177 /* DialView.swift in Sources */,
 				193B96A4F6E1BC3B7A0B3B61 /* GradeIndicator.swift in Sources */,
 				79C3F46D4F79C7EFBC0D426F /* InboxView.swift in Sources */,
+				185CFFDA3F7D60F9D4D46321 /* KeychainStore.swift in Sources */,
 				8677D6B99962EA63BD37567D /* ProjectPickerSheet.swift in Sources */,
 				D21A48D75846B897A735D708 /* ReviewItem.swift in Sources */,
 				F4526B156028BA0541CBA78C /* ReviewProject.swift in Sources */,
@@ -303,6 +308,7 @@
 				13531F3AAFCDFA21ECFB9E65 /* ThreadView.swift in Sources */,
 				D7B89133BD2CD72F5991596D /* ThreadViewModel.swift in Sources */,
 				0EF825BEF32FA479DE65FD79 /* TranscriptParser.swift in Sources */,
+				584FCCCFB1F786018EF880A2 /* TriageTelemetryService.swift in Sources */,
 				0F58E997CFCF95535981728E /* TriageView.swift in Sources */,
 				E66ABA2EA8746CB9634B7D93 /* TriageViewModel.swift in Sources */,
 			);
@@ -313,7 +319,6 @@
 /* Begin XCBuildConfiguration section */
 		07D3F34749C663839BBABE2F /* Debug */ = {
 			isa = XCBuildConfiguration;
-			baseConfigurationReference = DEADBEEF0001 /* Config.xcconfig */;
 			buildSettings = {
 				ALWAYS_SEARCH_USER_PATHS = NO;
 				CLANG_ANALYZER_NONNULL = YES;
@@ -377,7 +382,6 @@
 		};
 		16F12FB0A2B49E040E594FCE /* Release */ = {
 			isa = XCBuildConfiguration;
-			baseConfigurationReference = DEADBEEF0001 /* Config.xcconfig */;
 			buildSettings = {
 				ALWAYS_SEARCH_USER_PATHS = NO;
 				CLANG_ANALYZER_NONNULL = YES;
@@ -434,18 +438,17 @@
 		};
 		4D232F895AA52E7247DD376B /* Release */ = {
 			isa = XCBuildConfiguration;
-			baseConfigurationReference = DEADBEEF0001 /* Config.xcconfig */;
 			buildSettings = {
 				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
 				CODE_SIGN_IDENTITY = "iPhone Developer";
-					CURRENT_PROJECT_VERSION = 1;
-					DEVELOPMENT_TEAM = "";
-					GENERATE_INFOPLIST_FILE = NO;
-					INFOPLIST_FILE = CamberRedline/Info.plist;
-					INFOPLIST_KEY_UILaunchScreen_Generation = YES;
-					INFOPLIST_KEY_UISupportedInterfaceOrientations_iPhone = "UIInterfaceOrientationPortrait UIInterfaceOrientationPortraitUpsideDown UIInterfaceOrientationLandscapeLeft UIInterfaceOrientationLandscapeRight";
-					LD_RUNPATH_SEARCH_PATHS = (
-						"$(inherited)",
+				CURRENT_PROJECT_VERSION = 1;
+				DEVELOPMENT_TEAM = "";
+				GENERATE_INFOPLIST_FILE = NO;
+				INFOPLIST_FILE = CamberRedline/Info.plist;
+				INFOPLIST_KEY_UILaunchScreen_Generation = YES;
+				INFOPLIST_KEY_UISupportedInterfaceOrientations_iPhone = "UIInterfaceOrientationPortrait UIInterfaceOrientationPortraitUpsideDown UIInterfaceOrientationLandscapeLeft UIInterfaceOrientationLandscapeRight";
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
 					"@executable_path/Frameworks",
 				);
 				MARKETING_VERSION = 1.0.0;
@@ -462,18 +465,17 @@
 		};
 		FD1A407D257817D119105698 /* Debug */ = {
 			isa = XCBuildConfiguration;
-			baseConfigurationReference = DEADBEEF0001 /* Config.xcconfig */;
 			buildSettings = {
 				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
 				CODE_SIGN_IDENTITY = "iPhone Developer";
-					CURRENT_PROJECT_VERSION = 1;
-					DEVELOPMENT_TEAM = "";
-					GENERATE_INFOPLIST_FILE = NO;
-					INFOPLIST_FILE = CamberRedline/Info.plist;
-					INFOPLIST_KEY_UILaunchScreen_Generation = YES;
-					INFOPLIST_KEY_UISupportedInterfaceOrientations_iPhone = "UIInterfaceOrientationPortrait UIInterfaceOrientationPortraitUpsideDown UIInterfaceOrientationLandscapeLeft UIInterfaceOrientationLandscapeRight";
-					LD_RUNPATH_SEARCH_PATHS = (
-						"$(inherited)",
+				CURRENT_PROJECT_VERSION = 1;
+				DEVELOPMENT_TEAM = "";
+				GENERATE_INFOPLIST_FILE = NO;
+				INFOPLIST_FILE = CamberRedline/Info.plist;
+				INFOPLIST_KEY_UILaunchScreen_Generation = YES;
+				INFOPLIST_KEY_UISupportedInterfaceOrientations_iPhone = "UIInterfaceOrientationPortrait UIInterfaceOrientationPortraitUpsideDown UIInterfaceOrientationLandscapeLeft UIInterfaceOrientationLandscapeRight";
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
 					"@executable_path/Frameworks",
 				);
 				MARKETING_VERSION = 1.0.0;
