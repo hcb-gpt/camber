@@ -9,6 +9,7 @@ private enum CardTriageSmokeAutomation {
 
     static var isEnabled: Bool {
         ProcessInfo.processInfo.arguments.contains(launchFlag)
+            || ProcessInfo.processInfo.arguments.contains(truthSurfaceLocalFlag)
     }
 
     static var truthSurfaceLocalEnabled: Bool {

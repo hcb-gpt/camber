@@ -7,17 +7,20 @@
 	objects = {
 
 /* Begin PBXBuildFile section */
+		07CDD7D444E3457CE1545840 /* TriageSurfaceMode.swift in Sources */ = {isa = PBXBuildFile; fileRef = 87F04213A8C268D55B7CDB61 /* TriageSurfaceMode.swift */; };
 		09304E51DC232ACF9D604391 /* CallSummaryCard.swift in Sources */ = {isa = PBXBuildFile; fileRef = C92779B3641C0D2DE6615612 /* CallSummaryCard.swift */; };
 		0EF825BEF32FA479DE65FD79 /* TranscriptParser.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8F826DDC57DEDE773FDE9A90 /* TranscriptParser.swift */; };
 		0F58E997CFCF95535981728E /* TriageView.swift in Sources */ = {isa = PBXBuildFile; fileRef = E79147BC2C70818C0A8A0E84 /* TriageView.swift */; };
 		1092BB6FCB219E4B99B16EDF /* ContactListView.swift in Sources */ = {isa = PBXBuildFile; fileRef = EF9A6045C507E720138741A1 /* ContactListView.swift */; };
 		13531F3AAFCDFA21ECFB9E65 /* ThreadView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 055EAEA048AB6BB4CA4EEE80 /* ThreadView.swift */; };
+		185CFFDA3F7D60F9D4D46321 /* KeychainStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = 4F0B85B1BDBCB368DD07F8B0 /* KeychainStore.swift */; };
 		193B96A4F6E1BC3B7A0B3B61 /* GradeIndicator.swift in Sources */ = {isa = PBXBuildFile; fileRef = 595848F3F46DFB87B0C65D55 /* GradeIndicator.swift */; };
 		1C7C72BCA9A6EDFBC2A43B96 /* CorrectionSheet.swift in Sources */ = {isa = PBXBuildFile; fileRef = A3F820DB38BA1EDB02EAE746 /* CorrectionSheet.swift */; };
 		235D7418A5D411C038ECD3C2 /* CallHeaderCard.swift in Sources */ = {isa = PBXBuildFile; fileRef = 6EC042AB1F53DF742C398B88 /* CallHeaderCard.swift */; };
 		2B69E6BF52B2A2AB640CBC77 /* Contact.swift in Sources */ = {isa = PBXBuildFile; fileRef = 93F9EB787CFB3448E1EFC024 /* Contact.swift */; };
 		2D1C18B8BA5D214E003BFCF4 /* AssistantViewModel.swift in Sources */ = {isa = PBXBuildFile; fileRef = A8BE6DA76F1EB530D74A59B5 /* AssistantViewModel.swift */; };
 		318DEDE62A4D9753580B870D /* AssistantContext.swift in Sources */ = {isa = PBXBuildFile; fileRef = 286F14684E47ACD927777E89 /* AssistantContext.swift */; };
+		4AD7AA5B4A619EDC6024714B /* TriageRelativeTimeFormatterTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 04556EE4790E03FA3C40FC80 /* TriageRelativeTimeFormatterTests.swift */; };
 		547C08130F2822252B3296F9 /* ClaimRow.swift in Sources */ = {isa = PBXBuildFile; fileRef = B70C4EA922BE454A904F95BB /* ClaimRow.swift */; };
 		54CEA22722BBC72BA5B92913 /* CallsView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 811F8ECECD49DD28083674CA /* CallsView.swift */; };
 		6810EA3F634A84FCB75E2AB9 /* ContactRow.swift in Sources */ = {isa = PBXBuildFile; fileRef = 64CAF4EB749EF62EB74ED822 /* ContactRow.swift */; };
@@ -31,10 +34,10 @@
 		8677D6B99962EA63BD37567D /* ProjectPickerSheet.swift in Sources */ = {isa = PBXBuildFile; fileRef = A3B6E67F0EDF028F39994C5B /* ProjectPickerSheet.swift */; };
 		87C400F4F3874303B94EB83B /* SMSBubble.swift in Sources */ = {isa = PBXBuildFile; fileRef = C0B838D3F03C0D2CDB76E802 /* SMSBubble.swift */; };
 		8C920331FC246A2DDE612CC4 /* BootstrapService.swift in Sources */ = {isa = PBXBuildFile; fileRef = D46A39E4F7972B1C31B26A79 /* BootstrapService.swift */; };
-		5A01405A5DA404340C9E8489 /* KeychainStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = C313EB08FF4E7EFFEAA80B5A /* KeychainStore.swift */; };
 		930D6A53BC69DC25D29CBBF0 /* AssistantContextDebugView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 681533D1F455EC70B0983D2E /* AssistantContextDebugView.swift */; };
 		9729A9C737A2F3FB6C1A448C /* ThreadItem.swift in Sources */ = {isa = PBXBuildFile; fileRef = E620CD5610E49C34C8D6DD31 /* ThreadItem.swift */; };
 		986CB6A00F10B14F7508F67B /* Supabase in Frameworks */ = {isa = PBXBuildFile; productRef = 187F6B7C7E102040AC0AAD35 /* Supabase */; };
+		9EB3E419442AC74BE6E99E75 /* TriageRelativeTimeFormatter.swift in Sources */ = {isa = PBXBuildFile; fileRef = BC660831CB026ECB2EA1D177 /* TriageRelativeTimeFormatter.swift */; };
 		B0A7C6545E6B3F687949F4CD /* SpeakerTurnBubble.swift in Sources */ = {isa = PBXBuildFile; fileRef = 88D0EA435EF93F8F71CDA172 /* SpeakerTurnBubble.swift */; };
 		B4148DF1A17F77A1103A1796 /* SupabaseService.swift in Sources */ = {isa = PBXBuildFile; fileRef = 49A9C46539AA007D7645122A /* SupabaseService.swift */; };
 		C037A4DFA1ABDC2539B274A3 /* ContactInfoView.swift in Sources */ = {isa = PBXBuildFile; fileRef = A801A78FDAAECC420340C609 /* ContactInfoView.swift */; };
@@ -47,9 +50,19 @@
 		F74E8AAE36B43E7F30B8CE53 /* CamberRedlineApp.swift in Sources */ = {isa = PBXBuildFile; fileRef = FF5BA52015DDCF6F215FA113 /* CamberRedlineApp.swift */; };
 /* End PBXBuildFile section */
 
+/* Begin PBXContainerItemProxy section */
+		5804F912CC4FC485B0139B4D /* PBXContainerItemProxy */ = {
+			isa = PBXContainerItemProxy;
+			containerPortal = 4E1AE00C54DB256E75EAAAF4 /* Project object */;
+			proxyType = 1;
+			remoteGlobalIDString = B6293C378A63EBC6B48CFBE2;
+			remoteInfo = CamberRedline;
+		};
+/* End PBXContainerItemProxy section */
+
 /* Begin PBXFileReference section */
+		04556EE4790E03FA3C40FC80 /* TriageRelativeTimeFormatterTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TriageRelativeTimeFormatterTests.swift; sourceTree = "<group>"; };
 		055EAEA048AB6BB4CA4EEE80 /* ThreadView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ThreadView.swift; sourceTree = "<group>"; };
-		DEADBEEF0001 /* Config.xcconfig */ = {isa = PBXFileReference; lastKnownFileType = text.xcconfig; path = Config.xcconfig; sourceTree = "<group>"; };
 		0AB89A707C416FD7AE32DD9B /* DialView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DialView.swift; sourceTree = "<group>"; };
 		164D5EB420B7255586578549 /* ReviewProject.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ReviewProject.swift; sourceTree = "<group>"; };
 		286F14684E47ACD927777E89 /* AssistantContext.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AssistantContext.swift; sourceTree = "<group>"; };
@@ -57,15 +70,19 @@
 		370CFEDE912C1156C1F30EB5 /* AttributionTriageCardsView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AttributionTriageCardsView.swift; sourceTree = "<group>"; };
 		49A9C46539AA007D7645122A /* SupabaseService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SupabaseService.swift; sourceTree = "<group>"; };
 		4A00522B1BB908D179B1DB3A /* AssistantChatView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AssistantChatView.swift; sourceTree = "<group>"; };
+		4F0B85B1BDBCB368DD07F8B0 /* KeychainStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = KeychainStore.swift; sourceTree = "<group>"; };
 		51E44482F637661C85D155F8 /* ThreadViewModel.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ThreadViewModel.swift; sourceTree = "<group>"; };
 		595848F3F46DFB87B0C65D55 /* GradeIndicator.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = GradeIndicator.swift; sourceTree = "<group>"; };
+		5C25CB790738517951732156 /* CamberRedlineTests.xctest */ = {isa = PBXFileReference; includeInIndex = 0; lastKnownFileType = wrapper.cfbundle; path = CamberRedlineTests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
 		64CAF4EB749EF62EB74ED822 /* ContactRow.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ContactRow.swift; sourceTree = "<group>"; };
+		680C55C5F2E02D3C5447D47C /* Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist; path = Info.plist; sourceTree = "<group>"; };
 		681533D1F455EC70B0983D2E /* AssistantContextDebugView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AssistantContextDebugView.swift; sourceTree = "<group>"; };
 		6EC042AB1F53DF742C398B88 /* CallHeaderCard.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CallHeaderCard.swift; sourceTree = "<group>"; };
 		75C6B7FDB012B57B95706BE7 /* AIView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AIView.swift; sourceTree = "<group>"; };
 		75E749332DE2AAC4065FBD2C /* ReviewItem.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ReviewItem.swift; sourceTree = "<group>"; };
 		811F8ECECD49DD28083674CA /* CallsView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CallsView.swift; sourceTree = "<group>"; };
 		818303E562C5E5945D154CAB /* CardTriageViewModel.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CardTriageViewModel.swift; sourceTree = "<group>"; };
+		87F04213A8C268D55B7CDB61 /* TriageSurfaceMode.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TriageSurfaceMode.swift; sourceTree = "<group>"; };
 		88D0EA435EF93F8F71CDA172 /* SpeakerTurnBubble.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SpeakerTurnBubble.swift; sourceTree = "<group>"; };
 		8F826DDC57DEDE773FDE9A90 /* TranscriptParser.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TranscriptParser.swift; sourceTree = "<group>"; };
 		911A4F7AE09B7C357D50E794 /* SettingsView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SettingsView.swift; sourceTree = "<group>"; };
@@ -75,11 +92,12 @@
 		A801A78FDAAECC420340C609 /* ContactInfoView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ContactInfoView.swift; sourceTree = "<group>"; };
 		A8BE6DA76F1EB530D74A59B5 /* AssistantViewModel.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AssistantViewModel.swift; sourceTree = "<group>"; };
 		B70C4EA922BE454A904F95BB /* ClaimRow.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ClaimRow.swift; sourceTree = "<group>"; };
+		BC660831CB026ECB2EA1D177 /* TriageRelativeTimeFormatter.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TriageRelativeTimeFormatter.swift; sourceTree = "<group>"; };
 		C0B838D3F03C0D2CDB76E802 /* SMSBubble.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SMSBubble.swift; sourceTree = "<group>"; };
 		C92779B3641C0D2DE6615612 /* CallSummaryCard.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CallSummaryCard.swift; sourceTree = "<group>"; };
 		D3AC87EECD3CC3F7CBD39A60 /* Assets.xcassets */ = {isa = PBXFileReference; lastKnownFileType = folder.assetcatalog; path = Assets.xcassets; sourceTree = "<group>"; };
 		D46A39E4F7972B1C31B26A79 /* BootstrapService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BootstrapService.swift; sourceTree = "<group>"; };
-		C313EB08FF4E7EFFEAA80B5A /* KeychainStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = KeychainStore.swift; sourceTree = "<group>"; };
+		E37440026F9FC584FC0CFD20 /* Config.xcconfig */ = {isa = PBXFileReference; lastKnownFileType = text.xcconfig; path = Config.xcconfig; sourceTree = "<group>"; };
 		E49C0E479C5BF9BBBEA78C7F /* ClaimGrade.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ClaimGrade.swift; sourceTree = "<group>"; };
 		E5142F02E2BCC00AA2D0B352 /* TriageViewModel.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TriageViewModel.swift; sourceTree = "<group>"; };
 		E620CD5610E49C34C8D6DD31 /* ThreadItem.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ThreadItem.swift; sourceTree = "<group>"; };
@@ -134,9 +152,11 @@
 			children = (
 				D3AC87EECD3CC3F7CBD39A60 /* Assets.xcassets */,
 				FF5BA52015DDCF6F215FA113 /* CamberRedlineApp.swift */,
-				DEADBEEF0001 /* Config.xcconfig */,
+				E37440026F9FC584FC0CFD20 /* Config.xcconfig */,
+				680C55C5F2E02D3C5447D47C /* Info.plist */,
 				C32672D30BE75E53A0CBB17B /* Models */,
 				99BF2C7EF9F55A8850309EB3 /* Services */,
+				98B25701D4582007A54FAC4F /* Utilities */,
 				939AA6BCD9867C76C54DBD7E /* ViewModels */,
 				46E176F410BCCCB75B44DF99 /* Views */,
 			);
@@ -154,10 +174,19 @@
 			path = ViewModels;
 			sourceTree = "<group>";
 		};
+		98B25701D4582007A54FAC4F /* Utilities */ = {
+			isa = PBXGroup;
+			children = (
+				BC660831CB026ECB2EA1D177 /* TriageRelativeTimeFormatter.swift */,
+			);
+			path = Utilities;
+			sourceTree = "<group>";
+		};
 		995D21D79BDD924FD730FCD1 /* Products */ = {
 			isa = PBXGroup;
 			children = (
 				34CB7D73C1D3046EEE6ECAAE /* CamberRedline.app */,
+				5C25CB790738517951732156 /* CamberRedlineTests.xctest */,
 			);
 			name = Products;
 			sourceTree = "<group>";
@@ -166,10 +195,18 @@
 			isa = PBXGroup;
 			children = (
 				D46A39E4F7972B1C31B26A79 /* BootstrapService.swift */,
-				C313EB08FF4E7EFFEAA80B5A /* KeychainStore.swift */,
+				4F0B85B1BDBCB368DD07F8B0 /* KeychainStore.swift */,
 				49A9C46539AA007D7645122A /* SupabaseService.swift */,
 			);
 			path = Services;
+			sourceTree = "<group>";
+		};
+		AD674AF374E4136C10DE8D29 /* CamberRedlineTests */ = {
+			isa = PBXGroup;
+			children = (
+				04556EE4790E03FA3C40FC80 /* TriageRelativeTimeFormatterTests.swift */,
+			);
+			path = CamberRedlineTests;
 			sourceTree = "<group>";
 		};
 		C32672D30BE75E53A0CBB17B /* Models */ = {
@@ -182,6 +219,7 @@
 				164D5EB420B7255586578549 /* ReviewProject.swift */,
 				E620CD5610E49C34C8D6DD31 /* ThreadItem.swift */,
 				8F826DDC57DEDE773FDE9A90 /* TranscriptParser.swift */,
+				87F04213A8C268D55B7CDB61 /* TriageSurfaceMode.swift */,
 			);
 			path = Models;
 			sourceTree = "<group>";
@@ -190,6 +228,7 @@
 			isa = PBXGroup;
 			children = (
 				4CBF2260079024E63D8ABDC0 /* CamberRedline */,
+				AD674AF374E4136C10DE8D29 /* CamberRedlineTests */,
 				995D21D79BDD924FD730FCD1 /* Products */,
 			);
 			sourceTree = "<group>";
@@ -197,6 +236,24 @@
 /* End PBXGroup section */
 
 /* Begin PBXNativeTarget section */
+		A62FE21CFE0947E5D6FB4C36 /* CamberRedlineTests */ = {
+			isa = PBXNativeTarget;
+			buildConfigurationList = 3B6F2C89A61DB735E5165526 /* Build configuration list for PBXNativeTarget "CamberRedlineTests" */;
+			buildPhases = (
+				66BE80E27784004ADBEB4045 /* Sources */,
+			);
+			buildRules = (
+			);
+			dependencies = (
+				6082565484268D9406BC46DC /* PBXTargetDependency */,
+			);
+			name = CamberRedlineTests;
+			packageProductDependencies = (
+			);
+			productName = CamberRedlineTests;
+			productReference = 5C25CB790738517951732156 /* CamberRedlineTests.xctest */;
+			productType = "com.apple.product-type.bundle.unit-test";
+		};
 		B6293C378A63EBC6B48CFBE2 /* CamberRedline */ = {
 			isa = PBXNativeTarget;
 			buildConfigurationList = 8FCC5439A471F0FFD3E9A720 /* Build configuration list for PBXNativeTarget "CamberRedline" */;
@@ -249,6 +306,7 @@
 			projectRoot = "";
 			targets = (
 				B6293C378A63EBC6B48CFBE2 /* CamberRedline */,
+				A62FE21CFE0947E5D6FB4C36 /* CamberRedlineTests */,
 			);
 		};
 /* End PBXProject section */
@@ -265,6 +323,14 @@
 /* End PBXResourcesBuildPhase section */
 
 /* Begin PBXSourcesBuildPhase section */
+		66BE80E27784004ADBEB4045 /* Sources */ = {
+			isa = PBXSourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				4AD7AA5B4A619EDC6024714B /* TriageRelativeTimeFormatterTests.swift in Sources */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
 		926888D8F0B8A01F55E0FCF6 /* Sources */ = {
 			isa = PBXSourcesBuildPhase;
 			buildActionMask = 2147483647;
@@ -276,7 +342,6 @@
 				2D1C18B8BA5D214E003BFCF4 /* AssistantViewModel.swift in Sources */,
 				6AA54D206A9C4FB91121750A /* AttributionTriageCardsView.swift in Sources */,
 				8C920331FC246A2DDE612CC4 /* BootstrapService.swift in Sources */,
-				5A01405A5DA404340C9E8489 /* KeychainStore.swift in Sources */,
 				235D7418A5D411C038ECD3C2 /* CallHeaderCard.swift in Sources */,
 				09304E51DC232ACF9D604391 /* CallSummaryCard.swift in Sources */,
 				54CEA22722BBC72BA5B92913 /* CallsView.swift in Sources */,
@@ -292,6 +357,7 @@
 				75E8F27A4E113F161D378177 /* DialView.swift in Sources */,
 				193B96A4F6E1BC3B7A0B3B61 /* GradeIndicator.swift in Sources */,
 				79C3F46D4F79C7EFBC0D426F /* InboxView.swift in Sources */,
+				185CFFDA3F7D60F9D4D46321 /* KeychainStore.swift in Sources */,
 				8677D6B99962EA63BD37567D /* ProjectPickerSheet.swift in Sources */,
 				D21A48D75846B897A735D708 /* ReviewItem.swift in Sources */,
 				F4526B156028BA0541CBA78C /* ReviewProject.swift in Sources */,
@@ -303,6 +369,8 @@
 				13531F3AAFCDFA21ECFB9E65 /* ThreadView.swift in Sources */,
 				D7B89133BD2CD72F5991596D /* ThreadViewModel.swift in Sources */,
 				0EF825BEF32FA479DE65FD79 /* TranscriptParser.swift in Sources */,
+				9EB3E419442AC74BE6E99E75 /* TriageRelativeTimeFormatter.swift in Sources */,
+				07CDD7D444E3457CE1545840 /* TriageSurfaceMode.swift in Sources */,
 				0F58E997CFCF95535981728E /* TriageView.swift in Sources */,
 				E66ABA2EA8746CB9634B7D93 /* TriageViewModel.swift in Sources */,
 			);
@@ -310,10 +378,17 @@
 		};
 /* End PBXSourcesBuildPhase section */
 
+/* Begin PBXTargetDependency section */
+		6082565484268D9406BC46DC /* PBXTargetDependency */ = {
+			isa = PBXTargetDependency;
+			target = B6293C378A63EBC6B48CFBE2 /* CamberRedline */;
+			targetProxy = 5804F912CC4FC485B0139B4D /* PBXContainerItemProxy */;
+		};
+/* End PBXTargetDependency section */
+
 /* Begin XCBuildConfiguration section */
 		07D3F34749C663839BBABE2F /* Debug */ = {
 			isa = XCBuildConfiguration;
-			baseConfigurationReference = DEADBEEF0001 /* Config.xcconfig */;
 			buildSettings = {
 				ALWAYS_SEARCH_USER_PATHS = NO;
 				CLANG_ANALYZER_NONNULL = YES;
@@ -368,7 +443,6 @@
 				MTL_FAST_MATH = YES;
 				ONLY_ACTIVE_ARCH = YES;
 				PRODUCT_NAME = "$(TARGET_NAME)";
-				SDKROOT = auto;
 				SWIFT_ACTIVE_COMPILATION_CONDITIONS = DEBUG;
 				SWIFT_OPTIMIZATION_LEVEL = "-Onone";
 				SWIFT_VERSION = 5.0;
@@ -377,7 +451,6 @@
 		};
 		16F12FB0A2B49E040E594FCE /* Release */ = {
 			isa = XCBuildConfiguration;
-			baseConfigurationReference = DEADBEEF0001 /* Config.xcconfig */;
 			buildSettings = {
 				ALWAYS_SEARCH_USER_PATHS = NO;
 				CLANG_ANALYZER_NONNULL = YES;
@@ -425,7 +498,6 @@
 				MTL_ENABLE_DEBUG_INFO = NO;
 				MTL_FAST_MATH = YES;
 				PRODUCT_NAME = "$(TARGET_NAME)";
-				SDKROOT = auto;
 				SWIFT_COMPILATION_MODE = wholemodule;
 				SWIFT_OPTIMIZATION_LEVEL = "-O";
 				SWIFT_VERSION = 5.0;
@@ -434,18 +506,17 @@
 		};
 		4D232F895AA52E7247DD376B /* Release */ = {
 			isa = XCBuildConfiguration;
-			baseConfigurationReference = DEADBEEF0001 /* Config.xcconfig */;
 			buildSettings = {
 				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
 				CODE_SIGN_IDENTITY = "iPhone Developer";
-					CURRENT_PROJECT_VERSION = 1;
-					DEVELOPMENT_TEAM = "";
-					GENERATE_INFOPLIST_FILE = NO;
-					INFOPLIST_FILE = CamberRedline/Info.plist;
-					INFOPLIST_KEY_UILaunchScreen_Generation = YES;
-					INFOPLIST_KEY_UISupportedInterfaceOrientations_iPhone = "UIInterfaceOrientationPortrait UIInterfaceOrientationPortraitUpsideDown UIInterfaceOrientationLandscapeLeft UIInterfaceOrientationLandscapeRight";
-					LD_RUNPATH_SEARCH_PATHS = (
-						"$(inherited)",
+				CURRENT_PROJECT_VERSION = 1;
+				DEVELOPMENT_TEAM = "";
+				GENERATE_INFOPLIST_FILE = NO;
+				INFOPLIST_FILE = CamberRedline/Info.plist;
+				INFOPLIST_KEY_UILaunchScreen_Generation = YES;
+				INFOPLIST_KEY_UISupportedInterfaceOrientations_iPhone = "UIInterfaceOrientationPortrait UIInterfaceOrientationPortraitUpsideDown UIInterfaceOrientationLandscapeLeft UIInterfaceOrientationLandscapeRight";
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
 					"@executable_path/Frameworks",
 				);
 				MARKETING_VERSION = 1.0.0;
@@ -460,20 +531,63 @@
 			};
 			name = Release;
 		};
+		6A6A99D660181FAA7F0AD77B /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				BUNDLE_LOADER = "$(TEST_HOST)";
+				GENERATE_INFOPLIST_FILE = YES;
+				IPHONEOS_DEPLOYMENT_TARGET = 17.0;
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/Frameworks",
+					"@loader_path/Frameworks",
+				);
+				PRODUCT_BUNDLE_IDENTIFIER = com.heartwoodcustombuilders.CamberRedlineTests;
+				SDKROOT = iphoneos;
+				SUPPORTED_PLATFORMS = "iphoneos iphonesimulator";
+				SUPPORTS_MACCATALYST = NO;
+				SUPPORTS_MAC_DESIGNED_FOR_IPHONE_IPAD = YES;
+				SUPPORTS_XR_DESIGNED_FOR_IPHONE_IPAD = YES;
+				TARGETED_DEVICE_FAMILY = "1,2";
+				TEST_HOST = "$(BUILT_PRODUCTS_DIR)/CamberRedline.app/CamberRedline";
+			};
+			name = Release;
+		};
+		94B88E20444668E712E9BC66 /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				BUNDLE_LOADER = "$(TEST_HOST)";
+				GENERATE_INFOPLIST_FILE = YES;
+				IPHONEOS_DEPLOYMENT_TARGET = 17.0;
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/Frameworks",
+					"@loader_path/Frameworks",
+				);
+				PRODUCT_BUNDLE_IDENTIFIER = com.heartwoodcustombuilders.CamberRedlineTests;
+				SDKROOT = iphoneos;
+				SUPPORTED_PLATFORMS = "iphoneos iphonesimulator";
+				SUPPORTS_MACCATALYST = NO;
+				SUPPORTS_MAC_DESIGNED_FOR_IPHONE_IPAD = YES;
+				SUPPORTS_XR_DESIGNED_FOR_IPHONE_IPAD = YES;
+				TARGETED_DEVICE_FAMILY = "1,2";
+				TEST_HOST = "$(BUILT_PRODUCTS_DIR)/CamberRedline.app/CamberRedline";
+			};
+			name = Debug;
+		};
 		FD1A407D257817D119105698 /* Debug */ = {
 			isa = XCBuildConfiguration;
-			baseConfigurationReference = DEADBEEF0001 /* Config.xcconfig */;
 			buildSettings = {
 				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
 				CODE_SIGN_IDENTITY = "iPhone Developer";
-					CURRENT_PROJECT_VERSION = 1;
-					DEVELOPMENT_TEAM = "";
-					GENERATE_INFOPLIST_FILE = NO;
-					INFOPLIST_FILE = CamberRedline/Info.plist;
-					INFOPLIST_KEY_UILaunchScreen_Generation = YES;
-					INFOPLIST_KEY_UISupportedInterfaceOrientations_iPhone = "UIInterfaceOrientationPortrait UIInterfaceOrientationPortraitUpsideDown UIInterfaceOrientationLandscapeLeft UIInterfaceOrientationLandscapeRight";
-					LD_RUNPATH_SEARCH_PATHS = (
-						"$(inherited)",
+				CURRENT_PROJECT_VERSION = 1;
+				DEVELOPMENT_TEAM = "";
+				GENERATE_INFOPLIST_FILE = NO;
+				INFOPLIST_FILE = CamberRedline/Info.plist;
+				INFOPLIST_KEY_UILaunchScreen_Generation = YES;
+				INFOPLIST_KEY_UISupportedInterfaceOrientations_iPhone = "UIInterfaceOrientationPortrait UIInterfaceOrientationPortraitUpsideDown UIInterfaceOrientationLandscapeLeft UIInterfaceOrientationLandscapeRight";
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
 					"@executable_path/Frameworks",
 				);
 				MARKETING_VERSION = 1.0.0;
@@ -496,6 +610,15 @@
 			buildConfigurations = (
 				07D3F34749C663839BBABE2F /* Debug */,
 				16F12FB0A2B49E040E594FCE /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Debug;
+		};
+		3B6F2C89A61DB735E5165526 /* Build configuration list for PBXNativeTarget "CamberRedlineTests" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				94B88E20444668E712E9BC66 /* Debug */,
+				6A6A99D660181FAA7F0AD77B /* Release */,
 			);
 			defaultConfigurationIsVisible = 0;
 			defaultConfigurationName = Debug;

@@ -39,6 +39,17 @@
          </BuildableReference>
       </MacroExpansion>
       <Testables>
+         <TestableReference
+            skipped = "NO"
+            parallelizable = "NO">
+            <BuildableReference
+               BuildableIdentifier = "primary"
+               BlueprintIdentifier = "A62FE21CFE0947E5D6FB4C36"
+               BuildableName = "CamberRedlineTests.xctest"
+               BlueprintName = "CamberRedlineTests"
+               ReferencedContainer = "container:CamberRedline.xcodeproj">
+            </BuildableReference>
+         </TestableReference>
       </Testables>
       <CommandLineArguments>
       </CommandLineArguments>

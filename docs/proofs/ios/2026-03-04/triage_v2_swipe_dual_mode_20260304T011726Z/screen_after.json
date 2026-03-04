@@ -1,0 +1,30 @@
+{
+  "elements_by_type": {
+    "Button": [
+      "Choose project",
+      "Choose project",
+      "Choose project",
+      "Ask me later",
+      "Ask me later",
+      "Ask me later",
+      "Copy receipt",
+      "Undo"
+    ]
+  },
+  "total_elements": 48,
+  "interactive_elements": 8,
+  "text_fields": [],
+  "buttons": [
+    "Choose project",
+    "Choose project",
+    "Choose project",
+    "Ask me later",
+    "Ask me later",
+    "Ask me later",
+    "Copy receipt",
+    "Undo"
+  ],
+  "navigation": {},
+  "screen_name": null,
+  "focusable": 8
+}

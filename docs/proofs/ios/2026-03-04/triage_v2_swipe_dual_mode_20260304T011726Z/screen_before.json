@@ -1,0 +1,20 @@
+{
+  "elements_by_type": {
+    "Button": [
+      "Yes \u2014 Smoke \u2014 Truth Surface (v1)",
+      "Wrong project",
+      "Ask me later"
+    ]
+  },
+  "total_elements": 31,
+  "interactive_elements": 3,
+  "text_fields": [],
+  "buttons": [
+    "Yes \u2014 Smoke \u2014 Truth Surface (v1)",
+    "Wrong project",
+    "Ask me later"
+  ],
+  "navigation": {},
+  "screen_name": null,
+  "focusable": 3
+}

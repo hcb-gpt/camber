@@ -4,6 +4,7 @@ struct SettingsView: View {
     var contactListViewModel: ContactListViewModel
 
     @State private var showResetConfirmation = false
+    @AppStorage("triage_surface_mode_v1") private var triageSurfaceModeRaw = TriageSurfaceMode.contractor.rawValue
     #if DEBUG
     @State private var internalModeEnabled = BootstrapService.shared.isInternalModeEnabled()
     @State private var writeStubEnabled = BootstrapService.shared.isWriteStubEnabled()
@@ -35,6 +36,17 @@ struct SettingsView: View {
 
                 #if DEBUG
                 Section("Internal Mode (DEBUG)") {
+                    Picker("Triage Surface", selection: $triageSurfaceModeRaw) {
+                        ForEach(TriageSurfaceMode.allCases) { mode in
+                            Text(mode.label).tag(mode.rawValue)
+                        }
+                    }
+                    .pickerStyle(.segmented)
+
+                    Text("Contractor mode hides internal attribution diagnostics. Dev mode keeps full debug context visible.")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+
                     Toggle("Enable privileged attribution writes", isOn: $internalModeEnabled)
                         .onChange(of: internalModeEnabled) { _, newValue in
                             BootstrapService.shared.setInternalModeEnabled(newValue)

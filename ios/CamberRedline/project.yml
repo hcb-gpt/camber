@@ -33,3 +33,20 @@ targets:
         DEVELOPMENT_TEAM: ""
     scheme:
       gatherCoverageData: false
+      testTargets:
+        - CamberRedlineTests
+
+  CamberRedlineTests:
+    type: bundle.unit-test
+    platform: iOS
+    supportedDestinations: [iOS]
+    deploymentTarget: "17.0"
+    sources:
+      - CamberRedlineTests
+    hostApplication: CamberRedline
+    dependencies:
+      - target: CamberRedline
+    settings:
+      base:
+        GENERATE_INFOPLIST_FILE: true
+        PRODUCT_BUNDLE_IDENTIFIER: com.heartwoodcustombuilders.CamberRedlineTests

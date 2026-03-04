@@ -1,0 +1,16 @@
+{
+  "elements_by_type": {
+    "Button": [
+      "Details"
+    ]
+  },
+  "total_elements": 5,
+  "interactive_elements": 1,
+  "text_fields": [],
+  "buttons": [
+    "Details"
+  ],
+  "navigation": {},
+  "screen_name": null,
+  "focusable": 1
+}

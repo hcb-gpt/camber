@@ -1,0 +1,24 @@
+{
+  "elements_by_type": {
+    "Button": [
+      "Sheet Grabber",
+      "Suggested, Smoke \u2014 Truth Surface (v1)",
+      "Smoke \u2014 Truth Surface (v1)",
+      "BizDev / No Project",
+      "Dismiss this item"
+    ]
+  },
+  "total_elements": 12,
+  "interactive_elements": 5,
+  "text_fields": [],
+  "buttons": [
+    "Sheet Grabber",
+    "Suggested, Smoke \u2014 Truth Surface (v1)",
+    "Smoke \u2014 Truth Surface (v1)",
+    "BizDev / No Project",
+    "Dismiss this item"
+  ],
+  "navigation": {},
+  "screen_name": null,
+  "focusable": 5
+}
