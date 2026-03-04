@@ -169,6 +169,10 @@ final class CardTriageViewModel {
         service.writesLockedBannerText
     }
 
+    var attributionWritesLockedStatusCode: Int? {
+        service.writeLockState?.statusCode
+    }
+
     func recoverWriteAccess() async -> BootstrapWriteRecoveryOutcome {
         let outcome = await service.recoverWriteAccess()
         switch outcome {
@@ -264,8 +268,9 @@ final class CardTriageViewModel {
 
     func resolve(_ card: CardItem, to projectId: String, notes: String? = nil) async {
         if let banner = service.writesLockedBannerText {
+            let statusCode = attributionWritesLockedStatusCode ?? -1
             CardTriageLearningLoopMetrics.log(
-                "KPI_EVENT AUTH_LOCK_BLOCKED surface=triage_cards action=resolve queue=\(card.queueId)"
+                "KPI_EVENT AUTH_LOCK_BLOCKED surface=triage_cards action=resolve status_code=\(statusCode) queue=\(LearningLoopIdHash.short(card.queueId))"
             )
             error = banner
             return
@@ -305,7 +310,7 @@ final class CardTriageViewModel {
                 receipt: .init(queueId: card.queueId, requestId: response.requestId)
             )
             CardTriageLearningLoopMetrics.log(
-                "KPI_EVENT WRITE_ACTION surface=triage_cards action=resolve queue=\(card.queueId) request_id=\(response.requestId ?? "missing")"
+                "KPI_EVENT WRITE_ACTION surface=triage_cards action=resolve queue=\(LearningLoopIdHash.short(card.queueId)) request_id=\(response.requestId ?? "missing")"
             )
             if CardTriageSmokeAutomation.isEnabled {
                 let requestId = response.requestId ?? "missing"
@@ -333,8 +338,9 @@ final class CardTriageViewModel {
 
     func dismiss(_ card: CardItem, reason: String? = nil, notes: String? = nil) async {
         if let banner = service.writesLockedBannerText {
+            let statusCode = attributionWritesLockedStatusCode ?? -1
             CardTriageLearningLoopMetrics.log(
-                "KPI_EVENT AUTH_LOCK_BLOCKED surface=triage_cards action=dismiss queue=\(card.queueId)"
+                "KPI_EVENT AUTH_LOCK_BLOCKED surface=triage_cards action=dismiss status_code=\(statusCode) queue=\(LearningLoopIdHash.short(card.queueId))"
             )
             error = banner
             return
@@ -373,7 +379,7 @@ final class CardTriageViewModel {
                 receipt: .init(queueId: card.queueId, requestId: response.requestId)
             )
             CardTriageLearningLoopMetrics.log(
-                "KPI_EVENT WRITE_ACTION surface=triage_cards action=dismiss queue=\(card.queueId) request_id=\(response.requestId ?? "missing")"
+                "KPI_EVENT WRITE_ACTION surface=triage_cards action=dismiss queue=\(LearningLoopIdHash.short(card.queueId)) request_id=\(response.requestId ?? "missing")"
             )
             if CardTriageSmokeAutomation.isEnabled {
                 let requestId = response.requestId ?? "missing"
@@ -405,8 +411,9 @@ final class CardTriageViewModel {
 
     func escalate(_ card: CardItem, reason: String) async {
         if let banner = service.writesLockedBannerText {
+            let statusCode = attributionWritesLockedStatusCode ?? -1
             CardTriageLearningLoopMetrics.log(
-                "KPI_EVENT AUTH_LOCK_BLOCKED surface=triage_cards action=escalate queue=\(card.queueId)"
+                "KPI_EVENT AUTH_LOCK_BLOCKED surface=triage_cards action=escalate status_code=\(statusCode) queue=\(LearningLoopIdHash.short(card.queueId))"
             )
             error = banner
             return
@@ -443,7 +450,7 @@ final class CardTriageViewModel {
                 notes: reason
             )
             CardTriageLearningLoopMetrics.log(
-                "KPI_EVENT WRITE_ACTION surface=triage_cards action=escalate queue=\(card.queueId) request_id=\(response.requestId ?? "missing")"
+                "KPI_EVENT WRITE_ACTION surface=triage_cards action=escalate queue=\(LearningLoopIdHash.short(card.queueId)) request_id=\(response.requestId ?? "missing")"
             )
             lastAction = TriageAction(
                 queueId: card.queueId,
@@ -511,7 +518,7 @@ final class CardTriageViewModel {
         do {
             let response = try await service.undo(queueId: action.queueId)
             CardTriageLearningLoopMetrics.log(
-                "KPI_EVENT UNDO_COMMIT surface=triage_cards queue=\(action.queueId) undo_of=\(undoneKind) request_id=\(response.requestId ?? "missing")"
+                "KPI_EVENT UNDO_COMMIT surface=triage_cards queue=\(LearningLoopIdHash.short(action.queueId)) undo_of=\(undoneKind) request_id=\(response.requestId ?? "missing")"
             )
             if CardTriageSmokeAutomation.isEnabled {
                 let requestId = response.requestId ?? "missing"
@@ -526,8 +533,9 @@ final class CardTriageViewModel {
             await loadQueue()
         } catch {
             if let banner = service.writesLockedBannerText {
+                let statusCode = attributionWritesLockedStatusCode ?? -1
                 CardTriageLearningLoopMetrics.log(
-                    "KPI_EVENT AUTH_LOCK_BLOCKED surface=triage_cards action=undo queue=\(action.queueId)"
+                    "KPI_EVENT AUTH_LOCK_BLOCKED surface=triage_cards action=undo status_code=\(statusCode) queue=\(LearningLoopIdHash.short(action.queueId))"
                 )
                 self.error = banner
             } else {
