@@ -172,7 +172,9 @@ function extractSummary(result: PassResult): PassSummary {
     if (costMatch) summary.cost = parseFloat(costMatch[1]);
 
     const tokensMatch = line.match(/Total tokens:\s+([0-9,]+)/);
-    if (tokensMatch) summary.tokens = parseInt(tokensMatch[1].replace(/,/g, ""), 10);
+    if (tokensMatch) {
+      summary.tokens = parseInt(tokensMatch[1].replace(/,/g, ""), 10);
+    }
 
     // For Pass 3: facts extracted
     const factsMatch = line.match(/Facts extracted:\s+(\d+)/);
@@ -213,8 +215,28 @@ async function main() {
       extraArgs.push(`--max-spans=${MAX_SPANS}`);
     }
 
-    // TODO: if TARGET is file:path, parse interaction_ids and pass --interaction-ids to each pass
-    // For now, only "all" is supported
+    if (TARGET.startsWith("file:")) {
+      const filePath = TARGET.slice("file:".length);
+      try {
+        const fileContent = await Deno.readTextFile(filePath);
+        // Split by newline or comma, trim whitespace, and filter out empty strings
+        const ids = fileContent
+          .split(/[\n,]/)
+          .map((id) => id.trim())
+          .filter((id) => id.length > 0);
+        if (ids.length > 0) {
+          extraArgs.push(`--interaction-ids=${ids.join(",")}`);
+        } else {
+          console.warn(
+            `\n⚠️ Warning: Target file ${filePath} is empty or contains no valid IDs.`,
+          );
+        }
+      } catch (err) {
+        console.error(`\n❌ Failed to read target file: ${filePath}`);
+        console.error(err);
+        Deno.exit(1);
+      }
+    }
 
     const result = await runPass(passNum, extraArgs);
     results.push(result);
