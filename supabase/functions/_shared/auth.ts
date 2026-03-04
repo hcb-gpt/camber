@@ -10,6 +10,8 @@
  * - User-facing endpoints must use verify_jwt=true or proper supabase.auth.getUser()
  */
 
+import { authorizeEdgeSecretRequest } from "./edge_secret_contract.ts";
+
 export interface AuthResult {
   ok: boolean;
   error_code?: string;
@@ -28,22 +30,14 @@ export function requireEdgeSecret(
   req: Request,
   allowedSources: string[],
 ): AuthResult {
-  // 1. Check X-Edge-Secret header
-  const edgeSecret = req.headers.get("X-Edge-Secret");
-  const expectedSecret = Deno.env.get("EDGE_SHARED_SECRET");
-
-  if (!expectedSecret) {
-    console.error("[auth] EDGE_SHARED_SECRET not configured");
-    return { ok: false, error_code: "server_misconfigured" };
-  }
-
-  if (!edgeSecret) {
-    return { ok: false, error_code: "missing_edge_secret" };
-  }
-
-  // Constant-time comparison to prevent timing attacks
-  if (!constantTimeEqual(edgeSecret, expectedSecret)) {
-    return { ok: false, error_code: "invalid_edge_secret" };
+  // 1. Check X-Edge-Secret header using the edge secret contract (supports rotation)
+  const authResult = authorizeEdgeSecretRequest(req);
+  if (!authResult.ok) {
+    if (authResult.error_code === "edge_secret_missing" && authResult.status === 500) {
+      console.error("[auth] EDGE_SHARED_SECRET not configured");
+      return { ok: false, error_code: "server_misconfigured" };
+    }
+    return { ok: false, error_code: authResult.error_code };
   }
 
   // 2. Check source header is in allowlist
@@ -70,10 +64,8 @@ export function requireEdgeSecret(
  * @returns true if X-Edge-Secret is present and matches EDGE_SHARED_SECRET
  */
 export function validateEdgeSecret(req: Request): boolean {
-  const edgeSecret = req.headers.get("X-Edge-Secret");
-  const expectedSecret = Deno.env.get("EDGE_SHARED_SECRET");
-  if (!expectedSecret || !edgeSecret) return false;
-  return constantTimeEqual(edgeSecret, expectedSecret);
+  const authResult = authorizeEdgeSecretRequest(req);
+  return authResult.ok;
 }
 
 /**

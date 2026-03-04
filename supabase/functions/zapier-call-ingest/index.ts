@@ -27,6 +27,7 @@
  */
 import "jsr:@supabase/functions-js/edge-runtime.d.ts";
 import { createClient } from "jsr:@supabase/supabase-js@2";
+import { authorizeEdgeSecretRequest } from "../_shared/edge_secret_contract.ts";
 
 const VERSION = "v1.9.1";
 
@@ -166,10 +167,12 @@ Deno.serve(async (req: Request) => {
   // ---- Auth materials (canonical + legacy) ----
   const incomingXEdgeSecret = req.headers.get("X-Edge-Secret") || "";
   const incomingXSecret = req.headers.get("X-Secret") || "";
-  const expectedEdgeSecret = Deno.env.get("EDGE_SHARED_SECRET") || "";
   const expectedLegacySecret = Deno.env.get("ZAPIER_INGEST_SECRET") || Deno.env.get("ZAPIER_SECRET") || "";
 
-  if (!expectedEdgeSecret) {
+  const authResult = authorizeEdgeSecretRequest(req);
+  const canonicalValid = authResult.ok;
+
+  if (!authResult.ok && authResult.error_code === "edge_secret_missing" && authResult.status === 500) {
     await logDiagnostic("AUTH_CONFIG_MISSING", {
       expected: { edge_shared_secret_set: false },
     });
@@ -179,7 +182,6 @@ Deno.serve(async (req: Request) => {
     );
   }
 
-  const canonicalValid = incomingXEdgeSecret.length > 0 && constantTimeEqual(incomingXEdgeSecret, expectedEdgeSecret);
   const legacyValid = expectedLegacySecret.length > 0 &&
     incomingXSecret.length > 0 &&
     constantTimeEqual(incomingXSecret, expectedLegacySecret);
@@ -259,7 +261,7 @@ Deno.serve(async (req: Request) => {
     let forwardError: string | null = null;
     try {
       const pcUrl = `${supabaseUrl}/functions/v1/process-call`;
-      const edgeSecret = expectedEdgeSecret;
+      const edgeSecret = authResult.ok ? authResult.current_secret : Deno.env.get("EDGE_SHARED_SECRET") || "";
       const pcResp = await fetch(pcUrl, {
         method: "POST",
         headers: {
@@ -333,12 +335,13 @@ Deno.serve(async (req: Request) => {
   // ---- Forward to process-call ----
   const supabaseUrl = Deno.env.get("SUPABASE_URL")!;
   const serviceRoleKey = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!;
+  const activeEdgeSecret = authResult.ok ? authResult.current_secret : Deno.env.get("EDGE_SHARED_SECRET") || "";
 
   const forwardHeaders: Record<string, string> = {
     "Content-Type": "application/json",
     "Authorization": `Bearer ${serviceRoleKey}`,
   };
-  forwardHeaders["X-Edge-Secret"] = expectedEdgeSecret;
+  forwardHeaders["X-Edge-Secret"] = activeEdgeSecret;
 
   const processCallUrl = `${supabaseUrl}/functions/v1/process-call`;
   const forwardOnce = async (): Promise<Response> => {
