@@ -509,7 +509,8 @@ final class ThreadViewModel {
                 eventType: "auth_lock_blocked",
                 payload: [
                     "action": "resolve_single",
-                    "queue_id": reviewQueueId
+                    "queue_id": reviewQueueId,
+                    "status_code": statusCode
                 ]
             )
             showTransientError(banner, clearAfter: .seconds(4))
@@ -562,7 +563,8 @@ final class ThreadViewModel {
                 eventType: "auth_lock_blocked",
                 payload: [
                     "action": "resolve_bulk",
-                    "queue_count": reviewQueueIds.count
+                    "queue_count": reviewQueueIds.count,
+                    "status_code": statusCode
                 ]
             )
             showTransientError(banner, clearAfter: .seconds(4))
@@ -618,6 +620,15 @@ final class ThreadViewModel {
             ThreadLearningLoopMetrics.log(
                 "KPI_EVENT AUTH_LOCK_BLOCKED surface=thread action=dismiss_single status_code=\(statusCode) queue=\(LearningLoopIdHash.short(reviewQueueId))"
             )
+            TriageTelemetryService.shared.track(
+                surface: "thread",
+                eventType: "auth_lock_blocked",
+                payload: [
+                    "action": "dismiss_single",
+                    "queue_id": reviewQueueId,
+                    "status_code": statusCode
+                ]
+            )
             showTransientError(banner, clearAfter: .seconds(4))
             return false
         }
@@ -632,6 +643,15 @@ final class ThreadViewModel {
             )
             ThreadLearningLoopMetrics.log(
                 "KPI_EVENT WRITE_ACTION surface=thread action=dismiss_single queue=\(LearningLoopIdHash.short(reviewQueueId)) request_id=\(response.requestId ?? "missing")"
+            )
+            TriageTelemetryService.shared.track(
+                surface: "thread",
+                eventType: "write_action",
+                payload: [
+                    "action": "dismiss_single",
+                    "queue_id": reviewQueueId,
+                    "request_id": response.requestId ?? "missing"
+                ]
             )
             if reloadAfterResolve {
                 schedulePostResolveSync()
@@ -654,6 +674,15 @@ final class ThreadViewModel {
             ThreadLearningLoopMetrics.log(
                 "KPI_EVENT AUTH_LOCK_BLOCKED surface=thread action=dismiss_bulk status_code=\(statusCode) queue_count=\(reviewQueueIds.count)"
             )
+            TriageTelemetryService.shared.track(
+                surface: "thread",
+                eventType: "auth_lock_blocked",
+                payload: [
+                    "action": "dismiss_bulk",
+                    "queue_count": reviewQueueIds.count,
+                    "status_code": statusCode
+                ]
+            )
             showTransientError(banner, clearAfter: .seconds(4))
             return false
         }
@@ -672,6 +701,15 @@ final class ThreadViewModel {
                 )
                 ThreadLearningLoopMetrics.log(
                     "KPI_EVENT WRITE_ACTION surface=thread action=dismiss_bulk queue=\(LearningLoopIdHash.short(queueId)) request_id=\(response.requestId ?? "missing")"
+                )
+                TriageTelemetryService.shared.track(
+                    surface: "thread",
+                    eventType: "write_action",
+                    payload: [
+                        "action": "dismiss_bulk",
+                        "queue_id": queueId,
+                        "request_id": response.requestId ?? "missing"
+                    ]
                 )
             }
             schedulePostResolveSync()
@@ -700,7 +738,8 @@ final class ThreadViewModel {
                 eventType: "auth_lock_blocked",
                 payload: [
                     "action": "undo",
-                    "queue_id": reviewQueueId
+                    "queue_id": reviewQueueId,
+                    "status_code": statusCode
                 ]
             )
             showTransientError(banner, clearAfter: .seconds(4))

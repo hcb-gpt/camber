@@ -140,7 +140,7 @@ struct AttributionTriageCardsView: View {
                     TriageTelemetryService.shared.track(
                         surface: "triage_cards",
                         eventType: "auth_lock_ui_disabled",
-                        payload: ["queue_depth": viewModel.queue.count]
+                        payload: ["queue_depth": viewModel.queue.count, "status_code": statusCode]
                     )
                 }
             }
@@ -154,7 +154,7 @@ struct AttributionTriageCardsView: View {
                     TriageTelemetryService.shared.track(
                         surface: "triage_cards",
                         eventType: "auth_lock_ui_disabled",
-                        payload: ["queue_depth": viewModel.queue.count]
+                        payload: ["queue_depth": viewModel.queue.count, "status_code": statusCode]
                     )
                 } else if !isLocked {
                     didLogAuthLockVisible = false
@@ -405,6 +405,16 @@ struct AttributionTriageCardsView: View {
                         let statusCode = viewModel.attributionWritesLockedStatusCode ?? -1
                         TriageLearningLoopMetrics.log(
                             "KPI_EVENT AUTH_LOCK_BLOCKED surface=triage_cards action=confirm_swipe status_code=\(statusCode) queue=\(LearningLoopIdHash.short(card.queueId))"
+                        )
+                        TriageTelemetryService.shared.track(
+                            surface: "triage_cards",
+                            eventType: "auth_lock_blocked",
+                            payload: [
+                                "action": "confirm_swipe",
+                                "queue_id": card.queueId,
+                                "interaction_id": card.interactionId,
+                                "status_code": statusCode
+                            ]
                         )
                         if let banner = viewModel.attributionWritesLockedBannerText {
                             viewModel.error = banner

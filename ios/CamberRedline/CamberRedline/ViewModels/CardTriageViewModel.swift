@@ -277,7 +277,8 @@ final class CardTriageViewModel {
                 eventType: "auth_lock_blocked",
                 payload: [
                     "action": "resolve",
-                    "queue_id": card.queueId
+                    "queue_id": card.queueId,
+                    "status_code": statusCode
                 ]
             )
             error = banner
@@ -364,7 +365,8 @@ final class CardTriageViewModel {
                 eventType: "auth_lock_blocked",
                 payload: [
                     "action": "dismiss",
-                    "queue_id": card.queueId
+                    "queue_id": card.queueId,
+                    "status_code": statusCode
                 ]
             )
             error = banner
@@ -454,7 +456,8 @@ final class CardTriageViewModel {
                 eventType: "auth_lock_blocked",
                 payload: [
                     "action": "escalate",
-                    "queue_id": card.queueId
+                    "queue_id": card.queueId,
+                    "status_code": statusCode
                 ]
             )
             error = banner
@@ -602,7 +605,8 @@ final class CardTriageViewModel {
                     eventType: "auth_lock_blocked",
                     payload: [
                         "action": "undo",
-                        "queue_id": action.queueId
+                        "queue_id": action.queueId,
+                        "status_code": statusCode
                     ]
                 )
                 self.error = banner

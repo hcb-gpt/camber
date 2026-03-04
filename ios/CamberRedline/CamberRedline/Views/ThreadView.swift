@@ -558,7 +558,7 @@ struct ThreadView: View {
                     TriageTelemetryService.shared.track(
                         surface: "thread",
                         eventType: "auth_lock_ui_disabled",
-                        payload: ["queue_depth": displayGroups.count]
+                        payload: ["queue_depth": displayGroups.count, "status_code": statusCode]
                     )
                 }
 
@@ -596,7 +596,7 @@ struct ThreadView: View {
                     TriageTelemetryService.shared.track(
                         surface: "thread",
                         eventType: "auth_lock_ui_disabled",
-                        payload: ["queue_depth": displayGroups.count]
+                        payload: ["queue_depth": displayGroups.count, "status_code": statusCode]
                     )
                 } else if !isLocked {
                     didLogThreadAuthLockVisible = false
