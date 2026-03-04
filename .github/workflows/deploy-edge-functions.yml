@@ -131,7 +131,11 @@ jobs:
           actual=$(echo "$json" | jq -r --arg fn "$fn" '
             [.. | objects
               | select((.name // .slug // .function_name // "") == $fn)
-              | (.verify_jwt // .verifyJwt // .verifyJWT)
+              | (if has("verify_jwt") then .verify_jwt
+                 elif has("verifyJwt") then .verifyJwt
+                 elif has("verifyJWT") then .verifyJWT
+                 else null
+                 end)
             ][0]
             | if . == true then "true" elif . == false then "false" else empty end
           ')
@@ -239,7 +243,11 @@ jobs:
             echo "$functions_json" | jq -r --arg fn "$fn" '
               [.. | objects
                 | select((.name // .slug // .function_name // "") == $fn)
-                | (.verify_jwt // .verifyJwt // .verifyJWT)
+                | (if has("verify_jwt") then .verify_jwt
+                   elif has("verifyJwt") then .verifyJwt
+                   elif has("verifyJWT") then .verifyJWT
+                   else null
+                   end)
               ][0]
               | if . == true then "true" elif . == false then "false" else empty end
             '
