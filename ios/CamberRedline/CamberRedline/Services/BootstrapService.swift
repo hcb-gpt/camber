@@ -166,6 +166,29 @@ final class BootstrapService {
         writeLockState = nil
     }
 
+    func registerWriteLock(
+        statusCode: Int,
+        requestId: String?,
+        errorCode: String? = "invalid_auth",
+        functionVersion: String? = nil,
+        message: String? = nil
+    ) {
+        guard [401, 403].contains(statusCode) else { return }
+        let trimmedMessage = message?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        let lockError = trimmedMessage.isEmpty ? "Writes temporarily locked." : trimmedMessage
+        writeLockState = BootstrapWriteLockState(
+            statusCode: statusCode,
+            errorCode: errorCode,
+            error: lockError,
+            functionVersion: functionVersion,
+            requestId: requestId,
+            observedAt: Date()
+        )
+        BootstrapLearningLoopMetrics.log(
+            "KPI_EVENT AUTH_LOCK_SET status_code=\(statusCode) error_code=\(errorCode ?? "missing") request_id=\(requestId ?? "missing") function_version=\(functionVersion ?? "missing")"
+        )
+    }
+
     func recoverWriteAccess() async -> BootstrapWriteRecoveryOutcome {
         if let preflightLockState {
             return .stillLocked(preflightLockState)

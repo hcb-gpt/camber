@@ -119,7 +119,11 @@ struct CallHeaderCard: View {
                     .textCase(.uppercase)
 
                 ForEach(header.claims) { claim in
-                    ClaimRow(claim: claim) { grade, correctionText in
+                    ClaimRow(
+                        claim: claim,
+                        writesLocked: viewModel.isAttributionWritesLocked,
+                        writesLockedBannerText: viewModel.attributionWritesLockedBannerText
+                    ) { grade, correctionText in
                         Task {
                             await viewModel.gradeClaim(
                                 claimId: claim.claimId,
