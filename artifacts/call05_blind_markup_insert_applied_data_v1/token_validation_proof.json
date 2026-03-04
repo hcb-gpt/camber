@@ -1,9 +1,0 @@
-{
-  "raw_interaction_id": "c11_06E0P6KYB5V7S5VYQA8ZTRQM4W",
-  "normalized_interaction_id": "cll_06E0P6KYB5V7S5VYQA8ZTRQM4W",
-  "raw_span2": "d1f8a85c-c047-422c-9951-09f4564a\u0431\u04303d",
-  "normalized_span2": "d1f8a85c-c047-422c-9951-09f4564a6a3d",
-  "canonical_interaction_exists": true,
-  "span1_exists_under_canonical": true,
-  "span2_exists_under_canonical_after_normalization": true
-}
