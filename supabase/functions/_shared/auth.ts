@@ -34,7 +34,7 @@ export function requireEdgeSecret(
   const authResult = authorizeEdgeSecretRequest(req);
   if (!authResult.ok) {
     if (authResult.error_code === "edge_secret_missing" && authResult.status === 500) {
-      console.error("[auth] EDGE_SHARED_SECRET not configured");
+      console.error("[auth] X_EDGE_SECRET / EDGE_SHARED_SECRET not configured");
       return { ok: false, error_code: "server_misconfigured" };
     }
     return { ok: false, error_code: authResult.error_code };
