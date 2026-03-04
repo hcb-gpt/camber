@@ -1,5 +1,5 @@
 /**
- * zapier-call-ingest Edge Function v1.8.1
+ * zapier-call-ingest Edge Function v1.8.2
  *
  * Auth model (consolidated):
  * - Canonical: X-Edge-Secret === EDGE_SHARED_SECRET
@@ -7,6 +7,7 @@
  *
  * Forward: Calls process-call internally using SUPABASE_SERVICE_ROLE_KEY + X-Edge-Secret.
  *
+ * v1.8.2: Normalize Beside createdAt/finishedAt to ISO UTC before calls_raw upsert.
  * v1.8.1: Remove Beside auth bypass (Beside payloads must authenticate).
  *
  * v1.8.0: Beside passthrough now forwards to process-call after upsert for full
@@ -22,7 +23,7 @@
 import "jsr:@supabase/functions-js/edge-runtime.d.ts";
 import { createClient } from "jsr:@supabase/supabase-js@2";
 
-const VERSION = "v1.8.1";
+const VERSION = "v1.8.2";
 
 function constantTimeEqual(a: string, b: string): boolean {
   if (a.length !== b.length) return false;
@@ -59,11 +60,45 @@ function isBesidePayload(p: any): boolean {
   return !!(p && (p.fromPhoneNumber || p.toPhoneNumber || p.noteUrl));
 }
 
+/**
+ * Normalize varied Beside/Zapier datetime strings into canonical ISO UTC.
+ * Example handled: "2026-02-27 18:54:37.777013 +0000 UTC" -> "2026-02-27T18:54:37.777Z"
+ */
+function normalizeInboundTimestamp(value: unknown): string | null {
+  if (value instanceof Date) {
+    return Number.isNaN(value.getTime()) ? null : value.toISOString();
+  }
+
+  if (typeof value !== "string") return null;
+
+  let ts = value.trim();
+  if (!ts) return null;
+
+  // Common Beside suffix + postgres-incompatible zone format.
+  ts = ts.replace(/\s+UTC$/i, "");
+  ts = ts.replace(
+    /^(\d{4}-\d{2}-\d{2})\s+(\d{2}:\d{2}:\d{2}(?:\.\d+)?)(?:\s*)([+-]\d{2})(\d{2})$/,
+    "$1T$2$3:$4",
+  );
+
+  // Ensure date/time separator is RFC3339-friendly when timezone is present.
+  ts = ts.replace(
+    /^(\d{4}-\d{2}-\d{2})\s+(\d{2}:\d{2}:\d{2}(?:\.\d+)?)([+-]\d{2}:\d{2})$/,
+    "$1T$2$3",
+  );
+
+  const parsed = new Date(ts);
+  return Number.isNaN(parsed.getTime()) ? null : parsed.toISOString();
+}
+
 /** Normalize a Beside-format payload into a calls_raw insert row. */
 function besideToCallsRaw(p: any, zapierMeta: any): Record<string, any> {
   const interactionId = p.id || p.interaction_id || `beside_${Date.now()}`;
   const direction = String(p.direction || "").toLowerCase().includes("outbound") ? "outbound" : "inbound";
   const isOutbound = direction === "outbound";
+  const eventAtUtc = normalizeInboundTimestamp(p.createdAt) ||
+    normalizeInboundTimestamp(p.finishedAt) ||
+    new Date().toISOString();
 
   return {
     interaction_id: interactionId,
@@ -73,7 +108,7 @@ function besideToCallsRaw(p: any, zapierMeta: any): Record<string, any> {
     other_party_phone: isOutbound ? (p.toPhoneNumber || null) : (p.fromPhoneNumber || null),
     owner_name: isOutbound ? (p.fromName || null) : (p.toName || null),
     owner_phone: isOutbound ? (p.fromPhoneNumber || null) : (p.toPhoneNumber || null),
-    event_at_utc: p.createdAt || p.finishedAt || new Date().toISOString(),
+    event_at_utc: eventAtUtc,
     summary: p.summary || p.title || null,
     transcript: p.transcript || null,
     recording_url: p.recordingUrl || null,
@@ -164,28 +199,57 @@ Deno.serve(async (req: Request) => {
     incomingXSecret.length > 0 &&
     constantTimeEqual(incomingXSecret, expectedLegacySecret);
 
+  // ---- Auth gate (canonical + transitional legacy fallback) ----
+  if (!canonicalValid && !legacyValid) {
+    await logDiagnostic("AUTH_MISMATCH", {
+      incoming: {
+        x_edge_secret_len: incomingXEdgeSecret.length,
+        x_secret_len: incomingXSecret.length,
+      },
+      expected: {
+        edge_shared_secret_set: true,
+        zapier_legacy_secret_set: expectedLegacySecret.length > 0,
+      },
+    });
+
+    return new Response(
+      JSON.stringify({
+        error: "invalid_token",
+        version: VERSION,
+      }),
+      { status: 401, headers: { "Content-Type": "application/json" } },
+    );
+  }
+
+  if (legacyValid && !canonicalValid) {
+    await logDiagnostic("AUTH_LEGACY_SUCCESS", {
+      incoming: { x_secret_len: incomingXSecret.length },
+      expected: { zapier_legacy_secret_set: true },
+      action: "deprecate_x_secret_after_zapier_update",
+    });
+  }
+
   // ---- BESIDE_RAW_PASSTHROUGH: detect Beside-format and insert directly ----
-  // Beside payloads must authenticate (canonical X-Edge-Secret or legacy X-Secret).
-  // Detection is body-based (fromPhoneNumber/toPhoneNumber/noteUrl).
+  // SECURITY: Beside payloads must authenticate with canonical X-Edge-Secret.
   if (isBesidePayload(payload)) {
-    if (!canonicalValid && !legacyValid) {
-      await logDiagnostic("BESIDE_AUTH_MISMATCH", {
+    if (!canonicalValid) {
+      await logDiagnostic("BESIDE_AUTH_REJECTED", {
         incoming: {
           x_edge_secret_len: incomingXEdgeSecret.length,
-          x_secret_len: incomingXSecret.length,
         },
         expected: {
           edge_shared_secret_set: true,
-          zapier_legacy_secret_set: expectedLegacySecret.length > 0,
         },
+        action: "reject_beside_requires_canonical_auth",
       });
 
       return new Response(
         JSON.stringify({
-          error: "invalid_token",
+          error: "invalid_token_for_beside",
+          message: "Beside payloads require X-Edge-Secret",
           version: VERSION,
         }),
-        { status: 401, headers: { "Content-Type": "application/json" } },
+        { status: 403, headers: { "Content-Type": "application/json" } },
       );
     }
 
