@@ -7,7 +7,7 @@ Deno.test("zapier-call-ingest prevents Beside pre-auth bypass", () => {
   const authGateIdx = source.indexOf("if (!canonicalValid)");
   const callsRawUpsertIdx = source.indexOf('.from("calls_raw").upsert');
 
-  assert(authGateIdx >= 0, "Expected index.ts to enforce canonical auth gate for Beside payloads");
+  assert(authGateIdx >= 0, "Expected index.ts to enforce Beside auth gate (canonicalValid)");
   assert(callsRawUpsertIdx >= 0, "Expected index.ts to upsert calls_raw for Beside payloads");
   assert(
     callsRawUpsertIdx > authGateIdx,

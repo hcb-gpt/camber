@@ -1,5 +1,5 @@
 /**
- * zapier-call-ingest Edge Function v1.9.0
+ * zapier-call-ingest Edge Function v1.9.1
  *
  * Auth model (consolidated):
  * - Canonical: X-Edge-Secret === EDGE_SHARED_SECRET
@@ -11,6 +11,8 @@
  * "2026-02-27 18:54:37.777013 +0000 UTC" which Postgres can't parse (trailing " UTC").
  * Added normalizeTimestamp() to strip timezone name suffix and fix offset format.
  *
+ * v1.9.1: Require X-Edge-Secret for Beside payload path (no legacy bypass).
+ *
  * v1.8.1: Remove Beside auth bypass (Beside payloads must authenticate).
  *
  * v1.8.0: Beside passthrough now forwards to process-call after upsert for full
@@ -20,13 +22,13 @@
  * v1.7.1: Fix beside auth bypass — move body parse + beside detection BEFORE auth gate.
  * v1.7.0: Recovered BESIDE_RAW_PASSTHROUGH from lost v1.6.0 deploy (Charter §10).
  *
- * @version 1.9.0
+ * @version 1.9.1
  * @date 2026-03-01
  */
 import "jsr:@supabase/functions-js/edge-runtime.d.ts";
 import { createClient } from "jsr:@supabase/supabase-js@2";
 
-const VERSION = "v1.9.0";
+const VERSION = "v1.9.1";
 
 function constantTimeEqual(a: string, b: string): boolean {
   if (a.length !== b.length) return false;
@@ -183,11 +185,17 @@ Deno.serve(async (req: Request) => {
     constantTimeEqual(incomingXSecret, expectedLegacySecret);
 
   // ---- BESIDE_RAW_PASSTHROUGH: detect Beside-format and insert directly ----
-  // SECURITY: Beside payloads must authenticate with canonical X-Edge-Secret.
+  // SECURITY: Beside payloads must authenticate via canonical X-Edge-Secret only.
   // Detection is body-based (fromPhoneNumber/toPhoneNumber/noteUrl).
   if (isBesidePayload(payload)) {
     if (!canonicalValid) {
-      await logDiagnostic("BESIDE_AUTH_MISMATCH", {
+      // Truth-forcing metric/log line (no secrets). Lets us detect misrouted callers quickly.
+      console.warn(
+        `[zapier-call-ingest] KPI_EVENT BESIDE_AUTH_REJECTED version=${VERSION} x_edge_secret_present=${
+          incomingXEdgeSecret.length > 0 ? 1 : 0
+        } legacy_secret_present=${incomingXSecret.length > 0 ? 1 : 0}`,
+      );
+      await logDiagnostic("BESIDE_AUTH_REJECTED", {
         incoming: {
           x_edge_secret_len: incomingXEdgeSecret.length,
           x_secret_len: incomingXSecret.length,
