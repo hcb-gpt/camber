@@ -272,6 +272,14 @@ final class CardTriageViewModel {
             CardTriageLearningLoopMetrics.log(
                 "KPI_EVENT AUTH_LOCK_BLOCKED surface=triage_cards action=resolve status_code=\(statusCode) queue=\(LearningLoopIdHash.short(card.queueId))"
             )
+            TriageTelemetryService.shared.track(
+                surface: "triage_cards",
+                eventType: "auth_lock_blocked",
+                payload: [
+                    "action": "resolve",
+                    "queue_id": card.queueId
+                ]
+            )
             error = banner
             return
         }
@@ -312,6 +320,15 @@ final class CardTriageViewModel {
             CardTriageLearningLoopMetrics.log(
                 "KPI_EVENT WRITE_ACTION surface=triage_cards action=resolve queue=\(LearningLoopIdHash.short(card.queueId)) request_id=\(response.requestId ?? "missing")"
             )
+            TriageTelemetryService.shared.track(
+                surface: "triage_cards",
+                eventType: "write_action",
+                payload: [
+                    "action": "resolve",
+                    "queue_id": card.queueId,
+                    "request_id": response.requestId ?? "missing"
+                ]
+            )
             if CardTriageSmokeAutomation.isEnabled {
                 let requestId = response.requestId ?? "missing"
                 CardTriageSmokeAutomation.logger.log(
@@ -341,6 +358,14 @@ final class CardTriageViewModel {
             let statusCode = attributionWritesLockedStatusCode ?? -1
             CardTriageLearningLoopMetrics.log(
                 "KPI_EVENT AUTH_LOCK_BLOCKED surface=triage_cards action=dismiss status_code=\(statusCode) queue=\(LearningLoopIdHash.short(card.queueId))"
+            )
+            TriageTelemetryService.shared.track(
+                surface: "triage_cards",
+                eventType: "auth_lock_blocked",
+                payload: [
+                    "action": "dismiss",
+                    "queue_id": card.queueId
+                ]
             )
             error = banner
             return
@@ -381,6 +406,15 @@ final class CardTriageViewModel {
             CardTriageLearningLoopMetrics.log(
                 "KPI_EVENT WRITE_ACTION surface=triage_cards action=dismiss queue=\(LearningLoopIdHash.short(card.queueId)) request_id=\(response.requestId ?? "missing")"
             )
+            TriageTelemetryService.shared.track(
+                surface: "triage_cards",
+                eventType: "write_action",
+                payload: [
+                    "action": "dismiss",
+                    "queue_id": card.queueId,
+                    "request_id": response.requestId ?? "missing"
+                ]
+            )
             if CardTriageSmokeAutomation.isEnabled {
                 let requestId = response.requestId ?? "missing"
                 CardTriageSmokeAutomation.logger.log(
@@ -414,6 +448,14 @@ final class CardTriageViewModel {
             let statusCode = attributionWritesLockedStatusCode ?? -1
             CardTriageLearningLoopMetrics.log(
                 "KPI_EVENT AUTH_LOCK_BLOCKED surface=triage_cards action=escalate status_code=\(statusCode) queue=\(LearningLoopIdHash.short(card.queueId))"
+            )
+            TriageTelemetryService.shared.track(
+                surface: "triage_cards",
+                eventType: "auth_lock_blocked",
+                payload: [
+                    "action": "escalate",
+                    "queue_id": card.queueId
+                ]
             )
             error = banner
             return
@@ -451,6 +493,15 @@ final class CardTriageViewModel {
             )
             CardTriageLearningLoopMetrics.log(
                 "KPI_EVENT WRITE_ACTION surface=triage_cards action=escalate queue=\(LearningLoopIdHash.short(card.queueId)) request_id=\(response.requestId ?? "missing")"
+            )
+            TriageTelemetryService.shared.track(
+                surface: "triage_cards",
+                eventType: "write_action",
+                payload: [
+                    "action": "escalate",
+                    "queue_id": card.queueId,
+                    "request_id": response.requestId ?? "missing"
+                ]
             )
             lastAction = TriageAction(
                 queueId: card.queueId,
@@ -520,6 +571,15 @@ final class CardTriageViewModel {
             CardTriageLearningLoopMetrics.log(
                 "KPI_EVENT UNDO_COMMIT surface=triage_cards queue=\(LearningLoopIdHash.short(action.queueId)) undo_of=\(undoneKind) request_id=\(response.requestId ?? "missing")"
             )
+            TriageTelemetryService.shared.track(
+                surface: "triage_cards",
+                eventType: "undo_commit",
+                payload: [
+                    "queue_id": action.queueId,
+                    "undo_of": undoneKind,
+                    "request_id": response.requestId ?? "missing"
+                ]
+            )
             if CardTriageSmokeAutomation.isEnabled {
                 let requestId = response.requestId ?? "missing"
                 CardTriageSmokeAutomation.logger.log(
@@ -536,6 +596,14 @@ final class CardTriageViewModel {
                 let statusCode = attributionWritesLockedStatusCode ?? -1
                 CardTriageLearningLoopMetrics.log(
                     "KPI_EVENT AUTH_LOCK_BLOCKED surface=triage_cards action=undo status_code=\(statusCode) queue=\(LearningLoopIdHash.short(action.queueId))"
+                )
+                TriageTelemetryService.shared.track(
+                    surface: "triage_cards",
+                    eventType: "auth_lock_blocked",
+                    payload: [
+                        "action": "undo",
+                        "queue_id": action.queueId
+                    ]
                 )
                 self.error = banner
             } else {

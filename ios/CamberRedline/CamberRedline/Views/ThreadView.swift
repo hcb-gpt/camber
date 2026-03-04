@@ -544,11 +544,21 @@ struct ThreadView: View {
                 ThreadLearningLoopMetrics.log(
                     "KPI_EVENT PICK_SURFACE_APPEAR surface=thread queue_depth=\(displayGroups.count)"
                 )
+                TriageTelemetryService.shared.track(
+                    surface: "thread",
+                    eventType: "surface_appear",
+                    payload: ["queue_depth": displayGroups.count]
+                )
                 if viewModel.isAttributionWritesLocked {
                     didLogThreadAuthLockVisible = true
                     let statusCode = viewModel.attributionWritesLockedStatusCode ?? -1
                     ThreadLearningLoopMetrics.log(
                         "KPI_EVENT AUTH_LOCK_UI_DISABLED surface=thread status_code=\(statusCode) queue_depth=\(displayGroups.count)"
+                    )
+                    TriageTelemetryService.shared.track(
+                        surface: "thread",
+                        eventType: "auth_lock_ui_disabled",
+                        payload: ["queue_depth": displayGroups.count]
                     )
                 }
 
@@ -582,6 +592,11 @@ struct ThreadView: View {
                     let statusCode = viewModel.attributionWritesLockedStatusCode ?? -1
                     ThreadLearningLoopMetrics.log(
                         "KPI_EVENT AUTH_LOCK_UI_DISABLED surface=thread status_code=\(statusCode) queue_depth=\(displayGroups.count)"
+                    )
+                    TriageTelemetryService.shared.track(
+                        surface: "thread",
+                        eventType: "auth_lock_ui_disabled",
+                        payload: ["queue_depth": displayGroups.count]
                     )
                 } else if !isLocked {
                     didLogThreadAuthLockVisible = false
@@ -719,6 +734,15 @@ struct ThreadView: View {
                 let ageMs = max(0, Int(Date().timeIntervalSince(action.createdAt) * 1000))
                 ThreadLearningLoopMetrics.log(
                     "KPI_EVENT UNDO_TAP surface=thread queue=\(LearningLoopIdHash.short(action.reviewQueueId)) undo_of=\(action.kind.rawValue) age_ms=\(ageMs)"
+                )
+                TriageTelemetryService.shared.track(
+                    surface: "thread",
+                    eventType: "undo_tap",
+                    payload: [
+                        "queue_id": action.reviewQueueId,
+                        "undo_of": action.kind.rawValue,
+                        "age_ms": ageMs
+                    ]
                 )
                 undoAction(action)
             }
@@ -1258,6 +1282,15 @@ struct ThreadView: View {
         let elapsedMs = max(0, Int(Date().timeIntervalSince(appearedAt) * 1000))
         ThreadLearningLoopMetrics.log(
             "KPI_EVENT PICK_TIME_SAMPLE surface=thread elapsed_ms=\(elapsedMs) queue=\(LearningLoopIdHash.short(queueId)) source=\(source)"
+        )
+        TriageTelemetryService.shared.track(
+            surface: "thread",
+            eventType: "pick_time_sample",
+            payload: [
+                "elapsed_ms": elapsedMs,
+                "queue_id": queueId,
+                "source": source
+            ]
         )
         didRecordFirstThreadPick = true
     }

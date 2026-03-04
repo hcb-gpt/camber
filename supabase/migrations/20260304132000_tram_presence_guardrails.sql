@@ -4,7 +4,13 @@
 ALTER TABLE public.tram_presence
   ADD COLUMN IF NOT EXISTS model TEXT;
 
--- 2. Update status view to expose model
+-- 2. Add unique constraint to prevent split-brain duplicates for the same active session
+-- We only enforce uniqueness on active sessions (where retired_at is null).
+CREATE UNIQUE INDEX IF NOT EXISTS uq_active_tram_presence 
+ON public.tram_presence (origin_session, role) 
+WHERE retired_at IS NULL;
+
+-- 3. Update status view to expose model
 CREATE OR REPLACE VIEW public.v_tram_presence_status AS
 SELECT
   tp.role,
@@ -41,7 +47,7 @@ GRANT SELECT ON public.v_tram_presence_status TO service_role;
 DROP FUNCTION IF EXISTS public.atomic_session_register(TEXT, TEXT, TEXT, TEXT, TEXT, TEXT, TEXT, TEXT, JSONB, TEXT);
 DROP FUNCTION IF EXISTS public.atomic_session_register(TEXT, TEXT, TEXT, TEXT, TEXT, TEXT, TEXT, TEXT, JSONB, TEXT, TEXT);
 
--- 3. Create Atomic Register RPC
+-- 4. Create Atomic Register RPC
 CREATE OR REPLACE FUNCTION public.atomic_session_register(
     p_role TEXT,
     p_origin_session TEXT,

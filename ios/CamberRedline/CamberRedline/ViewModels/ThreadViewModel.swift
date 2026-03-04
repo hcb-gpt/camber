@@ -504,6 +504,14 @@ final class ThreadViewModel {
             ThreadLearningLoopMetrics.log(
                 "KPI_EVENT AUTH_LOCK_BLOCKED surface=thread action=resolve_single status_code=\(statusCode) queue=\(LearningLoopIdHash.short(reviewQueueId))"
             )
+            TriageTelemetryService.shared.track(
+                surface: "thread",
+                eventType: "auth_lock_blocked",
+                payload: [
+                    "action": "resolve_single",
+                    "queue_id": reviewQueueId
+                ]
+            )
             showTransientError(banner, clearAfter: .seconds(4))
             return false
         }
@@ -518,6 +526,15 @@ final class ThreadViewModel {
             )
             ThreadLearningLoopMetrics.log(
                 "KPI_EVENT WRITE_ACTION surface=thread action=resolve_single queue=\(LearningLoopIdHash.short(reviewQueueId)) request_id=\(response.requestId ?? "missing")"
+            )
+            TriageTelemetryService.shared.track(
+                surface: "thread",
+                eventType: "write_action",
+                payload: [
+                    "action": "resolve_single",
+                    "queue_id": reviewQueueId,
+                    "request_id": response.requestId ?? "missing"
+                ]
             )
             if reloadAfterResolve {
                 schedulePostResolveSync()
@@ -540,6 +557,14 @@ final class ThreadViewModel {
             ThreadLearningLoopMetrics.log(
                 "KPI_EVENT AUTH_LOCK_BLOCKED surface=thread action=resolve_bulk status_code=\(statusCode) queue_count=\(reviewQueueIds.count)"
             )
+            TriageTelemetryService.shared.track(
+                surface: "thread",
+                eventType: "auth_lock_blocked",
+                payload: [
+                    "action": "resolve_bulk",
+                    "queue_count": reviewQueueIds.count
+                ]
+            )
             showTransientError(banner, clearAfter: .seconds(4))
             return false
         }
@@ -558,6 +583,15 @@ final class ThreadViewModel {
                 )
                 ThreadLearningLoopMetrics.log(
                     "KPI_EVENT WRITE_ACTION surface=thread action=resolve_bulk queue=\(LearningLoopIdHash.short(queueId)) request_id=\(response.requestId ?? "missing")"
+                )
+                TriageTelemetryService.shared.track(
+                    surface: "thread",
+                    eventType: "write_action",
+                    payload: [
+                        "action": "resolve_bulk",
+                        "queue_id": queueId,
+                        "request_id": response.requestId ?? "missing"
+                    ]
                 )
             }
             schedulePostResolveSync()
@@ -661,6 +695,14 @@ final class ThreadViewModel {
             ThreadLearningLoopMetrics.log(
                 "KPI_EVENT AUTH_LOCK_BLOCKED surface=thread action=undo status_code=\(statusCode) queue=\(LearningLoopIdHash.short(reviewQueueId))"
             )
+            TriageTelemetryService.shared.track(
+                surface: "thread",
+                eventType: "auth_lock_blocked",
+                payload: [
+                    "action": "undo",
+                    "queue_id": reviewQueueId
+                ]
+            )
             showTransientError(banner, clearAfter: .seconds(4))
             return false
         }
@@ -670,6 +712,14 @@ final class ThreadViewModel {
             let response = try await bootstrapService.undo(queueId: reviewQueueId)
             ThreadLearningLoopMetrics.log(
                 "KPI_EVENT UNDO_COMMIT surface=thread queue=\(LearningLoopIdHash.short(reviewQueueId)) request_id=\(response.requestId ?? "missing")"
+            )
+            TriageTelemetryService.shared.track(
+                surface: "thread",
+                eventType: "undo_commit",
+                payload: [
+                    "queue_id": reviewQueueId,
+                    "request_id": response.requestId ?? "missing"
+                ]
             )
             if reloadAfterUndo {
                 schedulePostResolveSync()

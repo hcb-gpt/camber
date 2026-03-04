@@ -406,6 +406,12 @@ final class BootstrapService {
         #endif
     }
 
+    /// Auth headers for internal write-like telemetry. Uses the same edge-secret policy as privileged writes.
+    /// Telemetry is persisted server-side (diagnostic_logs) and must never be publicly writable.
+    func applyTelemetryAuthHeaders(to request: inout URLRequest) {
+        applyAuthHeaders(to: &request, edgeSecretPolicy: .bootstrapWritesOnly, isWrite: true)
+    }
+
     // MARK: - Fetch Queue
 
     func fetchQueue(limit: Int = 30) async throws -> ReviewQueueResponse {

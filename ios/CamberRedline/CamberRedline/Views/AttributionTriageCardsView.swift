@@ -126,11 +126,21 @@ struct AttributionTriageCardsView: View {
                 TriageLearningLoopMetrics.log(
                     "KPI_EVENT PICK_SURFACE_APPEAR surface=triage_cards queue_depth=\(viewModel.queue.count)"
                 )
+                TriageTelemetryService.shared.track(
+                    surface: "triage_cards",
+                    eventType: "surface_appear",
+                    payload: ["queue_depth": viewModel.queue.count]
+                )
                 if viewModel.isAttributionWritesLocked {
                     didLogAuthLockVisible = true
                     let statusCode = viewModel.attributionWritesLockedStatusCode ?? -1
                     TriageLearningLoopMetrics.log(
                         "KPI_EVENT AUTH_LOCK_UI_DISABLED surface=triage_cards status_code=\(statusCode) queue_depth=\(viewModel.queue.count)"
+                    )
+                    TriageTelemetryService.shared.track(
+                        surface: "triage_cards",
+                        eventType: "auth_lock_ui_disabled",
+                        payload: ["queue_depth": viewModel.queue.count]
                     )
                 }
             }
@@ -140,6 +150,11 @@ struct AttributionTriageCardsView: View {
                     let statusCode = viewModel.attributionWritesLockedStatusCode ?? -1
                     TriageLearningLoopMetrics.log(
                         "KPI_EVENT AUTH_LOCK_UI_DISABLED surface=triage_cards status_code=\(statusCode) queue_depth=\(viewModel.queue.count)"
+                    )
+                    TriageTelemetryService.shared.track(
+                        surface: "triage_cards",
+                        eventType: "auth_lock_ui_disabled",
+                        payload: ["queue_depth": viewModel.queue.count]
                     )
                 } else if !isLocked {
                     didLogAuthLockVisible = false
@@ -562,6 +577,15 @@ struct AttributionTriageCardsView: View {
                 TriageLearningLoopMetrics.log(
                     "KPI_EVENT UNDO_TAP surface=triage_cards queue=\(LearningLoopIdHash.short(action.queueId)) undo_of=\(actionName) age_ms=\(ageMs)"
                 )
+                TriageTelemetryService.shared.track(
+                    surface: "triage_cards",
+                    eventType: "undo_tap",
+                    payload: [
+                        "queue_id": action.queueId,
+                        "undo_of": actionName,
+                        "age_ms": ageMs
+                    ]
+                )
                 Task { await viewModel.undo() }
             }
             .font(.caption)
@@ -626,6 +650,19 @@ struct AttributionTriageCardsView: View {
         let aiSuggested = ((card.projectId ?? "").trimmingCharacters(in: .whitespacesAndNewlines).isEmpty == false) ? 1 : 0
         TriageLearningLoopMetrics.log(
             "KPI_EVENT PICK_TIME_SAMPLE surface=triage_cards elapsed_ms=\(elapsedMs) queue=\(LearningLoopIdHash.short(card.queueId)) card=\(LearningLoopIdHash.short(card.id)) source=\(source) had_ai_suggestion=\(aiSuggested) evidence_count=\(card.evidenceAnchors.count)"
+        )
+        TriageTelemetryService.shared.track(
+            surface: "triage_cards",
+            eventType: "pick_time_sample",
+            payload: [
+                "elapsed_ms": elapsedMs,
+                "queue_id": card.queueId,
+                "card_id": card.id,
+                "interaction_id": card.interactionId,
+                "source": source,
+                "had_ai_suggestion": aiSuggested,
+                "evidence_count": card.evidenceAnchors.count
+            ]
         )
         didRecordFirstValidPick = true
     }
