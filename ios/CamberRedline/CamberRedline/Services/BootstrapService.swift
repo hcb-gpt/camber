@@ -171,13 +171,14 @@ final class BootstrapService {
             return .stillLocked(preflightLockState)
         }
 
-        guard writeLockState != nil else {
+        guard let lockedStateAtProbeStart = writeLockState else {
             return .unlocked(statusCode: nil, requestId: nil)
         }
 
         var components = URLComponents(url: baseURL, resolvingAgainstBaseURL: false)!
         components.queryItems = [URLQueryItem(name: "action", value: "undo")]
         guard let url = components.url else {
+            writeLockState = lockedStateAtProbeStart
             return .failed(
                 message: "Failed to construct recovery request URL.",
                 statusCode: nil,
@@ -195,6 +196,7 @@ final class BootstrapService {
                 UndoRequest(reviewQueueId: recoveryProbeReviewQueueId)
             )
         } catch {
+            writeLockState = lockedStateAtProbeStart
             return .failed(
                 message: "Failed to encode recovery request.",
                 statusCode: nil,
@@ -205,6 +207,7 @@ final class BootstrapService {
         do {
             let (data, response) = try await session.data(for: request)
             guard let http = response as? HTTPURLResponse else {
+                writeLockState = lockedStateAtProbeStart
                 return .failed(
                     message: "Invalid recovery response.",
                     statusCode: nil,
@@ -241,6 +244,8 @@ final class BootstrapService {
 
             let errorCode = payload?.errorCode ?? "missing"
             let effectiveRequestId = requestId ?? payload?.requestId
+            // Non-success/non-auth responses do not prove recovery; keep lock engaged.
+            writeLockState = lockedStateAtProbeStart
             BootstrapLearningLoopMetrics.log(
                 "KPI_EVENT AUTH_LOCK_RECOVERY_PRESERVED status_code=\(http.statusCode) request_id=\(effectiveRequestId ?? "missing") error_code=\(errorCode)"
             )
@@ -250,6 +255,7 @@ final class BootstrapService {
                 requestId: effectiveRequestId
             )
         } catch {
+            writeLockState = lockedStateAtProbeStart
             BootstrapLearningLoopMetrics.log(
                 "KPI_EVENT AUTH_LOCK_RECOVERY_FAILED message=\(error.localizedDescription)"
             )
