@@ -1,0 +1,15 @@
+2026-03-03 15:52:13.254 Df CamberRedline[82160:1cdd36c] [CamberRedline:smoke] SMOKE_EVENT START
+2026-03-03 15:52:14.272 Df CamberRedline[82160:1cdd36c] [CamberRedline:smoke] SMOKE_EVENT OPEN_TRIAGE
+2026-03-03 15:52:16.195 Df CamberRedline[82160:1cdd36c] [CamberRedline:smoke] SMOKE_EVENT TRIAGE_TARGET queue=0ffa6d6a-b5d8-4b80-aad4-5ae8df83075c interaction=cll_SYNTH_SYNTH_FLOATER_CONTIN_1772335448 event_at=2026-03-01T03:25:50Z
+2026-03-03 15:52:16.195 Df CamberRedline[82160:1cdd36c] [CamberRedline:smoke] SMOKE_EVENT WRITE_LOCK_RECOVERY_LOCKED banner=Write actions require X-Edge-Secret Truth surface remains readable. (bootstrap-review_v1.3.2, request_id: smoke-forced-lock)
+2026-03-03 15:52:36.010 Df CamberRedline[82160:1cdd36c] [CamberRedline:smoke] SMOKE_EVENT WRITE_LOCK_RECOVERY_RESULT unlocked=0 wait_seconds=15
+2026-03-03 15:52:38.040 Df CamberRedline[82160:1cdd36c] [CamberRedline:smoke] SMOKE_EVENT WRITE_LOCK_RECOVERY_ABORT reason=still_locked
+2026-03-03 15:52:38.041 Df CamberRedline[82160:1cdd36c] [CamberRedline:smoke] SMOKE_EVENT TRIAGE_WRITE_LOCKED banner=Write actions require X-Edge-Secret Truth surface remains readable. (bootstrap-review_v1.3.2, request_id: smoke-forced-lock)
+2026-03-03 15:52:38.043 Df CamberRedline[82160:1cdd36c] [CamberRedline:smoke] SMOKE_EVENT TRIAGE_DONE remaining=14
+2026-03-03 15:52:38.461 Df CamberRedline[82160:1cdd36c] [CamberRedline:smoke] SMOKE_EVENT TRIAGE_PHASE_COMPLETE
+2026-03-03 15:52:39.157 Df CamberRedline[82160:1cdd36c] [CamberRedline:smoke] SMOKE_EVENT OPEN_ASSISTANT
+2026-03-03 15:52:39.992 Df CamberRedline[82160:1cdd36c] [CamberRedline:smoke] SMOKE_EVENT ASSISTANT_OPEN_CONTEXT_PACKET
+2026-03-03 15:52:39.992 Df CamberRedline[82160:1cdd36c] [CamberRedline:smoke] SMOKE_EVENT ASSISTANT_CONTEXT_FETCH
+2026-03-03 15:52:46.995 Df CamberRedline[82160:1cdd36c] [CamberRedline:smoke] SMOKE_EVENT ASSISTANT_CONTEXT request_id=019cb579-6dfd-7f7b-bbc3-a39aa44feaab version=assistant-context_v1.0.0
+2026-03-03 15:52:46.995 Df CamberRedline[82160:1cdd36c] [CamberRedline:smoke] SMOKE_EVENT ASSISTANT_CONTEXT request_id=019cb579-729c-76df-ab14-56436af7f7b8 version=assistant-context_v1.0.0
+2026-03-03 15:52:52.001 Df CamberRedline[82160:1cdd36c] [CamberRedline:smoke] SMOKE_EVENT ASSISTANT_PROMPT prompt=Winship hardscape
