@@ -20,8 +20,7 @@ const FUNCTION_VERSION = "triage-telemetry_v1.0.0";
 function corsHeaders(): Record<string, string> {
   return {
     "Access-Control-Allow-Origin": "*",
-    "Access-Control-Allow-Headers":
-      "authorization, x-client-info, apikey, content-type, x-edge-secret, x-source",
+    "Access-Control-Allow-Headers": "authorization, x-client-info, apikey, content-type, x-edge-secret, x-source",
     "Access-Control-Allow-Methods": "POST, OPTIONS",
   };
 }
@@ -109,4 +108,3 @@ Deno.serve(async (req: Request) => {
     ms: Date.now() - t0,
   });
 });
-
