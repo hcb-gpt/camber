@@ -16,6 +16,7 @@ WRITE_LOCK_RECOVERY=0
 RECOVERY_PROBE_QUEUE_ID="${SMOKE_RECOVERY_PROBE_QUEUE_ID:-}"
 SCREEN_STEPS=7
 SCREEN_INTERVAL_SECONDS=4
+SMOKE_MARKER_STRICT_SINGLE_RUN="${SMOKE_MARKER_STRICT_SINGLE_RUN:-0}"
 
 usage() {
   cat <<'EOF'
@@ -85,6 +86,11 @@ if [[ "${TRUTH_SURFACE}" -eq 1 ]]; then
   # Truth-surface proof wants tighter sampling around the triage sheet.
   SCREEN_STEPS=12
   SCREEN_INTERVAL_SECONDS=2
+fi
+
+if ! [[ "${SMOKE_MARKER_STRICT_SINGLE_RUN}" =~ ^[01]$ ]]; then
+  echo "ERROR: SMOKE_MARKER_STRICT_SINGLE_RUN must be 0 or 1" >&2
+  exit 2
 fi
 
 if [[ "${WRITE_LOCK_RECOVERY}" -eq 1 ]]; then
@@ -222,6 +228,12 @@ trap - EXIT
 SMOKE_MARKERS="${OUT_DIR}/smoke_markers.log"
 grep -E "SMOKE_EVENT" "${OUT_DIR}/app.log" > "${SMOKE_MARKERS}" || true
 SMOKE_MARKER_FIRST_LINE="$(grep -m 1 -E "${SMOKE_MARKER_PATTERN}" "${OUT_DIR}/app.log" 2>/dev/null || true)"
+SMOKE_LAUNCH_PID="$(sed -n 's/.*: \([0-9][0-9]*\)$/\1/p' "${OUT_DIR}/launch.txt" | tail -n 1 || true)"
+SMOKE_LAUNCH_PID="${SMOKE_LAUNCH_PID:-unknown}"
+SMOKE_MARKER_START_COUNT="$(grep -E -c "SMOKE_EVENT START" "${SMOKE_MARKERS}" 2>/dev/null || true)"
+SMOKE_MARKER_START_COUNT="${SMOKE_MARKER_START_COUNT:-0}"
+SMOKE_MARKER_END_COUNT="$(grep -E -c "SMOKE_EVENT END" "${SMOKE_MARKERS}" 2>/dev/null || true)"
+SMOKE_MARKER_END_COUNT="${SMOKE_MARKER_END_COUNT:-0}"
 
 cat > "${OUT_DIR}/summary.txt" <<EOF
 bundle_id=${BUNDLE_ID}
@@ -237,11 +249,21 @@ synthetic_ids=${SYNTHETIC_IDS}
 write_lock_recovery=${WRITE_LOCK_RECOVERY}
 recovery_probe_queue_id=${RECOVERY_PROBE_QUEUE_ID}
 launch_args=${LAUNCH_ARGS[*]}
+smoke_launch_pid=${SMOKE_LAUNCH_PID}
 smoke_marker_pattern=${SMOKE_MARKER_PATTERN}
 smoke_marker_seen=${SMOKE_MARKER_SEEN}
 smoke_marker_wait_seconds=${SMOKE_MARKER_WAIT_SECONDS}
 smoke_marker_first_line=${SMOKE_MARKER_FIRST_LINE}
+smoke_marker_start_count=${SMOKE_MARKER_START_COUNT}
+smoke_marker_end_count=${SMOKE_MARKER_END_COUNT}
+smoke_marker_strict_single_run=${SMOKE_MARKER_STRICT_SINGLE_RUN}
 EOF
+
+if [[ "${SMOKE_MARKER_STRICT_SINGLE_RUN}" -eq 1 && "${SMOKE_MARKER_START_COUNT}" -ne 1 ]]; then
+  echo "ERROR: strict smoke marker gate failed (launch_pid=${SMOKE_LAUNCH_PID}, start_count=${SMOKE_MARKER_START_COUNT}, end_count=${SMOKE_MARKER_END_COUNT})." >&2
+  cat "${OUT_DIR}/summary.txt"
+  exit 1
+fi
 
 echo "[smoke] done"
 cat "${OUT_DIR}/summary.txt"
