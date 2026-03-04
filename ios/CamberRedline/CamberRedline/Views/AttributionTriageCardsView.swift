@@ -133,8 +133,9 @@ struct AttributionTriageCardsView: View {
                 )
                 if viewModel.isAttributionWritesLocked {
                     didLogAuthLockVisible = true
+                    let statusCode = viewModel.attributionWritesLockedStatusCode ?? -1
                     TriageLearningLoopMetrics.log(
-                        "KPI_EVENT AUTH_LOCK_UI_DISABLED surface=triage_cards queue_depth=\(viewModel.queue.count)"
+                        "KPI_EVENT AUTH_LOCK_UI_DISABLED surface=triage_cards status_code=\(statusCode) queue_depth=\(viewModel.queue.count)"
                     )
                     TriageTelemetryService.shared.track(
                         surface: "triage_cards",
@@ -146,8 +147,9 @@ struct AttributionTriageCardsView: View {
             .onChange(of: viewModel.isAttributionWritesLocked) { _, isLocked in
                 if isLocked, !didLogAuthLockVisible {
                     didLogAuthLockVisible = true
+                    let statusCode = viewModel.attributionWritesLockedStatusCode ?? -1
                     TriageLearningLoopMetrics.log(
-                        "KPI_EVENT AUTH_LOCK_UI_DISABLED surface=triage_cards queue_depth=\(viewModel.queue.count)"
+                        "KPI_EVENT AUTH_LOCK_UI_DISABLED surface=triage_cards status_code=\(statusCode) queue_depth=\(viewModel.queue.count)"
                     )
                     TriageTelemetryService.shared.track(
                         surface: "triage_cards",
@@ -400,8 +402,9 @@ struct AttributionTriageCardsView: View {
                     isTop: isTop,
                     writesLocked: viewModel.isAttributionWritesLocked,
                     onBlockedWrite: {
+                        let statusCode = viewModel.attributionWritesLockedStatusCode ?? -1
                         TriageLearningLoopMetrics.log(
-                            "KPI_EVENT AUTH_LOCK_BLOCKED surface=triage_cards action=confirm_swipe queue=\(card.queueId)"
+                            "KPI_EVENT AUTH_LOCK_BLOCKED surface=triage_cards action=confirm_swipe status_code=\(statusCode) queue=\(LearningLoopIdHash.short(card.queueId))"
                         )
                         if let banner = viewModel.attributionWritesLockedBannerText {
                             viewModel.error = banner
@@ -572,7 +575,7 @@ struct AttributionTriageCardsView: View {
                 }
                 let ageMs = max(0, Int(Date().timeIntervalSince(action.timestamp) * 1000))
                 TriageLearningLoopMetrics.log(
-                    "KPI_EVENT UNDO_TAP surface=triage_cards queue=\(action.queueId) undo_of=\(actionName) age_ms=\(ageMs)"
+                    "KPI_EVENT UNDO_TAP surface=triage_cards queue=\(LearningLoopIdHash.short(action.queueId)) undo_of=\(actionName) age_ms=\(ageMs)"
                 )
                 TriageTelemetryService.shared.track(
                     surface: "triage_cards",
@@ -646,7 +649,7 @@ struct AttributionTriageCardsView: View {
         let elapsedMs = max(0, Int(Date().timeIntervalSince(appearedAt) * 1000))
         let aiSuggested = ((card.projectId ?? "").trimmingCharacters(in: .whitespacesAndNewlines).isEmpty == false) ? 1 : 0
         TriageLearningLoopMetrics.log(
-            "KPI_EVENT PICK_TIME_SAMPLE surface=triage_cards elapsed_ms=\(elapsedMs) queue=\(card.queueId) card=\(card.id) source=\(source) had_ai_suggestion=\(aiSuggested) evidence_count=\(card.evidenceAnchors.count)"
+            "KPI_EVENT PICK_TIME_SAMPLE surface=triage_cards elapsed_ms=\(elapsedMs) queue=\(LearningLoopIdHash.short(card.queueId)) card=\(LearningLoopIdHash.short(card.id)) source=\(source) had_ai_suggestion=\(aiSuggested) evidence_count=\(card.evidenceAnchors.count)"
         )
         TriageTelemetryService.shared.track(
             surface: "triage_cards",

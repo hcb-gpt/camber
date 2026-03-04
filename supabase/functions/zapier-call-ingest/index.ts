@@ -204,6 +204,7 @@ Deno.serve(async (req: Request) => {
           edge_shared_secret_set: true,
           zapier_legacy_secret_set: expectedLegacySecret.length > 0,
         },
+        action: "reject_beside_before_write",
       });
 
       return new Response(
