@@ -30,7 +30,7 @@
 import "jsr:@supabase/functions-js/edge-runtime.d.ts";
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
 
-const FUNCTION_VERSION = "review-resolve_v3.2.0";
+const FUNCTION_VERSION = "review-resolve_v3.3.0";
 type ReviewQueueSource = "pipeline" | "redline";
 
 interface ResolveRequest {
@@ -111,6 +111,44 @@ Deno.serve(async (req: Request) => {
   const writeSource = normalizeReviewQueueSource(source, "pipeline");
 
   await tagReviewQueueSource(db, review_queue_id, writeSource, "review-resolve");
+
+  // ========================================
+  // 3b. SYNTHETIC INTERACTION GUARD (CLOSED-LOOP SAFETY)
+  // Synthetic interactions must NEVER mutate production priors.
+  // Resolving a synthetic interaction would write fake relationships
+  // into the affinity_ledger via upsert_affinity_feedback, corrupting
+  // the world model. HARD ABORT before any writes.
+  // ========================================
+  {
+    const { data: queueRow } = await db
+      .from("review_queue")
+      .select("interaction_id")
+      .eq("id", review_queue_id)
+      .maybeSingle();
+
+    if (queueRow?.interaction_id) {
+      const { data: interaction } = await db
+        .from("interactions")
+        .select("is_synthetic")
+        .eq("interaction_id", queueRow.interaction_id)
+        .maybeSingle();
+
+      if (interaction?.is_synthetic) {
+        console.error(
+          `[review-resolve] BLOCKED: synthetic interaction ${queueRow.interaction_id} cannot mutate priors`,
+        );
+        return jsonResponse(
+          {
+            error: "ABORT: Cannot mutate priors from synthetic interaction",
+            interaction_id: queueRow.interaction_id,
+            is_synthetic: true,
+            review_queue_id,
+          },
+          403,
+        );
+      }
+    }
+  }
 
   // ========================================
   // 4. CALL RPC (single transaction)
