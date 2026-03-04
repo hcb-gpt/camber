@@ -136,7 +136,9 @@ final class BootstrapService {
 
     private var edgeSharedSecret: String? {
         #if DEBUG
-        let raw = (ProcessInfo.processInfo.environment["EDGE_SHARED_SECRET"] ?? "")
+        // Prefer the pipeline/Edge Functions secret name to avoid collisions with MCP auth.
+        let env = ProcessInfo.processInfo.environment
+        let raw = (env["X_EDGE_SECRET"] ?? env["EDGE_SHARED_SECRET"] ?? "")
             .trimmingCharacters(in: .whitespacesAndNewlines)
         return raw.isEmpty ? nil : raw
         #else
