@@ -225,11 +225,47 @@ sleep 2
 cleanup
 trap - EXIT
 
-SMOKE_MARKERS="${OUT_DIR}/smoke_markers.log"
-grep -E "SMOKE_EVENT" "${OUT_DIR}/app.log" > "${SMOKE_MARKERS}" || true
-SMOKE_MARKER_FIRST_LINE="$(grep -m 1 -E "${SMOKE_MARKER_PATTERN}" "${OUT_DIR}/app.log" 2>/dev/null || true)"
 SMOKE_LAUNCH_PID="$(sed -n 's/.*: \([0-9][0-9]*\)$/\1/p' "${OUT_DIR}/launch.txt" | tail -n 1 || true)"
 SMOKE_LAUNCH_PID="${SMOKE_LAUNCH_PID:-unknown}"
+SMOKE_MARKERS="${OUT_DIR}/smoke_markers.log"
+SMOKE_MARKER_SCOPE_MODE="full_log"
+
+# Prefer run-scoped extraction by launched PID. If no lines are captured (or PID is
+# unknown), fall back to a single START..END window from the full log.
+if [[ "${SMOKE_LAUNCH_PID}" != "unknown" ]]; then
+  awk -v pid="${SMOKE_LAUNCH_PID}" \
+    'index($0, "SMOKE_EVENT") && index($0, "[" pid ":") { print }' \
+    "${OUT_DIR}/app.log" > "${SMOKE_MARKERS}" || true
+  if [[ -s "${SMOKE_MARKERS}" ]]; then
+    SMOKE_MARKER_SCOPE_MODE="launch_pid"
+  fi
+fi
+
+if [[ ! -s "${SMOKE_MARKERS}" ]]; then
+  awk '
+    index($0, "SMOKE_EVENT") {
+      if (!started && index($0, "SMOKE_EVENT START")) {
+        started = 1
+      }
+      if (started) {
+        print
+      }
+      if (started && index($0, "SMOKE_EVENT END")) {
+        exit
+      }
+    }
+  ' "${OUT_DIR}/app.log" > "${SMOKE_MARKERS}" || true
+  if [[ -s "${SMOKE_MARKERS}" ]]; then
+    SMOKE_MARKER_SCOPE_MODE="start_end_window"
+  fi
+fi
+
+# Last resort for diagnostics: keep prior behavior if neither scoped extraction path produced output.
+if [[ ! -s "${SMOKE_MARKERS}" ]]; then
+  grep -E "SMOKE_EVENT" "${OUT_DIR}/app.log" > "${SMOKE_MARKERS}" || true
+fi
+
+SMOKE_MARKER_FIRST_LINE="$(grep -m 1 -E "${SMOKE_MARKER_PATTERN}" "${SMOKE_MARKERS}" 2>/dev/null || true)"
 SMOKE_MARKER_START_COUNT="$(grep -E -c "SMOKE_EVENT START" "${SMOKE_MARKERS}" 2>/dev/null || true)"
 SMOKE_MARKER_START_COUNT="${SMOKE_MARKER_START_COUNT:-0}"
 SMOKE_MARKER_END_COUNT="$(grep -E -c "SMOKE_EVENT END" "${SMOKE_MARKERS}" 2>/dev/null || true)"
@@ -250,6 +286,7 @@ write_lock_recovery=${WRITE_LOCK_RECOVERY}
 recovery_probe_queue_id=${RECOVERY_PROBE_QUEUE_ID}
 launch_args=${LAUNCH_ARGS[*]}
 smoke_launch_pid=${SMOKE_LAUNCH_PID}
+smoke_marker_scope_mode=${SMOKE_MARKER_SCOPE_MODE}
 smoke_marker_pattern=${SMOKE_MARKER_PATTERN}
 smoke_marker_seen=${SMOKE_MARKER_SEEN}
 smoke_marker_wait_seconds=${SMOKE_MARKER_WAIT_SECONDS}
