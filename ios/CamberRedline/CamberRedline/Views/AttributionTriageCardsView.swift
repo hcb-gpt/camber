@@ -66,6 +66,7 @@ private extension Color {
 }
 
 struct AttributionTriageCardsView: View {
+    @AppStorage("triage_surface_mode_v1") private var triageSurfaceModeRawValue = TriageSurfaceMode.contractor.rawValue
     @State private var viewModel = CardTriageViewModel()
     @State private var showProjectPicker = false
     @State private var pickerCard: CardItem?
@@ -85,6 +86,11 @@ struct AttributionTriageCardsView: View {
     @State private var triageSurfaceAppearedAt: Date?
     @State private var didRecordFirstValidPick = false
     @State private var didLogAuthLockVisible = false
+    @State private var showReadOnlyAlert = false
+
+    private var triageSurfaceMode: TriageSurfaceMode {
+        TriageSurfaceMode(rawValue: triageSurfaceModeRawValue) ?? .contractor
+    }
 
     var body: some View {
         NavigationStack {
@@ -105,7 +111,6 @@ struct AttributionTriageCardsView: View {
                         activityRail
                         progressBar
                         cardStack
-                        actionHints
                     }
                 }
 
@@ -166,11 +171,26 @@ struct AttributionTriageCardsView: View {
                             selectedProjectIdByCardId[card.id] = projectId
                             recordFirstValidPickIfNeeded(card: card, projectId: projectId, source: "picker_select")
                             let notes = pendingResolveNoteByCardId[card.id]
-                            let shouldResolveNow = pickerMode == .commentOnly
+                            let pickerSelectionAction: String = switch pickerMode {
+                            case .project:
+                                "picker_selected"
+                            case .commentOnly:
+                                "picker_selected"
+                            case .autoResolve(let action):
+                                action
+                            }
+                            let shouldResolveNow: Bool = switch pickerMode {
+                            case .project:
+                                false
+                            case .commentOnly, .autoResolve:
+                                true
+                            }
 
                             pickerCard = nil
                             pickerMode = .project
                             showProjectPicker = false
+
+                            logTriageAction(pickerSelectionAction, card: card)
 
                             if shouldResolveNow {
                                 Task {
@@ -204,7 +224,12 @@ struct AttributionTriageCardsView: View {
                                 }
                             }
                         },
-                        showsDismissAction: pickerMode != .commentOnly,
+                        showsDismissAction: {
+                            if case .project = pickerMode {
+                                return true
+                            }
+                            return false
+                        }(),
                         writesLocked: viewModel.isAttributionWritesLocked,
                         writesLockedBannerText: viewModel.attributionWritesLockedBannerText
                     )
@@ -247,6 +272,7 @@ struct AttributionTriageCardsView: View {
                         card: card,
                         onCancel: { escalateCard = nil },
                         onSubmit: { reason in
+                            logTriageAction("escalate_submit", card: card)
                             Task {
                                 await viewModel.escalate(card, reason: reason)
                                 if !viewModel.queue.contains(where: { $0.id == card.id }) {
@@ -276,6 +302,11 @@ struct AttributionTriageCardsView: View {
                 WriteLockRecoverySheet {
                     await viewModel.recoverWriteAccess()
                 }
+            }
+            .alert("Read-only right now", isPresented: $showReadOnlyAlert) {
+                Button("OK", role: .cancel) {}
+            } message: {
+                Text("You can review cards, but saves are locked. Try Recover.")
             }
         }
         .preferredColorScheme(.dark)
@@ -384,51 +415,72 @@ struct AttributionTriageCardsView: View {
                     selectedProjectName: selectedProjectName,
                     isTop: isTop,
                     writesLocked: viewModel.isAttributionWritesLocked,
-                    onBlockedWrite: {
-                        TriageLearningLoopMetrics.log(
-                            "KPI_EVENT AUTH_LOCK_BLOCKED surface=triage_cards action=confirm_swipe queue=\(card.queueId)"
-                        )
-                        if let banner = viewModel.attributionWritesLockedBannerText {
-                            viewModel.error = banner
-                        }
+                    quickProjectChoices: viewModel.projectOptions(for: card),
+                    triageSurfaceMode: triageSurfaceMode,
+                    onBlockedWrite: { action in
+                        handleBlockedWrite(card: card, action: action)
                     },
-                    onConfirm: { projectId in
-                        viewModel.rememberProjectSelection(projectId)
+                    onConfirmSelected: {
+                        guard let selectedProjectId else { return }
+                        logTriageAction("swipe_confirm_selected", card: card)
+                        viewModel.rememberProjectSelection(selectedProjectId)
                         let note = pendingResolveNoteByCardId[card.id] ?? nil
                         Task {
-                            await viewModel.resolve(card, to: projectId, notes: note)
+                            await viewModel.resolve(card, to: selectedProjectId, notes: note)
                             if !viewModel.queue.contains(where: { $0.id == card.id }) {
                                 selectedProjectIdByCardId[card.id] = nil
                                 pendingResolveNoteByCardId[card.id] = nil
                             }
                         }
                     },
-                    onOpenPicker: {
-                        pickerMode = .project
-                        pickerCard = card
-                        showProjectPicker = true
-                    },
-                    onUseSuggestedProject: { suggestedProjectId in
-                        viewModel.rememberProjectSelection(suggestedProjectId)
+                    onConfirmSuggested: {
+                        guard let suggestedProjectId = card.projectId?.trimmingCharacters(in: .whitespacesAndNewlines),
+                              !suggestedProjectId.isEmpty else {
+                            openProjectPicker(for: card, mode: .autoResolve(action: "picker_selected"))
+                            return
+                        }
+                        logTriageAction("swipe_confirm_suggested", card: card)
                         selectedProjectIdByCardId[card.id] = suggestedProjectId
-                        recordFirstValidPickIfNeeded(card: card, projectId: suggestedProjectId, source: "suggested_tap")
+                        viewModel.rememberProjectSelection(suggestedProjectId)
+                        let note = pendingResolveNoteByCardId[card.id] ?? nil
+                        Task {
+                            await viewModel.resolve(card, to: suggestedProjectId, notes: note)
+                            if !viewModel.queue.contains(where: { $0.id == card.id }) {
+                                selectedProjectIdByCardId[card.id] = nil
+                                pendingResolveNoteByCardId[card.id] = nil
+                            }
+                        }
                     },
-                    onTapEvidenceTokens: {
-                        evidenceCard = card
-                        showEvidenceTokens = true
+                    onOpenPickerForConfirmFallback: {
+                        openProjectPicker(for: card, mode: .autoResolve(action: "picker_selected"))
                     },
-                    onSwipeUp: {
-                        escalateCard = card
-                        showEscalateSheet = true
+                    onOpenPickerForWrongProject: {
+                        logTriageAction("swipe_left_open_picker", card: card)
+                        openProjectPicker(for: card, mode: .autoResolve(action: "picker_selected"))
                     },
-                    onSwipeDown: {
+                    onSelectProject: { projectId in
+                        viewModel.rememberProjectSelection(projectId)
+                        selectedProjectIdByCardId[card.id] = projectId
+                        recordFirstValidPickIfNeeded(card: card, projectId: projectId, source: "choice_tap")
+                    },
+                    onSkip: {
+                        logTriageAction("skip_ask_later", card: card)
                         selectedProjectIdByCardId[card.id] = nil
                         pendingResolveNoteByCardId[card.id] = nil
                         viewModel.skip(card)
                     },
+                    onEscalateOpen: {
+                        logTriageAction("escalate_open", card: card)
+                        escalateCard = card
+                        showEscalateSheet = true
+                    },
                     onTapAnalysis: {
                         analysisCard = card
                         showAnalysisDrawer = true
+                    },
+                    onTapEvidenceTokens: {
+                        evidenceCard = card
+                        showEvidenceTokens = true
                     }
                 )
                 .zIndex(isTop ? 1 : 0)
@@ -439,38 +491,6 @@ struct AttributionTriageCardsView: View {
         }
         .padding(.horizontal, 16)
         .frame(maxHeight: .infinity)
-    }
-
-    // MARK: - Action Hints
-
-    private var actionHints: some View {
-        VStack(spacing: 6) {
-            HStack(spacing: 0) {
-                Label("PICK", systemImage: "arrow.left")
-                    .font(.caption)
-                    .fontWeight(.semibold)
-                    .foregroundStyle(Color.noRed.opacity(0.7))
-                Spacer()
-                Label("CONFIRM", systemImage: "arrow.right")
-                    .font(.caption)
-                    .fontWeight(.semibold)
-                    .foregroundStyle(Color.commentBlue.opacity(0.8))
-            }
-            HStack(spacing: 0) {
-                Label("ESCALATE", systemImage: "arrow.up")
-                    .font(.caption2)
-                    .fontWeight(.semibold)
-                    .foregroundStyle(Color.escalateOrange.opacity(0.8))
-                Spacer()
-                Label("SKIP", systemImage: "arrow.down")
-                    .font(.caption2)
-                    .fontWeight(.semibold)
-                    .foregroundStyle(Color.skipGray.opacity(0.8))
-            }
-        }
-        .padding(.horizontal, 40)
-        .padding(.bottom, 12)
-        .opacity(viewModel.isAttributionWritesLocked ? 0.35 : 1)
     }
 
     private func writesLockedBanner(_ text: String) -> some View {
@@ -625,6 +645,35 @@ struct AttributionTriageCardsView: View {
             "KPI_EVENT PICK_TIME_SAMPLE surface=triage_cards elapsed_ms=\(elapsedMs) queue=\(card.queueId) card=\(card.id) source=\(source) had_ai_suggestion=\(aiSuggested) evidence_count=\(card.evidenceAnchors.count)"
         )
         didRecordFirstValidPick = true
+    }
+
+    private func openProjectPicker(for card: CardItem, mode: PickerMode) {
+        pickerMode = mode
+        pickerCard = card
+        showProjectPicker = true
+    }
+
+    private func handleBlockedWrite(card: CardItem, action: String) {
+        TriageLearningLoopMetrics.log(
+            "KPI_EVENT AUTH_LOCK_BLOCKED surface=triage_cards action=\(action) queue=\(card.queueId)"
+        )
+        showReadOnlyAlert = true
+    }
+
+    private func logTriageAction(_ action: String, card: CardItem) {
+        let hasAiSuggestion = ((card.projectId ?? "").trimmingCharacters(in: .whitespacesAndNewlines).isEmpty == false) ? 1 : 0
+        let confidenceBucket: String
+        switch card.confidence {
+        case ..<0.4:
+            confidenceBucket = "low"
+        case 0.4..<0.75:
+            confidenceBucket = "medium"
+        default:
+            confidenceBucket = "high"
+        }
+        TriageLearningLoopMetrics.log(
+            "KPI_EVENT TRIAGE_ACTION surface=triage_cards mode=\(triageSurfaceMode.rawValue) action=\(action) had_ai_suggestion=\(hasAiSuggestion) confidence_bucket=\(confidenceBucket) evidence_count=\(card.evidenceAnchors.count) queue_depth=\(viewModel.queue.count) queue_id=\(card.queueId)"
+        )
     }
 
     private func runSmokeSwipes() async {
@@ -862,6 +911,7 @@ struct AttributionTriageCardsView: View {
     private enum PickerMode {
         case project
         case commentOnly
+        case autoResolve(action: String)
     }
 }
 
@@ -874,38 +924,35 @@ private struct SwipeableTriageCard: View {
     let selectedProjectName: String?
     let isTop: Bool
     let writesLocked: Bool
-    let onBlockedWrite: () -> Void
-    let onConfirm: (String) -> Void
-    let onOpenPicker: () -> Void
-    let onUseSuggestedProject: (String) -> Void
-    let onTapEvidenceTokens: () -> Void
-    let onSwipeUp: () -> Void
-    let onSwipeDown: () -> Void
+    let quickProjectChoices: [ReviewProject]
+    let triageSurfaceMode: TriageSurfaceMode
+    let onBlockedWrite: (String) -> Void
+    let onConfirmSelected: () -> Void
+    let onConfirmSuggested: () -> Void
+    let onOpenPickerForConfirmFallback: () -> Void
+    let onOpenPickerForWrongProject: () -> Void
+    let onSelectProject: (String) -> Void
+    let onSkip: () -> Void
+    let onEscalateOpen: () -> Void
     let onTapAnalysis: () -> Void
+    let onTapEvidenceTokens: () -> Void
 
     @State private var offset: CGSize = .zero
     @State private var rotation: Double = 0
-    @State private var showAlternatives = false
     @State private var transcriptExpanded = false
-    @State private var showConfirmBlockedAlert = false
 
     private let horizontalSwipeThreshold: CGFloat = 100
     private let verticalSwipeThreshold: CGFloat = 90
+
+    private var isDevMode: Bool { triageSurfaceMode == .dev }
 
     var body: some View {
         cardChrome
             .offset(x: offset.width, y: offset.height)
             .rotationEffect(.degrees(rotation))
             .gesture(dragGesture)
-            .animation(.interactiveSpring(response: 0.4, dampingFraction: 0.7), value: offset)
-            .alert("Can’t confirm yet", isPresented: $showConfirmBlockedAlert) {
-                Button("OK", role: .cancel) {}
-            } message: {
-                Text(confirmBlockedMessage)
-            }
+            .animation(.interactiveSpring(response: 0.4, dampingFraction: 0.75), value: offset)
     }
-
-    // MARK: - Card Sections
 
     private var cardChrome: some View {
         cardContent
@@ -917,34 +964,28 @@ private struct SwipeableTriageCard: View {
             )
             .overlay(alignment: .topLeading) {
                 if offset.width < -40 {
-                    swipeLabel("PICK", icon: "arrow.left.arrow.right", color: .noRed)
+                    swipeLabel("WRONG", icon: "arrow.left", color: .noRed)
                         .padding(16)
                         .opacity(min(1, Double(-offset.width - 40) / 60))
                 }
             }
             .overlay(alignment: .topTrailing) {
                 if offset.width > 40 {
-                    Group {
-                        if canConfirm {
-                            swipeLabel("CONFIRM", icon: "checkmark", color: .commentBlue)
-                        } else {
-                            swipeLabel("BLOCKED", icon: "xmark", color: .noRed)
-                        }
-                    }
-                    .padding(16)
-                    .opacity(min(1, Double(offset.width - 40) / 60))
+                    swipeLabel("YES", icon: "arrow.right", color: .commentBlue)
+                        .padding(16)
+                        .opacity(min(1, Double(offset.width - 40) / 60))
                 }
             }
             .overlay(alignment: .top) {
                 if offset.height < -40 {
-                    swipeLabel("ESCALATE", icon: "exclamationmark.triangle", color: .escalateOrange)
+                    swipeLabel("ESCALATE", icon: "arrow.up", color: .escalateOrange)
                         .padding(.top, 16)
                         .opacity(min(1, Double(-offset.height - 40) / 60))
                 }
             }
             .overlay(alignment: .bottom) {
                 if offset.height > 40 {
-                    swipeLabel("SKIP", icon: "arrow.down.to.line", color: .skipGray)
+                    swipeLabel("ASK LATER", icon: "arrow.down", color: .skipGray)
                         .padding(.bottom, 16)
                         .opacity(min(1, Double(offset.height - 40) / 60))
                 }
@@ -953,68 +994,70 @@ private struct SwipeableTriageCard: View {
 
     private var cardContent: some View {
         VStack(alignment: .leading, spacing: 12) {
-            // Header: contact + confidence
-            HStack(alignment: .top) {
-                VStack(alignment: .leading, spacing: 2) {
-                    Text(card.contactName)
-                        .font(.headline)
-                        .foregroundStyle(.white)
-                    if let date = card.eventDate {
-                        Text(date, style: .relative)
-                            .font(.caption2)
+            VStack(alignment: .leading, spacing: 4) {
+                HStack(alignment: .top) {
+                    VStack(alignment: .leading, spacing: 4) {
+                        Text(card.contactName)
+                            .font(.headline)
+                            .foregroundStyle(.white)
+                        Text(receivedLabel)
+                            .font(.caption)
                             .foregroundStyle(.secondary)
                     }
+                    Spacer()
+                    if isDevMode {
+                        confidenceBadge
+                    }
                 }
-                Spacer()
-                confidenceBadge
             }
 
-            // Reason codes
-            if !card.reasonCodes.isEmpty {
-                reasonCodesRow
-            }
+            Text(primaryPromptText)
+                .font(.subheadline)
+                .fontWeight(.semibold)
+                .foregroundStyle(.white.opacity(0.94))
+                .lineLimit(2)
 
-            truthSurfaceRail
-
-            // Transcript (tap to expand/collapse)
-            Text(card.transcriptSegment)
+            Text(card.humanSummary ?? card.transcriptSegment)
                 .font(.subheadline)
                 .foregroundStyle(.white.opacity(0.85))
-                .lineLimit(transcriptExpanded ? nil : 6)
+                .lineLimit(transcriptExpanded ? nil : 5)
                 .frame(maxWidth: .infinity, alignment: .leading)
                 .contentShape(Rectangle())
                 .onTapGesture { transcriptExpanded.toggle() }
                 .animation(.easeInOut(duration: 0.2), value: transcriptExpanded)
 
-            // Evidence anchors
-            if !card.evidenceAnchors.isEmpty {
-                evidenceSection
+            if isDevMode {
+                devMetadataSection
+            }
+
+            if shouldShowChoiceSet {
+                choiceSetSection
+            }
+
+            if let selectedProjectName {
+                HStack(spacing: 6) {
+                    Image(systemName: "checkmark.circle.fill")
+                        .font(.caption)
+                        .foregroundStyle(Color.commentBlue.opacity(0.9))
+                    Text("Selected project: \(selectedProjectName)")
+                        .font(.subheadline)
+                        .foregroundStyle(.white.opacity(0.95))
+                        .lineLimit(1)
+                }
+            }
+
+            if writesLocked {
+                Text("Writes temporarily locked. You can still review this card.")
+                    .font(.caption)
+                    .foregroundStyle(Color.noRed.opacity(0.95))
             }
 
             Divider().background(Color.cardStroke)
 
-            selectionSection
+            actionRow
 
-            // Collapsible alternatives
-            if !card.candidates.isEmpty {
-                alternativesSection
-            }
-
-            // Analysis tap target
-            Button {
-                onTapAnalysis()
-            } label: {
-                HStack(spacing: 4) {
-                    Image(systemName: "magnifyingglass")
-                        .font(.system(size: 10))
-                    Text("Analysis")
-                        .font(.caption2)
-                        .fontWeight(.medium)
-                }
-                .foregroundStyle(Color.commentBlue.opacity(0.8))
-                .padding(.horizontal, 10)
-                .padding(.vertical, 5)
-                .background(Color.commentBlue.opacity(0.1), in: Capsule())
+            if isDevMode {
+                devActionsRow
             }
         }
     }
@@ -1023,7 +1066,12 @@ private struct SwipeableTriageCard: View {
         DragGesture()
             .onChanged { value in
                 guard isTop else { return }
-                guard !writesLocked else { return }
+                if writesLocked {
+                    if value.translation.height > 0, abs(value.translation.height) > abs(value.translation.width) {
+                        offset = value.translation
+                    }
+                    return
+                }
                 offset = value.translation
                 rotation = Double(value.translation.width / 20)
             }
@@ -1033,146 +1081,263 @@ private struct SwipeableTriageCard: View {
                     if value.translation.height > verticalSwipeThreshold,
                        abs(value.translation.height) > abs(value.translation.width) {
                         snapBack()
-                        onSwipeDown()
+                        onSkip()
                         return
                     }
-
                     if value.translation.width > horizontalSwipeThreshold
                         || value.translation.width < -horizontalSwipeThreshold
-                        || value.translation.height < -verticalSwipeThreshold
-                    {
+                        || value.translation.height < -verticalSwipeThreshold {
                         snapBack()
-                        onBlockedWrite()
+                        onBlockedWrite("write_locked_swipe")
                         return
                     }
-
                     snapBack()
                     return
                 }
 
                 if value.translation.width > horizontalSwipeThreshold,
                    abs(value.translation.width) >= abs(value.translation.height) {
-                    guard canConfirm else {
-                        snapBack()
-                        showConfirmBlockedAlert = true
-                        return
+                    swipeAway(direction: .right) {
+                        runPrimaryConfirmAction()
                     }
-                    swipeAway(direction: .right)
                 } else if value.translation.width < -horizontalSwipeThreshold,
                           abs(value.translation.width) >= abs(value.translation.height) {
-                    swipeAway(direction: .left)
+                    swipeAway(direction: .left) {
+                        onOpenPickerForWrongProject()
+                    }
                 } else if value.translation.height < -verticalSwipeThreshold,
                           abs(value.translation.height) > abs(value.translation.width) {
-                    // UP: snap back then open escalation sheet
                     snapBack()
-                    onSwipeUp()
+                    onEscalateOpen()
                 } else if value.translation.height > verticalSwipeThreshold,
                           abs(value.translation.height) > abs(value.translation.width) {
-                    // DOWN: skip — snap back and reorder
                     snapBack()
-                    onSwipeDown()
+                    onSkip()
                 } else {
                     snapBack()
                 }
             }
     }
 
-    private var truthSurfaceRail: some View {
+    private var actionRow: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            Button {
+                runPrimaryConfirmAction()
+            } label: {
+                Label(primaryActionText, systemImage: "checkmark.circle.fill")
+                    .font(.headline)
+                    .frame(maxWidth: .infinity)
+                    .padding(.vertical, 10)
+            }
+            .buttonStyle(.borderedProminent)
+            .tint(writesLocked ? .noRed : .commentBlue)
+
+            Button("Wrong project") {
+                if writesLocked {
+                    onBlockedWrite("wrong_project_tap")
+                } else {
+                    onOpenPickerForWrongProject()
+                }
+            }
+            .font(.subheadline)
+            .fontWeight(.semibold)
+            .foregroundStyle(writesLocked ? Color.noRed : Color.noRed.opacity(0.95))
+            .buttonStyle(.plain)
+
+            VStack(alignment: .leading, spacing: 2) {
+                Button("Ask me later") {
+                    onSkip()
+                }
+                .font(.subheadline)
+                .fontWeight(.semibold)
+                .foregroundStyle(Color.skipGray)
+                .buttonStyle(.plain)
+
+                Text("Puts it back in the pile.")
+                    .font(.caption2)
+                    .foregroundStyle(.secondary)
+            }
+        }
+    }
+
+    private var devActionsRow: some View {
         HStack(spacing: 8) {
-            statusChip
-            Button {
-                onOpenPicker()
-            } label: {
-                chip(
-                    selectedProjectId == nil ? "Pick" : "Change",
-                    icon: "arrow.left.arrow.right",
-                    color: .commentBlue
-                )
+            Button("Analysis") {
+                onTapAnalysis()
             }
-            Button {
+            .font(.caption)
+            .fontWeight(.semibold)
+            .foregroundStyle(Color.commentBlue)
+            .buttonStyle(.plain)
+            .padding(.horizontal, 10)
+            .padding(.vertical, 6)
+            .background(Color.commentBlue.opacity(0.12), in: Capsule())
+
+            Button("Evidence tokens") {
                 onTapEvidenceTokens()
-            } label: {
-                chip(
-                    "Evidence \(evidenceTokenCount) · \(evidenceFreshnessText)",
-                    icon: "doc.text.magnifyingglass",
-                    color: evidenceTokenCount > 0 ? .commentBlue : .skipGray
-                )
             }
+            .font(.caption)
+            .fontWeight(.semibold)
+            .foregroundStyle(Color.commentBlue)
+            .buttonStyle(.plain)
+            .padding(.horizontal, 10)
+            .padding(.vertical, 6)
+            .background(Color.commentBlue.opacity(0.12), in: Capsule())
+
             Spacer()
         }
     }
 
-    private var selectionSection: some View {
-        VStack(alignment: .leading, spacing: 10) {
-            HStack(spacing: 8) {
-                Image(systemName: selectedProjectId == nil ? "circle.dashed" : "checkmark.circle.fill")
-                    .font(.caption)
-                    .foregroundStyle(selectedProjectId == nil ? Color.skipGray.opacity(0.8) : Color.commentBlue.opacity(0.9))
+    private var primaryActionText: String {
+        if writesLocked {
+            return "Writes temporarily locked"
+        }
+        if let selectedProjectName, !selectedProjectName.isEmpty {
+            return "Yes — \(selectedProjectName)"
+        }
+        if let aiSuggestedProjectName, !aiSuggestedProjectName.isEmpty {
+            return "Yes — \(aiSuggestedProjectName)"
+        }
+        return "Yes — choose project"
+    }
 
-                VStack(alignment: .leading, spacing: 1) {
-                    Text(selectedProjectId == nil ? "Pick required" : "Selected")
-                        .font(.caption2)
-                        .foregroundStyle(.secondary)
-                    Text(selectedProjectName ?? "—")
-                        .font(.subheadline)
-                        .fontWeight(.medium)
-                        .foregroundStyle(selectedProjectId == nil ? Color.secondary : Color.white)
-                        .lineLimit(1)
-                }
+    private var primaryPromptText: String {
+        if let aiSuggestedProjectName, !aiSuggestedProjectName.isEmpty {
+            return "This sounds like \(aiSuggestedProjectName) — right?"
+        }
+        return "Which project is this about?"
+    }
 
-                Spacer()
+    private var shouldShowChoiceSet: Bool {
+        let uncertainCodes: Set<String> = ["low_confidence", "unknown_project", "cross_project", "no_match"]
+        if selectedProjectId == nil { return true }
+        if card.candidates.count > 1 { return true }
+        return card.reasonCodes.contains { uncertainCodes.contains($0) }
+    }
 
-                if canConfirm {
-                    Text("Swipe \(Image(systemName: "arrow.right")) to confirm")
-                        .font(.caption2)
-                        .foregroundStyle(.secondary)
-                } else {
+    private var choiceSetSection: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            Text(primaryPromptText)
+                .font(.caption)
+                .foregroundStyle(.secondary)
+
+            ForEach(choiceRows) { choice in
+                switch choice {
+                case .project(let id, let name):
                     Button {
-                        showConfirmBlockedAlert = true
+                        onSelectProject(id)
                     } label: {
-                        Text("Swipe \(Image(systemName: "arrow.right")) to confirm")
-                            .font(.caption2)
-                            .foregroundStyle(.secondary)
+                        HStack {
+                            Text(name)
+                                .lineLimit(1)
+                            Spacer()
+                            if selectedProjectId == id {
+                                Image(systemName: "checkmark.circle.fill")
+                                    .foregroundStyle(Color.commentBlue)
+                            }
+                        }
+                        .font(.subheadline)
+                        .foregroundStyle(.white)
+                        .padding(.horizontal, 12)
+                        .padding(.vertical, 10)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                        .background(
+                            RoundedRectangle(cornerRadius: 10)
+                                .fill(selectedProjectId == id ? Color.commentBlue.opacity(0.22) : Color.chipBg)
+                        )
+                    }
+                    .buttonStyle(.plain)
+                case .picker(let label):
+                    Button {
+                        onOpenPickerForConfirmFallback()
+                    } label: {
+                        HStack {
+                            Text(label)
+                            Spacer()
+                            Image(systemName: "chevron.right")
+                                .font(.caption)
+                        }
+                        .font(.subheadline)
+                        .foregroundStyle(.white.opacity(0.9))
+                        .padding(.horizontal, 12)
+                        .padding(.vertical, 10)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                        .background(
+                            RoundedRectangle(cornerRadius: 10)
+                                .fill(Color.chipBg)
+                        )
                     }
                     .buttonStyle(.plain)
                 }
             }
+        }
+    }
 
-            if let suggestedProjectId = card.projectId, let name = aiSuggestedProjectName {
-                HStack(spacing: 8) {
-                    Image(systemName: "cpu")
-                        .font(.caption)
-                        .foregroundStyle(Color.skipGray.opacity(0.8))
-                    Text("AI suggests")
-                        .font(.caption2)
-                        .foregroundStyle(.secondary)
-                    Text(name)
-                        .font(.caption)
-                        .fontWeight(.semibold)
-                        .foregroundStyle(.white.opacity(0.85))
+    private var devMetadataSection: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            if !card.reasonCodes.isEmpty {
+                reasonCodesRow
+            }
+            HStack(spacing: 8) {
+                Text("Evidence \(card.evidenceAnchors.count)")
+                Text("Candidates \(card.candidates.count)")
+                if let modelId = card.modelId, !modelId.isEmpty {
+                    Text("Model \(modelId)")
                         .lineLimit(1)
-                    Spacer()
-                    if selectedProjectId == nil {
-                        Button("Use") {
-                            onUseSuggestedProject(suggestedProjectId)
-                        }
-                        .font(.caption2)
-                        .fontWeight(.semibold)
-                        .foregroundStyle(Color.commentBlue)
-                        .buttonStyle(.plain)
-                    }
                 }
-            } else {
-                HStack(spacing: 8) {
-                    Image(systemName: "questionmark.circle")
-                        .font(.caption)
-                        .foregroundStyle(Color.skipGray.opacity(0.8))
-                    Text("No AI suggestion")
-                        .font(.caption)
+            }
+            .font(.caption2)
+            .foregroundStyle(.secondary)
+
+            HStack(spacing: 8) {
+                if let promptVersion = card.promptVersion, !promptVersion.isEmpty {
+                    Text("Prompt \(promptVersion)")
+                        .font(.caption2)
                         .foregroundStyle(.secondary)
+                }
+                if let createdAt = card.contextCreatedAtUtc, !createdAt.isEmpty {
+                    Text("Context \(createdAt)")
+                        .font(.caption2)
+                        .foregroundStyle(.secondary)
+                        .lineLimit(1)
                 }
             }
         }
+    }
+
+    private var choiceRows: [ChoiceRow] {
+        var rows: [ChoiceRow] = []
+        var seen = Set<String>()
+
+        func appendProject(id: String?, name: String?) {
+            guard let id else { return }
+            let trimmedId = id.trimmingCharacters(in: .whitespacesAndNewlines)
+            guard !trimmedId.isEmpty else { return }
+            guard !seen.contains(trimmedId) else { return }
+            let trimmedName = (name ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
+            guard !trimmedName.isEmpty else { return }
+            seen.insert(trimmedId)
+            rows.append(.project(id: trimmedId, name: trimmedName))
+        }
+
+        appendProject(id: card.projectId, name: aiSuggestedProjectName)
+        for candidate in card.candidates {
+            appendProject(id: candidate.projectId, name: candidate.name)
+        }
+        for option in quickProjectChoices {
+            appendProject(id: option.id, name: option.name)
+        }
+
+        rows = Array(rows.prefix(2))
+        if rows.count == 1 {
+            rows.append(.picker(label: "Choose another project"))
+        } else if rows.isEmpty {
+            rows = [
+                .picker(label: "Choose project"),
+                .picker(label: "Choose another project")
+            ]
+        }
+        return rows
     }
 
     private var reasonCodesRow: some View {
@@ -1190,71 +1355,6 @@ private struct SwipeableTriageCard: View {
         }
     }
 
-    private var evidenceSection: some View {
-        VStack(alignment: .leading, spacing: 4) {
-            ForEach(Array(card.evidenceAnchors.prefix(4).enumerated()), id: \.offset) { _, anchor in
-                HStack(alignment: .top, spacing: 6) {
-                    Image(systemName: "quote.opening")
-                        .font(.system(size: 8))
-                        .foregroundStyle(Color.commentBlue.opacity(0.5))
-                        .padding(.top, 2)
-                    VStack(alignment: .leading, spacing: 1) {
-                        Text(anchor.quote ?? anchor.text ?? "")
-                            .font(.caption2)
-                            .foregroundStyle(.white.opacity(0.7))
-                            .lineLimit(2)
-                        if let matchType = anchor.matchType {
-                            Text(matchType)
-                                .font(.system(size: 8))
-                                .foregroundStyle(.secondary)
-                        }
-                    }
-                }
-            }
-        }
-        .padding(8)
-        .background(Color.chipBg.opacity(0.5), in: RoundedRectangle(cornerRadius: 8))
-    }
-
-    private var alternativesSection: some View {
-        VStack(alignment: .leading, spacing: 4) {
-            Button {
-                withAnimation(.easeInOut(duration: 0.2)) {
-                    showAlternatives.toggle()
-                }
-            } label: {
-                HStack(spacing: 4) {
-                    Image(systemName: showAlternatives ? "chevron.down" : "chevron.right")
-                        .font(.system(size: 9))
-                    Text("\(card.candidates.count) alternative\(card.candidates.count == 1 ? "" : "s")")
-                        .font(.caption2)
-                        .fontWeight(.medium)
-                }
-                .foregroundStyle(.secondary)
-            }
-
-            if showAlternatives {
-                HStack(spacing: 6) {
-                    ForEach(card.candidates.prefix(4), id: \.projectId) { candidate in
-                        VStack(alignment: .leading, spacing: 2) {
-                            Text(candidate.name)
-                                .font(.caption2)
-                                .foregroundStyle(.white.opacity(0.7))
-                            if let tags = candidate.evidenceTags, !tags.isEmpty {
-                                Text(tags.prefix(2).joined(separator: ", "))
-                                    .font(.system(size: 8))
-                                    .foregroundStyle(.secondary)
-                            }
-                        }
-                        .padding(.horizontal, 8)
-                        .padding(.vertical, 5)
-                        .background(Color.chipBg, in: RoundedRectangle(cornerRadius: 6))
-                    }
-                }
-            }
-        }
-    }
-
     private var confidenceBadge: some View {
         let pct = Int(card.confidence * 100)
         let color: Color = pct >= 70 ? .yesGreen : pct >= 40 ? .undoAmber : .noRed
@@ -1267,65 +1367,13 @@ private struct SwipeableTriageCard: View {
             .background(color.opacity(0.15), in: Capsule())
     }
 
-    private var evidenceTokenCount: Int { card.evidenceAnchors.count }
-
-    private var evidenceFreshnessText: String {
-        guard let date = card.eventDate else { return "—" }
-        let seconds = max(0, Date().timeIntervalSince(date))
-        let minutes = Int(seconds / 60)
-        if minutes < 60 { return "\(minutes)m" }
-        let hours = minutes / 60
-        if hours < 48 { return "\(hours)h" }
-        let days = hours / 24
-        return "\(days)d"
-    }
-
-    private var canConfirm: Bool {
-        guard !writesLocked else { return false }
-        guard selectedProjectId != nil else { return false }
-        guard evidenceTokenCount > 0 else { return false }
-        return true
-    }
-
-    private var confirmBlockedMessage: String {
-        if writesLocked {
-            return "Attribution writes temporarily locked. Truth surface remains readable."
+    private var receivedLabel: String {
+        guard let eventDate = card.eventDate else {
+            return "Received recently"
         }
-        if evidenceTokenCount == 0 {
-            return "No evidence tokens on this card. Escalate or skip instead of confirming."
-        }
-        return "Pick a project first."
-    }
-
-    private var statusChip: some View {
-        let label: String
-        let color: Color
-        if writesLocked || evidenceTokenCount == 0 {
-            label = "Blocked"
-            color = .noRed
-        } else if selectedProjectId != nil {
-            label = "Ready"
-            color = .commentBlue
-        } else {
-            label = "Pending"
-            color = .skipGray
-        }
-        return chip(label, icon: "circle.fill", color: color)
-    }
-
-    private func chip(_ text: String, icon: String, color: Color) -> some View {
-        HStack(spacing: 4) {
-            Image(systemName: icon)
-                .font(.system(size: 8))
-            Text(text)
-                .font(.caption2)
-                .fontWeight(.semibold)
-                .lineLimit(1)
-        }
-        .foregroundStyle(color)
-        .padding(.horizontal, 10)
-        .padding(.vertical, 6)
-        .background(color.opacity(0.12), in: Capsule())
+        let formatter = RelativeDateTimeFormatter()
+        formatter.unitsStyle = .short
+        return "Received \(formatter.localizedString(for: eventDate, relativeTo: Date()))"
     }
 
     private var swipeIndicatorColor: Color {
@@ -1342,39 +1390,40 @@ private struct SwipeableTriageCard: View {
         return min(1, Double(magnitude - 40) / 60)
     }
 
+    private func runPrimaryConfirmAction() {
+        if writesLocked {
+            onBlockedWrite("confirm_tap")
+            return
+        }
+        if let selectedProjectId, !selectedProjectId.isEmpty {
+            onConfirmSelected()
+            return
+        }
+        if let suggestedProjectId = card.projectId?.trimmingCharacters(in: .whitespacesAndNewlines),
+           !suggestedProjectId.isEmpty {
+            onConfirmSuggested()
+            return
+        }
+        onOpenPickerForConfirmFallback()
+    }
+
     private func swipeLabel(_ text: String, icon: String, color: Color) -> some View {
         Label(text, systemImage: icon)
-            .font(.title2)
+            .font(.caption)
             .fontWeight(.black)
             .foregroundStyle(color)
     }
 
-    private func swipeAway(direction: SwipeDirection) {
-        let offscreenX: CGFloat
-        let offscreenY: CGFloat
-        switch direction {
-        case .right:
-            offscreenX = 500
-            offscreenY = 0
-        case .left:
-            offscreenX = -500
-            offscreenY = 0
-        }
+    private func swipeAway(direction: SwipeDirection, completion: @escaping () -> Void) {
+        let offscreenX: CGFloat = direction == .right ? 500 : -500
         withAnimation(.easeIn(duration: 0.25)) {
-            offset = CGSize(width: offscreenX, height: offscreenY)
+            offset = CGSize(width: offscreenX, height: 0)
             rotation = direction == .right ? 15 : -15
         }
         DispatchQueue.main.asyncAfter(deadline: .now() + 0.25) {
             offset = .zero
             rotation = 0
-            switch direction {
-            case .right:
-                if let selectedProjectId {
-                    onConfirm(selectedProjectId)
-                }
-            case .left:
-                onOpenPicker()
-            }
+            completion()
         }
     }
 
@@ -1399,7 +1448,23 @@ private struct SwipeableTriageCard: View {
         }
     }
 
-    private enum SwipeDirection { case left, right }
+    private enum ChoiceRow: Identifiable {
+        case project(id: String, name: String)
+        case picker(label: String)
+
+        var id: String {
+            switch self {
+            case .project(let id, _):
+                return "project_\(id)"
+            case .picker(let label):
+                return "picker_\(label)"
+            }
+        }
+    }
+
+    private enum SwipeDirection {
+        case left, right
+    }
 }
 
 // MARK: - EvidenceTokensSheet

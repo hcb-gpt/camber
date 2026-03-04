@@ -24,6 +24,11 @@ private enum CardTriageLearningLoopMetrics {
     }
 }
 
+enum TriageSurfaceMode: String, CaseIterable {
+    case contractor
+    case dev
+}
+
 /// A single triage card: one review_queue item enriched with display metadata.
 struct CardItem: Identifiable {
     let id: String          // review_queue ID
@@ -32,6 +37,7 @@ struct CardItem: Identifiable {
     let interactionId: String
     let contactName: String
     let eventDate: Date?
+    let humanSummary: String?
     let transcriptSegment: String
     let projectId: String?  // ai_guess_project_id
     let confidence: Double
@@ -39,6 +45,9 @@ struct CardItem: Identifiable {
     let reasonCodes: [String]
     let evidenceAnchors: [Anchor]
     let keywords: [String]
+    let modelId: String?
+    let promptVersion: String?
+    let contextCreatedAtUtc: String?
 
     init(
         id: String,
@@ -47,13 +56,17 @@ struct CardItem: Identifiable {
         interactionId: String,
         contactName: String,
         eventDate: Date?,
+        humanSummary: String?,
         transcriptSegment: String,
         projectId: String?,
         confidence: Double,
         candidates: [Candidate],
         reasonCodes: [String],
         evidenceAnchors: [Anchor],
-        keywords: [String]
+        keywords: [String],
+        modelId: String?,
+        promptVersion: String?,
+        contextCreatedAtUtc: String?
     ) {
         self.id = id
         self.queueId = queueId
@@ -61,6 +74,7 @@ struct CardItem: Identifiable {
         self.interactionId = interactionId
         self.contactName = contactName
         self.eventDate = eventDate
+        self.humanSummary = humanSummary
         self.transcriptSegment = transcriptSegment
         self.projectId = projectId
         self.confidence = confidence
@@ -68,17 +82,23 @@ struct CardItem: Identifiable {
         self.reasonCodes = reasonCodes
         self.evidenceAnchors = evidenceAnchors
         self.keywords = keywords
+        self.modelId = modelId
+        self.promptVersion = promptVersion
+        self.contextCreatedAtUtc = contextCreatedAtUtc
     }
 
     init(from item: ReviewItem) {
+        let trimmedHumanSummary = item.humanSummary?
+            .trimmingCharacters(in: .whitespacesAndNewlines)
         id = item.id
         queueId = item.id
         spanId = item.spanId
         interactionId = item.interactionId
         contactName = item.contactName ?? "Unknown"
         eventDate = item.sortDate == .distantPast ? nil : item.sortDate
+        humanSummary = (trimmedHumanSummary?.isEmpty == false) ? trimmedHumanSummary : nil
         transcriptSegment = item.transcriptSegment.isEmpty
-            ? (item.humanSummary ?? "No transcript available")
+            ? (humanSummary ?? "No transcript available")
             : item.transcriptSegment
         projectId = item.aiGuessProjectId
         confidence = item.confidence ?? 0
@@ -86,6 +106,9 @@ struct CardItem: Identifiable {
         reasonCodes = item.reasonCodes ?? item.reasons ?? []
         evidenceAnchors = item.contextPayload?.anchors ?? []
         keywords = item.contextPayload?.keywords ?? []
+        modelId = item.contextPayload?.modelId
+        promptVersion = item.contextPayload?.promptVersion
+        contextCreatedAtUtc = item.contextPayload?.createdAtUtc
     }
 }
 
@@ -223,6 +246,7 @@ final class CardTriageViewModel {
                         interactionId: "cll_smoke_truth_surface_v1",
                         contactName: "Smoke Test",
                         eventDate: Date().addingTimeInterval(-3600),
+                        humanSummary: "Caller confirmed Winship hardscape scope and timeline.",
                         transcriptSegment: "I want the Winship hardscape like we discussed last week.",
                         projectId: projectId,
                         confidence: 0.83,
@@ -238,7 +262,10 @@ final class CardTriageViewModel {
                                 candidateProjectId: projectId
                             )
                         ],
-                        keywords: ["winship", "hardscape"]
+                        keywords: ["winship", "hardscape"],
+                        modelId: "smoke-model-v1",
+                        promptVersion: "smoke-prompt-v1",
+                        contextCreatedAtUtc: ISO8601DateFormatter().string(from: Date())
                     )
                 ]
                 cardViewStartTime = Date()
@@ -681,6 +708,7 @@ private extension CardItem {
         self.interactionId = source.interactionId
         self.contactName = source.contactName
         self.eventDate = source.eventDate
+        self.humanSummary = source.humanSummary
         self.transcriptSegment = source.transcriptSegment
         self.projectId = source.projectId
         self.confidence = source.confidence
@@ -688,5 +716,8 @@ private extension CardItem {
         self.reasonCodes = source.reasonCodes
         self.evidenceAnchors = source.evidenceAnchors
         self.keywords = source.keywords
+        self.modelId = source.modelId
+        self.promptVersion = source.promptVersion
+        self.contextCreatedAtUtc = source.contextCreatedAtUtc
     }
 }
