@@ -53,12 +53,12 @@ function parseIsoDateMs(value: string | undefined): number | null {
 }
 
 function readEdgeContractEnv(env: Record<string, string | undefined>) {
-  // Prefer X_EDGE_SECRET naming (to reduce collisions with other subsystems),
-  // but keep EDGE_SHARED_SECRET as a backward-compatible fallback.
-  const currentSecret = String(env.X_EDGE_SECRET || env.EDGE_SHARED_SECRET || "").trim();
-  const nextSecret = String(env.X_EDGE_SECRET_NEXT || env.EDGE_SHARED_SECRET_NEXT || "").trim();
+  // Canonical server secret is EDGE_SHARED_SECRET. X_EDGE_SECRET exists as a local/dev alias
+  // (to avoid collisions with other subsystems when exporting credentials into shells).
+  const currentSecret = String(env.EDGE_SHARED_SECRET || env.X_EDGE_SECRET || "").trim();
+  const nextSecret = String(env.EDGE_SHARED_SECRET_NEXT || env.X_EDGE_SECRET_NEXT || "").trim();
   const nextExpiresAtUtc = String(
-    env.X_EDGE_SECRET_NEXT_EXPIRES_AT_UTC || env.EDGE_SHARED_SECRET_NEXT_EXPIRES_AT_UTC || "",
+    env.EDGE_SHARED_SECRET_NEXT_EXPIRES_AT_UTC || env.X_EDGE_SECRET_NEXT_EXPIRES_AT_UTC || "",
   ).trim();
 
   const legacyZapierIngest = String(env.ZAPIER_INGEST_SECRET || "").trim();
@@ -217,4 +217,3 @@ export function buildEdgeSecretHealthSnapshot(
     ...contract,
   };
 }
-
