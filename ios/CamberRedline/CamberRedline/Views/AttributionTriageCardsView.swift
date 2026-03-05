@@ -67,7 +67,6 @@ private extension Color {
 
 struct AttributionTriageCardsView: View {
     @State private var viewModel = CardTriageViewModel()
-    @State private var showProjectPicker = false
     @State private var pickerCard: CardItem?
     @State private var pickerMode: PickerMode = .project
     @State private var selectedProjectIdByCardId: [String: String] = [:]
@@ -79,7 +78,6 @@ struct AttributionTriageCardsView: View {
     @State private var escalateCard: CardItem?
     @State private var showAnalysisDrawer = false
     @State private var analysisCard: CardItem?
-    @State private var showEvidenceTokens = false
     @State private var evidenceCard: CardItem?
     @State private var showWriteRecoverySheet = false
     @State private var triageSurfaceAppearedAt: Date?
@@ -154,61 +152,58 @@ struct AttributionTriageCardsView: View {
                 didRunSmokeTriage = true
                 Task { await runSmokeSwipes() }
             }
-            .sheet(isPresented: $showProjectPicker) {
-                if let card = pickerCard {
-                    ProjectPickerSheet(
-                        card: card,
-                        projects: viewModel.projectOptions(for: card),
-                        recentProjects: viewModel.recentProjects(for: card),
-                        suggestedProject: viewModel.suggestedProject(for: card),
-                        onSelect: { projectId in
-                            viewModel.rememberProjectSelection(projectId)
-                            selectedProjectIdByCardId[card.id] = projectId
-                            recordFirstValidPickIfNeeded(card: card, projectId: projectId, source: "picker_select")
-                            let notes = pendingResolveNoteByCardId[card.id]
-                            let shouldResolveNow = pickerMode == .commentOnly
+            .sheet(item: $pickerCard) { card in
+                ProjectPickerSheet(
+                    card: card,
+                    projects: viewModel.projectOptions(for: card),
+                    recentProjects: viewModel.recentProjects(for: card),
+                    suggestedProject: viewModel.suggestedProject(for: card),
+                    onSelect: { projectId in
+                        viewModel.rememberProjectSelection(projectId)
+                        selectedProjectIdByCardId[card.id] = projectId
+                        recordFirstValidPickIfNeeded(card: card, projectId: projectId, source: "picker_select")
+                        let notes = pendingResolveNoteByCardId[card.id]
+                        let shouldResolveNow = pickerMode == .commentOnly
 
-                            pickerCard = nil
-                            pickerMode = .project
-                            showProjectPicker = false
+                        pickerCard = nil
+                        pickerMode = .project
 
-                            if shouldResolveNow {
-                                Task {
-                                    await viewModel.resolve(card, to: projectId, notes: notes)
-                                    if !viewModel.queue.contains(where: { $0.id == card.id }) {
-                                        selectedProjectIdByCardId[card.id] = nil
-                                        pendingResolveNoteByCardId[card.id] = nil
-                                    }
-                                }
-                            }
-                        },
-                        onDismissItem: {
+                        if shouldResolveNow {
                             Task {
-                                await viewModel.dismiss(card)
+                                await viewModel.resolve(card, to: projectId, notes: notes)
                                 if !viewModel.queue.contains(where: { $0.id == card.id }) {
                                     selectedProjectIdByCardId[card.id] = nil
                                     pendingResolveNoteByCardId[card.id] = nil
                                 }
                             }
-                        },
-                        onBizDevNoProject: {
-                            Task {
-                                await viewModel.dismiss(
-                                    card,
-                                    reason: "bizdev_no_project",
-                                    notes: "no_project_selected"
-                                )
-                                if !viewModel.queue.contains(where: { $0.id == card.id }) {
-                                    selectedProjectIdByCardId[card.id] = nil
-                                    pendingResolveNoteByCardId[card.id] = nil
-                                }
+                        }
+                    },
+                    onDismissItem: {
+                        Task {
+                            await viewModel.dismiss(card)
+                            if !viewModel.queue.contains(where: { $0.id == card.id }) {
+                                selectedProjectIdByCardId[card.id] = nil
+                                pendingResolveNoteByCardId[card.id] = nil
                             }
-                        },
-                        showsDismissAction: pickerMode != .commentOnly,
-                        writesLocked: viewModel.isAttributionWritesLocked,
-                        writesLockedBannerText: viewModel.attributionWritesLockedBannerText
-                    )
-                }
+                        }
+                    },
+                    onBizDevNoProject: {
+                        Task {
+                            await viewModel.dismiss(
+                                card,
+                                reason: "bizdev_no_project",
+                                notes: "no_project_selected"
+                            )
+                            if !viewModel.queue.contains(where: { $0.id == card.id }) {
+                                selectedProjectIdByCardId[card.id] = nil
+                                pendingResolveNoteByCardId[card.id] = nil
+                            }
+                        }
+                    },
+                    showsDismissAction: pickerMode != .commentOnly,
+                    writesLocked: viewModel.isAttributionWritesLocked,
+                    writesLockedBannerText: viewModel.attributionWritesLockedBannerText
+                )
             }
             .sheet(isPresented: $showCommentComposer) {
                 if let card = commentCard {
@@ -234,7 +229,6 @@ struct AttributionTriageCardsView: View {
                             } else {
                                 pickerMode = .commentOnly
                                 pickerCard = card
-                                showProjectPicker = true
                             }
                             commentCard = nil
                         }
@@ -267,10 +261,8 @@ struct AttributionTriageCardsView: View {
                     )
                 }
             }
-            .sheet(isPresented: $showEvidenceTokens) {
-                if let card = evidenceCard {
-                    EvidenceTokensSheet(card: card)
-                }
+            .sheet(item: $evidenceCard) { card in
+                EvidenceTokensSheet(card: card)
             }
             .sheet(isPresented: $showWriteRecoverySheet) {
                 WriteLockRecoverySheet {
@@ -406,7 +398,6 @@ struct AttributionTriageCardsView: View {
                     onOpenPicker: {
                         pickerMode = .project
                         pickerCard = card
-                        showProjectPicker = true
                     },
                     onUseSuggestedProject: { suggestedProjectId in
                         viewModel.rememberProjectSelection(suggestedProjectId)
@@ -415,7 +406,6 @@ struct AttributionTriageCardsView: View {
                     },
                     onTapEvidenceTokens: {
                         evidenceCard = card
-                        showEvidenceTokens = true
                     },
                     onSwipeUp: {
                         escalateCard = card
