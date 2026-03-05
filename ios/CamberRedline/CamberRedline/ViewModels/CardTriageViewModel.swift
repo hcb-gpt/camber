@@ -297,6 +297,9 @@ final class CardTriageViewModel {
             receipt: .init(queueId: card.queueId, requestId: nil)
         )
         undoDeadline = Date().addingTimeInterval(25)
+        CardTriageLearningLoopMetrics.log(
+            "KPI_EVENT UNDO_SHOWN surface=triage_cards queue=\(LearningLoopIdHash.short(card.queueId)) undo_of=resolve"
+        )
         startUndoTimer()
 
         do {
@@ -367,6 +370,9 @@ final class CardTriageViewModel {
             receipt: .init(queueId: card.queueId, requestId: nil)
         )
         undoDeadline = Date().addingTimeInterval(25)
+        CardTriageLearningLoopMetrics.log(
+            "KPI_EVENT UNDO_SHOWN surface=triage_cards queue=\(LearningLoopIdHash.short(card.queueId)) undo_of=dismiss"
+        )
         startUndoTimer()
 
         do {
@@ -441,6 +447,9 @@ final class CardTriageViewModel {
             receipt: .init(queueId: card.queueId, requestId: nil)
         )
         undoDeadline = Date().addingTimeInterval(25)
+        CardTriageLearningLoopMetrics.log(
+            "KPI_EVENT UNDO_SHOWN surface=triage_cards queue=\(LearningLoopIdHash.short(card.queueId)) undo_of=escalate"
+        )
         startUndoTimer()
 
         do {

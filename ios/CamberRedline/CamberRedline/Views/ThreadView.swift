@@ -651,6 +651,10 @@ struct ThreadView: View {
         let action = PendingUndoAction(kind: kind, reviewQueueId: reviewQueueId, spanId: spanId, createdAt: Date())
         pendingUndo = action
 
+        ThreadLearningLoopMetrics.log(
+            "KPI_EVENT UNDO_SHOWN surface=thread queue=\(LearningLoopIdHash.short(action.reviewQueueId)) undo_of=\(action.kind.rawValue) undo_id=\(LearningLoopIdHash.short(action.id.uuidString))"
+        )
+
         undoClearTask?.cancel()
         let actionId = action.id
         undoClearTask = Task { @MainActor in
