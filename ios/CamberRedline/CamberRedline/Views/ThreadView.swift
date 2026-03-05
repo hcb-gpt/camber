@@ -546,9 +546,7 @@ struct ThreadView: View {
                 )
                 if viewModel.isAttributionWritesLocked {
                     didLogThreadAuthLockVisible = true
-                    ThreadLearningLoopMetrics.log(
-                        "KPI_EVENT AUTH_LOCK_UI_DISABLED surface=thread queue_depth=\(displayGroups.count)"
-                    )
+                    logAuthLockUiDisabled(queueDepth: displayGroups.count)
                 }
 
                 hasScrolledToLatest = false
@@ -578,9 +576,7 @@ struct ThreadView: View {
             .onChange(of: viewModel.isAttributionWritesLocked) { _, isLocked in
                 if isLocked, !didLogThreadAuthLockVisible {
                     didLogThreadAuthLockVisible = true
-                    ThreadLearningLoopMetrics.log(
-                        "KPI_EVENT AUTH_LOCK_UI_DISABLED surface=thread queue_depth=\(displayGroups.count)"
-                    )
+                    logAuthLockUiDisabled(queueDepth: displayGroups.count)
                 } else if !isLocked {
                     didLogThreadAuthLockVisible = false
                 }
@@ -1258,6 +1254,17 @@ struct ThreadView: View {
             "KPI_EVENT PICK_TIME_SAMPLE surface=thread elapsed_ms=\(elapsedMs) queue=\(queueId) source=\(source)"
         )
         didRecordFirstThreadPick = true
+    }
+
+    private func logAuthLockUiDisabled(queueDepth: Int) {
+        let statusCode = viewModel.writeLockStatusCode.map(String.init) ?? "missing"
+        let errorCode = (viewModel.writeLockErrorCode ?? "missing").trimmingCharacters(in: .whitespacesAndNewlines)
+        let requestId = (viewModel.writeLockRequestId ?? "missing").trimmingCharacters(in: .whitespacesAndNewlines)
+        let functionVersion = (viewModel.writeLockFunctionVersion ?? "missing").trimmingCharacters(in: .whitespacesAndNewlines)
+
+        ThreadLearningLoopMetrics.log(
+            "KPI_EVENT AUTH_LOCK_UI_DISABLED surface=thread queue_depth=\(queueDepth) status_code=\(statusCode) error_code=\(errorCode) request_id=\(requestId) function_version=\(functionVersion)"
+        )
     }
 
     private func openNoteEditor(title: String, targets: [ThreadNoteTarget]) {

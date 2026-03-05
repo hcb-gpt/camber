@@ -126,17 +126,13 @@ struct AttributionTriageCardsView: View {
                 )
                 if viewModel.isAttributionWritesLocked {
                     didLogAuthLockVisible = true
-                    TriageLearningLoopMetrics.log(
-                        "KPI_EVENT AUTH_LOCK_UI_DISABLED surface=triage_cards queue_depth=\(viewModel.queue.count)"
-                    )
+                    logAuthLockUiDisabled()
                 }
             }
             .onChange(of: viewModel.isAttributionWritesLocked) { _, isLocked in
                 if isLocked, !didLogAuthLockVisible {
                     didLogAuthLockVisible = true
-                    TriageLearningLoopMetrics.log(
-                        "KPI_EVENT AUTH_LOCK_UI_DISABLED surface=triage_cards queue_depth=\(viewModel.queue.count)"
-                    )
+                    logAuthLockUiDisabled()
                 } else if !isLocked {
                     didLogAuthLockVisible = false
                 }
@@ -615,6 +611,17 @@ struct AttributionTriageCardsView: View {
             "KPI_EVENT PICK_TIME_SAMPLE surface=triage_cards elapsed_ms=\(elapsedMs) queue=\(card.queueId) card=\(card.id) source=\(source) had_ai_suggestion=\(aiSuggested) evidence_count=\(card.evidenceAnchors.count)"
         )
         didRecordFirstValidPick = true
+    }
+
+    private func logAuthLockUiDisabled() {
+        let statusCode = viewModel.writeLockStatusCode.map(String.init) ?? "missing"
+        let errorCode = (viewModel.writeLockErrorCode ?? "missing").trimmingCharacters(in: .whitespacesAndNewlines)
+        let requestId = (viewModel.writeLockRequestId ?? "missing").trimmingCharacters(in: .whitespacesAndNewlines)
+        let functionVersion = (viewModel.writeLockFunctionVersion ?? "missing").trimmingCharacters(in: .whitespacesAndNewlines)
+
+        TriageLearningLoopMetrics.log(
+            "KPI_EVENT AUTH_LOCK_UI_DISABLED surface=triage_cards queue_depth=\(viewModel.queue.count) status_code=\(statusCode) error_code=\(errorCode) request_id=\(requestId) function_version=\(functionVersion)"
+        )
     }
 
     private func runSmokeSwipes() async {

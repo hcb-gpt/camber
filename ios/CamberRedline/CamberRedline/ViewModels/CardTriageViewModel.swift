@@ -165,6 +165,22 @@ final class CardTriageViewModel {
         service.writeLockState != nil
     }
 
+    var writeLockStatusCode: Int? {
+        service.writeLockState?.statusCode
+    }
+
+    var writeLockErrorCode: String? {
+        service.writeLockState?.errorCode
+    }
+
+    var writeLockRequestId: String? {
+        service.writeLockState?.requestId
+    }
+
+    var writeLockFunctionVersion: String? {
+        service.writeLockState?.functionVersion
+    }
+
     var attributionWritesLockedBannerText: String? {
         service.writesLockedBannerText
     }
@@ -262,14 +278,14 @@ final class CardTriageViewModel {
 
     // MARK: - Actions
 
-    func resolve(_ card: CardItem, to projectId: String, notes: String? = nil) async {
-        if let banner = service.writesLockedBannerText {
-            CardTriageLearningLoopMetrics.log(
-                "KPI_EVENT AUTH_LOCK_BLOCKED surface=triage_cards action=resolve queue=\(card.queueId)"
-            )
-            error = banner
-            return
-        }
+	    func resolve(_ card: CardItem, to projectId: String, notes: String? = nil) async {
+	        if let banner = service.writesLockedBannerText {
+	            CardTriageLearningLoopMetrics.log(
+	                "KPI_EVENT AUTH_LOCK_BLOCKED surface=triage_cards action=resolve queue=\(card.queueId) \(writeLockMetaForKpi())"
+	            )
+	            error = banner
+	            return
+	        }
 
         let timeSpent = recordTimeSpent()
         guard let idx = queue.firstIndex(where: { $0.id == card.id }) else { return }
@@ -331,14 +347,14 @@ final class CardTriageViewModel {
         }
     }
 
-    func dismiss(_ card: CardItem, reason: String? = nil, notes: String? = nil) async {
-        if let banner = service.writesLockedBannerText {
-            CardTriageLearningLoopMetrics.log(
-                "KPI_EVENT AUTH_LOCK_BLOCKED surface=triage_cards action=dismiss queue=\(card.queueId)"
-            )
-            error = banner
-            return
-        }
+	    func dismiss(_ card: CardItem, reason: String? = nil, notes: String? = nil) async {
+	        if let banner = service.writesLockedBannerText {
+	            CardTriageLearningLoopMetrics.log(
+	                "KPI_EVENT AUTH_LOCK_BLOCKED surface=triage_cards action=dismiss queue=\(card.queueId) \(writeLockMetaForKpi())"
+	            )
+	            error = banner
+	            return
+	        }
 
         let timeSpent = recordTimeSpent()
         guard let idx = queue.firstIndex(where: { $0.id == card.id }) else { return }
@@ -403,14 +419,14 @@ final class CardTriageViewModel {
         await dismiss(card, reason: "undecided", notes: notes)
     }
 
-    func escalate(_ card: CardItem, reason: String) async {
-        if let banner = service.writesLockedBannerText {
-            CardTriageLearningLoopMetrics.log(
-                "KPI_EVENT AUTH_LOCK_BLOCKED surface=triage_cards action=escalate queue=\(card.queueId)"
-            )
-            error = banner
-            return
-        }
+	    func escalate(_ card: CardItem, reason: String) async {
+	        if let banner = service.writesLockedBannerText {
+	            CardTriageLearningLoopMetrics.log(
+	                "KPI_EVENT AUTH_LOCK_BLOCKED surface=triage_cards action=escalate queue=\(card.queueId) \(writeLockMetaForKpi())"
+	            )
+	            error = banner
+	            return
+	        }
 
         let timeSpent = recordTimeSpent()
         guard let idx = queue.firstIndex(where: { $0.id == card.id }) else { return }
@@ -524,24 +540,32 @@ final class CardTriageViewModel {
                 escalatedCount = max(0, escalatedCount - 1)
             }
             await loadQueue()
-        } catch {
-            if let banner = service.writesLockedBannerText {
-                CardTriageLearningLoopMetrics.log(
-                    "KPI_EVENT AUTH_LOCK_BLOCKED surface=triage_cards action=undo queue=\(action.queueId)"
-                )
-                self.error = banner
-            } else {
-                self.error = "Undo failed: \(error.localizedDescription)"
+	        } catch {
+	            if let banner = service.writesLockedBannerText {
+	                CardTriageLearningLoopMetrics.log(
+	                    "KPI_EVENT AUTH_LOCK_BLOCKED surface=triage_cards action=undo queue=\(action.queueId) \(writeLockMetaForKpi())"
+	                )
+	                self.error = banner
+	            } else {
+	                self.error = "Undo failed: \(error.localizedDescription)"
             }
         }
     }
 
-    // MARK: - Helpers
+	    // MARK: - Helpers
 
-    func projectName(for projectId: String?) -> String? {
-        guard let projectId else { return nil }
-        return projectNameById[projectId]
-    }
+	    private func writeLockMetaForKpi() -> String {
+	        let statusCode = service.writeLockState.map { String($0.statusCode) } ?? "missing"
+	        let errorCode = (service.writeLockState?.errorCode ?? "missing").trimmingCharacters(in: .whitespacesAndNewlines)
+	        let requestId = (service.writeLockState?.requestId ?? "missing").trimmingCharacters(in: .whitespacesAndNewlines)
+	        let functionVersion = (service.writeLockState?.functionVersion ?? "missing").trimmingCharacters(in: .whitespacesAndNewlines)
+	        return "status_code=\(statusCode) error_code=\(errorCode) request_id=\(requestId) function_version=\(functionVersion)"
+	    }
+
+	    func projectName(for projectId: String?) -> String? {
+	        guard let projectId else { return nil }
+	        return projectNameById[projectId]
+	    }
 
     func suggestedProject(for card: CardItem) -> ReviewProject? {
         guard let suggestedProjectId = card.projectId?.trimmingCharacters(in: .whitespacesAndNewlines),

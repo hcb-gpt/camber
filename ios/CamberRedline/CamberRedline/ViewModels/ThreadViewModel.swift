@@ -77,6 +77,22 @@ final class ThreadViewModel {
         bootstrapService.writeLockState != nil
     }
 
+    var writeLockStatusCode: Int? {
+        bootstrapService.writeLockState?.statusCode
+    }
+
+    var writeLockErrorCode: String? {
+        bootstrapService.writeLockState?.errorCode
+    }
+
+    var writeLockRequestId: String? {
+        bootstrapService.writeLockState?.requestId
+    }
+
+    var writeLockFunctionVersion: String? {
+        bootstrapService.writeLockState?.functionVersion
+    }
+
     var attributionWritesLockedBannerText: String? {
         bootstrapService.writesLockedBannerText
     }
@@ -481,13 +497,13 @@ final class ThreadViewModel {
         notes: String? = nil,
         reloadAfterResolve: Bool = true
     ) async -> Bool {
-        if let banner = bootstrapService.writesLockedBannerText {
-            ThreadLearningLoopMetrics.log(
-                "KPI_EVENT AUTH_LOCK_BLOCKED surface=thread action=resolve_single queue=\(reviewQueueId)"
-            )
-            showTransientError(banner, clearAfter: .seconds(4))
-            return false
-        }
+	        if let banner = bootstrapService.writesLockedBannerText {
+	            ThreadLearningLoopMetrics.log(
+	                "KPI_EVENT AUTH_LOCK_BLOCKED surface=thread action=resolve_single queue=\(reviewQueueId) \(writeLockMetaForKpi())"
+	            )
+	            showTransientError(banner, clearAfter: .seconds(4))
+	            return false
+	        }
 
         error = nil
         do {
@@ -516,13 +532,13 @@ final class ThreadViewModel {
 
     @discardableResult
     func resolveAttributions(reviewQueueIds: [String], projectId: String, notes: String? = nil) async -> Bool {
-        if let banner = bootstrapService.writesLockedBannerText {
-            ThreadLearningLoopMetrics.log(
-                "KPI_EVENT AUTH_LOCK_BLOCKED surface=thread action=resolve_bulk queue_count=\(reviewQueueIds.count)"
-            )
-            showTransientError(banner, clearAfter: .seconds(4))
-            return false
-        }
+	        if let banner = bootstrapService.writesLockedBannerText {
+	            ThreadLearningLoopMetrics.log(
+	                "KPI_EVENT AUTH_LOCK_BLOCKED surface=thread action=resolve_bulk queue_count=\(reviewQueueIds.count) \(writeLockMetaForKpi())"
+	            )
+	            showTransientError(banner, clearAfter: .seconds(4))
+	            return false
+	        }
 
         var seen = Set<String>()
         let uniqueQueueIds = reviewQueueIds.filter { seen.insert($0).inserted }
@@ -559,13 +575,13 @@ final class ThreadViewModel {
         notes: String? = nil,
         reloadAfterResolve: Bool = true
     ) async -> Bool {
-        if let banner = bootstrapService.writesLockedBannerText {
-            ThreadLearningLoopMetrics.log(
-                "KPI_EVENT AUTH_LOCK_BLOCKED surface=thread action=dismiss_single queue=\(reviewQueueId)"
-            )
-            showTransientError(banner, clearAfter: .seconds(4))
-            return false
-        }
+	        if let banner = bootstrapService.writesLockedBannerText {
+	            ThreadLearningLoopMetrics.log(
+	                "KPI_EVENT AUTH_LOCK_BLOCKED surface=thread action=dismiss_single queue=\(reviewQueueId) \(writeLockMetaForKpi())"
+	            )
+	            showTransientError(banner, clearAfter: .seconds(4))
+	            return false
+	        }
 
         error = nil
         do {
@@ -594,13 +610,13 @@ final class ThreadViewModel {
 
     @discardableResult
     func dismissAttributions(reviewQueueIds: [String], reason: String? = nil, notes: String? = nil) async -> Bool {
-        if let banner = bootstrapService.writesLockedBannerText {
-            ThreadLearningLoopMetrics.log(
-                "KPI_EVENT AUTH_LOCK_BLOCKED surface=thread action=dismiss_bulk queue_count=\(reviewQueueIds.count)"
-            )
-            showTransientError(banner, clearAfter: .seconds(4))
-            return false
-        }
+	        if let banner = bootstrapService.writesLockedBannerText {
+	            ThreadLearningLoopMetrics.log(
+	                "KPI_EVENT AUTH_LOCK_BLOCKED surface=thread action=dismiss_bulk queue_count=\(reviewQueueIds.count) \(writeLockMetaForKpi())"
+	            )
+	            showTransientError(banner, clearAfter: .seconds(4))
+	            return false
+	        }
 
         var seen = Set<String>()
         let uniqueQueueIds = reviewQueueIds.filter { seen.insert($0).inserted }
@@ -634,13 +650,13 @@ final class ThreadViewModel {
 
     @discardableResult
     func undoAttribution(reviewQueueId: String, reloadAfterUndo: Bool = true) async -> Bool {
-        if let banner = bootstrapService.writesLockedBannerText {
-            ThreadLearningLoopMetrics.log(
-                "KPI_EVENT AUTH_LOCK_BLOCKED surface=thread action=undo queue=\(reviewQueueId)"
-            )
-            showTransientError(banner, clearAfter: .seconds(4))
-            return false
-        }
+	        if let banner = bootstrapService.writesLockedBannerText {
+	            ThreadLearningLoopMetrics.log(
+	                "KPI_EVENT AUTH_LOCK_BLOCKED surface=thread action=undo queue=\(reviewQueueId) \(writeLockMetaForKpi())"
+	            )
+	            showTransientError(banner, clearAfter: .seconds(4))
+	            return false
+	        }
 
         error = nil
         do {
@@ -662,10 +678,10 @@ final class ThreadViewModel {
         }
     }
 
-    private func schedulePostResolveSync() {
-        postResolveRefreshTask?.cancel()
-        postResolveRefreshTask = Task { @MainActor [weak self] in
-            guard let self else { return }
+	    private func schedulePostResolveSync() {
+	        postResolveRefreshTask?.cancel()
+	        postResolveRefreshTask = Task { @MainActor [weak self] in
+	            guard let self else { return }
             do {
                 try await Task.sleep(for: .milliseconds(350))
             } catch {
@@ -676,12 +692,20 @@ final class ThreadViewModel {
             self.service.invalidateThreadCache(for: contactId)
             await self.loadThread(contactId: contactId)
             NotificationCenter.default.post(name: .redlineAttributionDidResolve, object: nil)
-        }
-    }
+	        }
+	    }
 
-    private func refreshReviewProjectsInBackgroundIfNeeded() {
-        let cacheAge = bootstrapService.reviewProjectsCacheAge() ?? .infinity
-        guard cacheAge >= 5 * 60 else { return }
+	    private func writeLockMetaForKpi() -> String {
+	        let statusCode = bootstrapService.writeLockState.map { String($0.statusCode) } ?? "missing"
+	        let errorCode = (bootstrapService.writeLockState?.errorCode ?? "missing").trimmingCharacters(in: .whitespacesAndNewlines)
+	        let requestId = (bootstrapService.writeLockState?.requestId ?? "missing").trimmingCharacters(in: .whitespacesAndNewlines)
+	        let functionVersion = (bootstrapService.writeLockState?.functionVersion ?? "missing").trimmingCharacters(in: .whitespacesAndNewlines)
+	        return "status_code=\(statusCode) error_code=\(errorCode) request_id=\(requestId) function_version=\(functionVersion)"
+	    }
+
+	    private func refreshReviewProjectsInBackgroundIfNeeded() {
+	        let cacheAge = bootstrapService.reviewProjectsCacheAge() ?? .infinity
+	        guard cacheAge >= 5 * 60 else { return }
 
         Task { @MainActor [weak self] in
             guard let self else { return }
