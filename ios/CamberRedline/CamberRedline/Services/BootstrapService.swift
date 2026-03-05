@@ -901,20 +901,6 @@ private struct EdgeFunctionErrorPayload: Decodable {
     }
 }
 
-private struct RecoveryProbePayload: Decodable {
-    let ok: Bool?
-    let error: String?
-    let errorCode: String?
-    let requestId: String?
-
-    enum CodingKeys: String, CodingKey {
-        case ok
-        case error
-        case errorCode = "error_code"
-        case requestId = "request_id"
-    }
-}
-
 struct BootstrapWriteLockState: Equatable {
     let statusCode: Int
     let errorCode: String?
