@@ -38,6 +38,7 @@ struct CardItem: Identifiable {
     let confidence: Double
     let candidates: [Candidate]
     let reasonCodes: [String]
+    let decision: String?
     let evidenceAnchors: [Anchor]
     let keywords: [String]
 
@@ -53,6 +54,7 @@ struct CardItem: Identifiable {
         confidence: Double,
         candidates: [Candidate],
         reasonCodes: [String],
+        decision: String?,
         evidenceAnchors: [Anchor],
         keywords: [String]
     ) {
@@ -67,6 +69,7 @@ struct CardItem: Identifiable {
         self.confidence = confidence
         self.candidates = candidates
         self.reasonCodes = reasonCodes
+        self.decision = decision
         self.evidenceAnchors = evidenceAnchors
         self.keywords = keywords
     }
@@ -85,6 +88,7 @@ struct CardItem: Identifiable {
         confidence = item.confidence ?? 0
         candidates = item.contextPayload?.candidates ?? []
         reasonCodes = item.reasonCodes ?? item.reasons ?? []
+        decision = item.decision
         evidenceAnchors = item.contextPayload?.anchors ?? []
         keywords = item.contextPayload?.keywords ?? []
     }
@@ -235,6 +239,7 @@ final class CardTriageViewModel {
                             Candidate(name: "Smoke — Truth Surface (v1)", projectId: projectId, evidenceTags: ["keyword"])
                         ],
                         reasonCodes: ["unknown_project"],
+                        decision: nil,
                         evidenceAnchors: [
                             Anchor(
                                 text: "Winship hardscape",
@@ -695,6 +700,7 @@ private extension CardItem {
         self.confidence = source.confidence
         self.candidates = source.candidates
         self.reasonCodes = source.reasonCodes
+        self.decision = source.decision
         self.evidenceAnchors = source.evidenceAnchors
         self.keywords = source.keywords
     }

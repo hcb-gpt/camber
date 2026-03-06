@@ -235,8 +235,16 @@ struct AttributionTriageCardsView: View {
             .sheet(isPresented: $showCommentComposer) {
                 if let card = commentCard {
                     TriageCommentSheet(
-                        card: card,
-                        suggestedProjectName: viewModel.projectName(for: card.projectId),
+                        resolveTargetName: resolveTargetName(for: card),
+                        initialNote: pendingResolveNoteByCardId[card.id],
+                        onEditTarget: { draftNote in
+                            let trimmed = draftNote.trimmingCharacters(in: .whitespacesAndNewlines)
+                            pendingResolveNoteByCardId[card.id] = trimmed.isEmpty ? nil : trimmed
+                            commentCard = nil
+                            pickerMode = .commentOnly
+                            pickerCard = card
+                            showProjectPicker = true
+                        },
                         onCancel: {
                             commentCard = nil
                         },
@@ -245,9 +253,9 @@ struct AttributionTriageCardsView: View {
                             let finalNote = trimmed.isEmpty ? nil : trimmed
                             pendingResolveNoteByCardId[card.id] = finalNote
 
-                            if let selectedProjectId = selectedProjectIdByCardId[card.id] {
+                            if let resolveTargetProjectId = resolveTargetProjectId(for: card) {
                                 Task {
-                                    await viewModel.resolve(card, to: selectedProjectId, notes: finalNote)
+                                    await viewModel.resolve(card, to: resolveTargetProjectId, notes: finalNote)
                                     if !viewModel.queue.contains(where: { $0.id == card.id }) {
                                         selectedProjectIdByCardId[card.id] = nil
                                         pendingResolveNoteByCardId[card.id] = nil
@@ -464,15 +472,15 @@ struct AttributionTriageCardsView: View {
     private var actionHints: some View {
         VStack(spacing: 6) {
             HStack(spacing: 0) {
-                Label("Wrong project", systemImage: "arrow.left")
+                Label("Swipe left picks", systemImage: "arrow.left")
                     .font(.caption)
                     .fontWeight(.semibold)
-                    .foregroundStyle(Color.noRed.opacity(0.7))
+                    .foregroundStyle(Color.commentBlue.opacity(0.8))
                 Spacer()
                 Label("Swipe right confirms", systemImage: "arrow.right")
                     .font(.caption)
                     .fontWeight(.semibold)
-                    .foregroundStyle(Color.commentBlue.opacity(0.8))
+                    .foregroundStyle(Color.yesGreen.opacity(0.8))
             }
             HStack(spacing: 0) {
                 Label("ESCALATE", systemImage: "arrow.up")
@@ -643,6 +651,27 @@ struct AttributionTriageCardsView: View {
             "KPI_EVENT PICK_TIME_SAMPLE surface=triage_cards elapsed_ms=\(elapsedMs) queue=\(LearningLoopIdHash.short(card.queueId)) card=\(LearningLoopIdHash.short(card.id)) source=\(source) had_ai_suggestion=\(aiSuggested) evidence_count=\(card.evidenceAnchors.count)"
         )
         didRecordFirstValidPick = true
+    }
+
+    private func resolveTargetProjectId(for card: CardItem) -> String? {
+        let selectedProjectId = selectedProjectIdByCardId[card.id]?.trimmingCharacters(in: .whitespacesAndNewlines)
+        if let selectedProjectId, !selectedProjectId.isEmpty {
+            return selectedProjectId
+        }
+
+        let suggestedProjectId = card.projectId?.trimmingCharacters(in: .whitespacesAndNewlines)
+        if let suggestedProjectId, !suggestedProjectId.isEmpty {
+            return suggestedProjectId
+        }
+
+        return nil
+    }
+
+    private func resolveTargetName(for card: CardItem) -> String? {
+        guard let projectId = resolveTargetProjectId(for: card) else { return nil }
+        return viewModel.projectName(for: projectId)
+            ?? card.candidates.first(where: { $0.projectId == projectId })?.name
+            ?? "Selected project"
     }
 
     private func runSmokeSwipes() async {
@@ -942,20 +971,14 @@ private struct SwipeableTriageCard: View {
             )
             .overlay(alignment: .topLeading) {
                 if offset.width < -40 {
-                    swipeLabel("WRONG", icon: "arrow.left.arrow.right", color: .noRed)
+                    swipeLabel("PICK", icon: "list.bullet", color: .commentBlue)
                         .padding(16)
                         .opacity(min(1, Double(-offset.width - 40) / 60))
                 }
             }
             .overlay(alignment: .topTrailing) {
-                if offset.width > 40 {
-                    Group {
-                        if confirmProjectId != nil {
-                            swipeLabel("CONFIRM", icon: "checkmark", color: .commentBlue)
-                        } else {
-                            swipeLabel("PICK", icon: "list.bullet", color: .commentBlue)
-                        }
-                    }
+                if offset.width > 40, confirmProjectId != nil {
+                    swipeLabel("CONFIRM", icon: "checkmark", color: .yesGreen)
                     .padding(16)
                     .opacity(min(1, Double(offset.width - 40) / 60))
                 }
@@ -998,6 +1021,10 @@ private struct SwipeableTriageCard: View {
 
             promptSection
 
+            if !isDeveloperSurface {
+                evidencePreviewSection
+            }
+
             // Transcript (tap to expand/collapse)
             Text(card.transcriptSegment)
                 .font(.subheadline)
@@ -1016,7 +1043,7 @@ private struct SwipeableTriageCard: View {
                 developerDiagnosticsRow
             }
 
-            // Evidence anchors remain dev-only.
+            // Full evidence anchors remain dev-only.
             if isDeveloperSurface, !card.evidenceAnchors.isEmpty {
                 evidenceSection
             }
@@ -1097,7 +1124,7 @@ private struct SwipeableTriageCard: View {
                         swipeAway(direction: .right, confirmProjectId: projectId)
                     } else {
                         snapBack()
-                        onOpenPicker(.autoConfirmSelection)
+                        activeAlert = .chooseProject
                     }
                 } else if value.translation.width < -horizontalSwipeThreshold,
                           abs(value.translation.width) >= abs(value.translation.height) {
@@ -1132,6 +1159,30 @@ private struct SwipeableTriageCard: View {
                     .foregroundStyle(.secondary)
             }
         }
+    }
+
+    private var evidencePreviewSection: some View {
+        HStack(alignment: .top, spacing: 8) {
+            Image(systemName: evidencePreviewIcon)
+                .font(.caption)
+                .foregroundStyle(evidencePreviewColor)
+                .padding(.top, 2)
+
+            VStack(alignment: .leading, spacing: 4) {
+                Text(evidencePreviewTitle)
+                    .font(.caption)
+                    .fontWeight(.semibold)
+                    .foregroundStyle(.white)
+                Text(evidencePreviewBody)
+                    .font(.caption2)
+                    .foregroundStyle(.secondary)
+                    .lineLimit(2)
+            }
+
+            Spacer(minLength: 0)
+        }
+        .padding(10)
+        .background(Color.chipBg.opacity(0.55), in: RoundedRectangle(cornerRadius: 10))
     }
 
     private var developerDiagnosticsRow: some View {
@@ -1191,7 +1242,7 @@ private struct SwipeableTriageCard: View {
                             handleChooseProjectTap()
                         }
                     } label: {
-                        Text(suggestedProjectId != nil ? "Wrong project" : "Choose project")
+                        Text(suggestedProjectId != nil ? "Pick another" : "Choose project")
                             .font(.caption)
                             .fontWeight(.semibold)
                             .padding(.horizontal, 10)
@@ -1368,23 +1419,84 @@ private struct SwipeableTriageCard: View {
         }
     }
 
+    @ViewBuilder
     private var confidenceBadge: some View {
-        let pct = Int(card.confidence * 100)
-        let color: Color = pct >= 70 ? .yesGreen : pct >= 40 ? .undoAmber : .noRed
-        return Text("\(pct)%")
+        if needsSplit {
+            Label("Split", systemImage: "scissors")
+                .font(.caption)
+                .fontWeight(.bold)
+                .foregroundStyle(Color.undoAmber)
+                .padding(.horizontal, 8)
+                .padding(.vertical, 4)
+                .background(Color.undoAmber.opacity(0.15), in: Capsule())
+        } else {
+            let pct = Int(card.confidence * 100)
+            let color = hasConfidenceWarning ? Color.undoAmber : (pct >= 70 ? .yesGreen : pct >= 40 ? .undoAmber : .noRed)
+            HStack(spacing: 4) {
+                Text("\(pct)%")
+                if hasConfidenceWarning {
+                    Image(systemName: "exclamationmark.triangle.fill")
+                        .font(.system(size: 10, weight: .bold))
+                }
+            }
             .font(.caption)
             .fontWeight(.bold)
             .foregroundStyle(color)
             .padding(.horizontal, 8)
             .padding(.vertical, 4)
             .background(color.opacity(0.15), in: Capsule())
+        }
     }
 
     private var evidenceTokenCount: Int { card.evidenceAnchors.count }
 
+    private var needsSplit: Bool {
+        if let decision = card.decision?.trimmingCharacters(in: .whitespacesAndNewlines).lowercased(),
+           decision == "needs_split" {
+            return true
+        }
+        return card.reasonCodes.contains { $0.lowercased() == "needs_split" }
+    }
+
+    private var hasConfidenceWarning: Bool {
+        card.confidence >= 0.7 && card.evidenceAnchors.isEmpty
+    }
+
     private var evidenceFreshnessText: String {
         guard let date = card.eventDate else { return "—" }
         return TriageRelativeTimeFormatter.string(from: date)
+    }
+
+    private var evidencePreviewIcon: String {
+        if needsSplit {
+            return "scissors"
+        }
+        return card.evidenceAnchors.isEmpty ? "exclamationmark.triangle" : "doc.text.magnifyingglass"
+    }
+
+    private var evidencePreviewColor: Color {
+        if needsSplit {
+            return .undoAmber
+        }
+        return card.evidenceAnchors.isEmpty ? .undoAmber : .commentBlue
+    }
+
+    private var evidencePreviewTitle: String {
+        if needsSplit {
+            return "Multiple projects detected"
+        }
+        return card.evidenceAnchors.isEmpty ? "No grounded evidence yet" : "Evidence"
+    }
+
+    private var evidencePreviewBody: String {
+        if needsSplit {
+            return "This card should be split before a confidence score is trusted."
+        }
+        if let preview = card.evidenceAnchors.first?.quote ?? card.evidenceAnchors.first?.text,
+           !preview.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+            return preview
+        }
+        return "Review the transcript and choose a project manually."
     }
 
     private var confirmBlockedMessage: String {
@@ -1423,8 +1535,8 @@ private struct SwipeableTriageCard: View {
     }
 
     private var swipeIndicatorColor: Color {
-        if offset.width > 40 { return Color.commentBlue.opacity(swipeIndicatorOpacity) }
-        if offset.width < -40 { return Color.noRed.opacity(swipeIndicatorOpacity) }
+        if offset.width > 40 { return Color.yesGreen.opacity(swipeIndicatorOpacity) }
+        if offset.width < -40 { return Color.commentBlue.opacity(swipeIndicatorOpacity) }
         if offset.height < -40 { return Color.escalateOrange.opacity(swipeIndicatorOpacity) }
         if offset.height > 40 { return Color.skipGray.opacity(swipeIndicatorOpacity) }
         return Color.cardStroke
@@ -1465,8 +1577,6 @@ private struct SwipeableTriageCard: View {
             case .right:
                 if let confirmProjectId {
                     onConfirm(confirmProjectId)
-                } else {
-                    onOpenPicker(.autoConfirmSelection)
                 }
             case .left:
                 onOpenPicker(.autoConfirmSelection)
@@ -1846,25 +1956,48 @@ private struct AnalysisDrawerSheet: View {
 private struct TriageCommentSheet: View {
     @Environment(\.dismiss) private var dismiss
 
-    let card: CardItem
-    let suggestedProjectName: String?
+    let resolveTargetName: String?
+    let onEditTarget: (String) -> Void
     let onCancel: () -> Void
     let onSubmit: (String) -> Void
 
     @State private var note = ""
 
+    init(
+        resolveTargetName: String?,
+        initialNote: String?,
+        onEditTarget: @escaping (String) -> Void,
+        onCancel: @escaping () -> Void,
+        onSubmit: @escaping (String) -> Void
+    ) {
+        self.resolveTargetName = resolveTargetName
+        self.onEditTarget = onEditTarget
+        self.onCancel = onCancel
+        self.onSubmit = onSubmit
+        _note = State(initialValue: initialNote ?? "")
+    }
+
     var body: some View {
         NavigationStack {
             Form {
-                if let suggestedProjectName {
-                    Section("Resolve Target") {
-                        Text(suggestedProjectName)
-                            .foregroundStyle(.white)
-                    }
-                } else {
-                    Section("Resolve Target") {
-                        Text("No AI guess. Pick project after comment.")
-                            .foregroundStyle(.secondary)
+                Section("Resolve Target") {
+                    Button {
+                        dismiss()
+                        onEditTarget(note)
+                    } label: {
+                        HStack {
+                            VStack(alignment: .leading, spacing: 2) {
+                                Text(resolveTargetName ?? "Pick project")
+                                    .foregroundStyle(.white)
+                                Text(resolveTargetName == nil ? "Choose the project before resolving." : "Tap to change this target.")
+                                    .font(.caption)
+                                    .foregroundStyle(.secondary)
+                            }
+                            Spacer()
+                            Image(systemName: "chevron.right")
+                                .font(.caption)
+                                .foregroundStyle(.secondary)
+                        }
                     }
                 }
                 Section("Comment") {
