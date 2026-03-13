@@ -2,10 +2,10 @@
  * operator-validation Edge Function v0.2.0
  *
  * Purpose:
- * - GET: Read spans from v_operator_span_why with existing feedback map (public)
+ * - GET: Read spans from v_operator_span_why with existing feedback map
  * - POST: Write verdict (CORRECT/INCORRECT/UNSURE) to attribution_validation_feedback (auth required)
  *
- * Auth: verify_jwt=false (gateway open). GET is public; POST requires Bearer JWT.
+ * Auth: verify_jwt=true at the gateway. GET and POST require Bearer JWT.
  */
 import "jsr:@supabase/functions-js/edge-runtime.d.ts";
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
@@ -58,7 +58,7 @@ Deno.serve(async (req: Request) => {
 
   const db = createClient(supabaseUrl, serviceRole);
 
-  // --- GET: fetch spans + feedback (public, no auth required) ---
+  // --- GET: fetch spans + feedback (gateway JWT required) ---
   if (req.method === "GET") {
     const auth = await tryAuth(req, supabaseUrl);
 

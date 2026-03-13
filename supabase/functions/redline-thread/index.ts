@@ -1723,9 +1723,9 @@ async function handleThread(
   // Parallel 1: Get interactions and probe for SMS
   const [interactionsRes, inboundProbeRes] = await Promise.all([
     timeDb("db_interactions_all", async () => {
-      let results: any[] = [];
-      let from = 0;
-      while (results.length < scanWindow) {
+      const pageCount = Math.ceil(scanWindow / queryPageSize);
+      const pagePromises = Array.from({ length: pageCount }).map(async (_, i) => {
+        const from = i * queryPageSize;
         const to = from + queryPageSize - 1;
         let query = db
           .from("interactions")
@@ -1750,11 +1750,11 @@ async function handleThread(
 
         const { data, error } = await query;
         if (error) throw error;
-        if (!data || data.length === 0) break;
-        results = results.concat(data);
-        if (data.length < queryPageSize) break;
-        from += queryPageSize;
-      }
+        return data || [];
+      });
+
+      const pages = await Promise.all(pagePromises);
+      const results = pages.flat();
       return results.slice(0, scanWindow);
     }),
     timeDb("db_sms_inbound_probe", () => {
@@ -1773,9 +1773,9 @@ async function handleThread(
   let allSmsMessages: any[] = [];
   if (hasInboundSms) {
     allSmsMessages = await timeDb("db_sms_messages_all", async () => {
-      let results: any[] = [];
-      let from = 0;
-      while (results.length < scanWindow) {
+      const pageCount = Math.ceil(scanWindow / queryPageSize);
+      const pagePromises = Array.from({ length: pageCount }).map(async (_, i) => {
+        const from = i * queryPageSize;
         const to = from + queryPageSize - 1;
         let query = db
           .from("sms_messages")
@@ -1785,13 +1785,14 @@ async function handleThread(
         if (contactPhoneVariants.length === 1) query = query.eq("contact_phone", contactPhoneVariants[0]);
         else if (contactPhoneVariants.length > 1) query = query.in("contact_phone", contactPhoneVariants);
         else query = query.eq("contact_phone", "__no_match__");
+        
         const { data, error } = await query;
         if (error) throw error;
-        if (!data || data.length === 0) break;
-        results = results.concat(data);
-        if (data.length < queryPageSize) break;
-        from += queryPageSize;
-      }
+        return data || [];
+      });
+
+      const pages = await Promise.all(pagePromises);
+      const results = pages.flat();
       return results.slice(0, scanWindow);
     });
   }

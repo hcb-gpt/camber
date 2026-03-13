@@ -1,2 +1,3 @@
-# verify_jwt = false: internal machine caller via X-Edge-Secret for digest fan-out
-verify_jwt = false
+# verify_jwt = true: gateway requires Bearer JWT for all routes; POST create still
+# uses X-Edge-Secret in-function for internal fan-out/auth proof.
+verify_jwt = true

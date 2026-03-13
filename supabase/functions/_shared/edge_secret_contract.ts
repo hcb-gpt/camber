@@ -52,11 +52,29 @@ function parseIsoDateMs(value: string | undefined): number | null {
   return Number.isFinite(ms) ? ms : null;
 }
 
-function readEdgeContractEnv(env: Record<string, string | undefined>) {
+export interface ResolvedEdgeSecretContractEnv {
+  currentSecret: string;
+  currentSecretSource: "EDGE_SHARED_SECRET" | "X_EDGE_SECRET" | null;
+  currentAliasMismatch: boolean;
+  nextSecret: string;
+  nextSecretSource: "EDGE_SHARED_SECRET_NEXT" | "X_EDGE_SECRET_NEXT" | null;
+  nextAliasMismatch: boolean;
+  nextExpiresAtUtc: string;
+  legacyZapierIngest: string;
+  legacyZapierSecret: string;
+}
+
+export function resolveEdgeSecretContractEnv(
+  env: Record<string, string | undefined> = Deno.env.toObject(),
+): ResolvedEdgeSecretContractEnv {
   // Canonical server secret is EDGE_SHARED_SECRET. X_EDGE_SECRET exists as a local/dev alias
   // (to avoid collisions with other subsystems when exporting credentials into shells).
-  const currentSecret = String(env.EDGE_SHARED_SECRET || env.X_EDGE_SECRET || "").trim();
-  const nextSecret = String(env.EDGE_SHARED_SECRET_NEXT || env.X_EDGE_SECRET_NEXT || "").trim();
+  const edgeSharedSecret = String(env.EDGE_SHARED_SECRET || "").trim();
+  const xEdgeSecret = String(env.X_EDGE_SECRET || "").trim();
+  const edgeSharedSecretNext = String(env.EDGE_SHARED_SECRET_NEXT || "").trim();
+  const xEdgeSecretNext = String(env.X_EDGE_SECRET_NEXT || "").trim();
+  const currentSecret = edgeSharedSecret || xEdgeSecret;
+  const nextSecret = edgeSharedSecretNext || xEdgeSecretNext;
   const nextExpiresAtUtc = String(
     env.EDGE_SHARED_SECRET_NEXT_EXPIRES_AT_UTC || env.X_EDGE_SECRET_NEXT_EXPIRES_AT_UTC || "",
   ).trim();
@@ -67,21 +85,51 @@ function readEdgeContractEnv(env: Record<string, string | undefined>) {
   return {
     currentSecret,
     nextSecret,
+    currentSecretSource: edgeSharedSecret.length > 0
+      ? "EDGE_SHARED_SECRET"
+      : xEdgeSecret.length > 0
+      ? "X_EDGE_SECRET"
+      : null,
+    currentAliasMismatch: edgeSharedSecret.length > 0 &&
+      xEdgeSecret.length > 0 &&
+      edgeSharedSecret !== xEdgeSecret,
+    nextSecretSource: edgeSharedSecretNext.length > 0
+      ? "EDGE_SHARED_SECRET_NEXT"
+      : xEdgeSecretNext.length > 0
+      ? "X_EDGE_SECRET_NEXT"
+      : null,
+    nextAliasMismatch: edgeSharedSecretNext.length > 0 &&
+      xEdgeSecretNext.length > 0 &&
+      edgeSharedSecretNext !== xEdgeSecretNext,
     nextExpiresAtUtc,
     legacyZapierIngest,
     legacyZapierSecret,
   };
 }
 
+export function resolveZapierLegacySecretCandidates(
+  env: Record<string, string | undefined> = Deno.env.toObject(),
+): string[] {
+  return Array.from(
+    new Set(
+      [
+        String(env.ZAPIER_INGEST_SECRET || "").trim(),
+        String(env.ZAPIER_SECRET || "").trim(),
+      ].filter((value) => value.length > 0),
+    ),
+  );
+}
+
 export function evaluateEdgeSecretContract(
   env: Record<string, string | undefined> = Deno.env.toObject(),
   nowMs = Date.now(),
 ): EdgeSecretContract {
-  const values = readEdgeContractEnv(env);
+  const values = resolveEdgeSecretContractEnv(env);
   const driftReasons: string[] = [];
 
   const currentSecretSet = values.currentSecret.length > 0;
   if (!currentSecretSet) driftReasons.push("current_secret_missing");
+  if (values.currentAliasMismatch) driftReasons.push("current_secret_alias_mismatch");
 
   const nextSecretSet = values.nextSecret.length > 0;
   const nextExpiresMs = parseIsoDateMs(values.nextExpiresAtUtc);
@@ -95,6 +143,7 @@ export function evaluateEdgeSecretContract(
 
   if (nextExpiryMissing) driftReasons.push("next_secret_expiry_missing");
   if (nextExpiryInvalid) driftReasons.push("next_secret_expiry_invalid");
+  if (values.nextAliasMismatch) driftReasons.push("next_secret_alias_mismatch");
   if (nextSecretSet && nextExpiresMs != null && nextExpiresMs <= nowMs) {
     driftReasons.push("next_secret_expired");
   }
@@ -128,7 +177,7 @@ export function authorizeEdgeSecretRequest(
   env: Record<string, string | undefined> = Deno.env.toObject(),
   nowMs = Date.now(),
 ): EdgeSecretAuthResult {
-  const values = readEdgeContractEnv(env);
+  const values = resolveEdgeSecretContractEnv(env);
   const contract = evaluateEdgeSecretContract(env, nowMs);
   const providedSecret = String(
     req.headers.get("X-Edge-Secret") || req.headers.get("x-edge-secret") || "",

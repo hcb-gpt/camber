@@ -1,13 +1,18 @@
 /**
- * sms-beside-batch-ingest Edge Function v1.3.1
+ * sms-beside-batch-ingest Edge Function v1.3.2
  * Zapier SMS batch webhook receiver for Beside VoIP SMS messages
  *
- * @version 1.3.1
- * @date 2026-03-03
+ * @version 1.3.2
+ * @date 2026-03-12
  * @purpose Receive batched SMS messages from Zapier Digest, insert into sms_messages table.
  *          The existing bridge_sms_message_to_surfaces trigger (v2) handles downstream
  *          writes to calls_raw and interactions with contact resolution.
  *
+ * @changelog v1.3.2
+ *   - Fail closed when the canonical edge-secret contract is missing.
+ *   - Resolve compatibility auth against the shared edge-secret contract so
+ *     EDGE_SHARED_SECRET stays canonical and X_EDGE_SECRET remains alias-only.
+ *   - Reuse both legacy Zapier secret env names during compatibility auth.
  * @changelog v1.3.1
  *   - Add auth compatibility window for Zapier secret/header drift:
  *     accepts X-Secret with current EDGE_SHARED_SECRET and legacy/previous
@@ -41,6 +46,7 @@
 import "jsr:@supabase/functions-js/edge-runtime.d.ts";
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
 import { authErrorResponse, requireEdgeSecret } from "../_shared/auth.ts";
+import { resolveEdgeSecretContractEnv, resolveZapierLegacySecretCandidates } from "../_shared/edge_secret_contract.ts";
 
 // ============================================================
 // TYPES
@@ -72,7 +78,7 @@ interface BatchPayload {
 // CONSTANTS
 // ============================================================
 
-const VERSION = "sms-beside-batch-ingest_v1.3.1";
+const VERSION = "sms-beside-batch-ingest_v1.3.2";
 const ALLOWED_SOURCES = ["zapier", "test", "edge"];
 const ZACK_INBOX_ID = "ibx_QT0G91CPXD7N1090RC2FQ1WXJ8";
 const ZACK_BESIDE_LINE = "+17066889158";
@@ -131,22 +137,32 @@ Deno.serve(async (req: Request) => {
   // ========================================
   // 1. AUTH — X-Edge-Secret + source allowlist
   // ========================================
+  const edgeSecretContract = resolveEdgeSecretContractEnv();
   const authResult = requireEdgeSecret(req, ALLOWED_SOURCES);
   if (!authResult.ok) {
+    if (authResult.error_code === "server_misconfigured") {
+      return authErrorResponse(authResult.error_code);
+    }
+
     // Compatibility window:
     // - accept legacy Zapier secret in X-Secret or X-Edge-Secret
     // - optionally accept previous rotated edge secret if configured
     // This keeps source allowlisting in place and avoids broad auth relaxation.
+    // Canonical secret resolution comes from the shared edge-secret contract so
+    // sms-beside-batch-ingest matches zapier-call-ingest on env precedence.
     const source = (req.headers.get("X-Source") || req.headers.get("source") || "").trim();
     const sourceAllowed = source.length > 0 && ALLOWED_SOURCES.includes(source);
     const incomingXEdgeSecret = req.headers.get("X-Edge-Secret") || req.headers.get("x-edge-secret") || "";
     const incomingXSecret = req.headers.get("X-Secret") || req.headers.get("x-secret") || "";
-    const currentEdgeSecret = (Deno.env.get("EDGE_SHARED_SECRET") || "").trim();
-    const legacyCandidates = [
-      (Deno.env.get("ZAPIER_INGEST_SECRET") || "").trim(),
-      (Deno.env.get("ZAPIER_SECRET") || "").trim(),
-      (Deno.env.get("EDGE_SHARED_SECRET_PREVIOUS") || "").trim(),
-    ].filter((s) => s.length > 0);
+    const currentEdgeSecret = edgeSecretContract.currentSecret;
+    const legacyCandidates = Array.from(
+      new Set(
+        [
+          ...resolveZapierLegacySecretCandidates(),
+          (Deno.env.get("EDGE_SHARED_SECRET_PREVIOUS") || "").trim(),
+        ].filter((s) => s.length > 0),
+      ),
+    );
 
     const matchesCandidate = (candidate: string): boolean => {
       return (
@@ -169,7 +185,9 @@ Deno.serve(async (req: Request) => {
     }
 
     console.warn(
-      `[sms-beside-batch-ingest] AUTH_COMPAT_ACCEPT source=${source} x_edge_secret_len=${incomingXEdgeSecret.length} x_secret_len=${incomingXSecret.length}`,
+      `[sms-beside-batch-ingest] AUTH_COMPAT_ACCEPT source=${source} x_edge_secret_len=${incomingXEdgeSecret.length} x_secret_len=${incomingXSecret.length} current_secret_source=${
+        edgeSecretContract.currentSecretSource || "unset"
+      } alias_drift=${edgeSecretContract.currentAliasMismatch ? 1 : 0}`,
     );
   }
 

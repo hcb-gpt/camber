@@ -13,3 +13,16 @@ Deno.test("zapier-call-ingest prevents Beside pre-auth bypass", () => {
     "Expected Beside calls_raw upsert to occur only after auth gate",
   );
 });
+
+Deno.test("zapier-call-ingest reuses shared legacy secret candidate resolution", () => {
+  const source = Deno.readTextFileSync(new URL("./index.ts", import.meta.url));
+
+  assert(
+    source.includes("resolveZapierLegacySecretCandidates"),
+    "Expected zapier-call-ingest to resolve legacy secret candidates via the shared auth contract",
+  );
+  assert(
+    source.includes("legacySecretCandidates.some"),
+    "Expected zapier-call-ingest to accept any configured legacy Zapier secret candidate",
+  );
+});

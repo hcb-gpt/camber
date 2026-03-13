@@ -1,11 +1,13 @@
 /**
- * zapier-call-ingest Edge Function v1.9.1
+ * zapier-call-ingest Edge Function v1.9.2
  *
  * Auth model (consolidated):
  * - Canonical: X-Edge-Secret === EDGE_SHARED_SECRET
- * - Transitional legacy fallback: X-Secret === ZAPIER_INGEST_SECRET|ZAPIER_SECRET
+ * - Transitional legacy fallback: X-Secret === any(ZAPIER_INGEST_SECRET, ZAPIER_SECRET)
  *
  * Forward: Calls process-call internally using SUPABASE_SERVICE_ROLE_KEY + X-Edge-Secret.
+ *
+ * v1.9.2: Accept both legacy Zapier secret env names during non-Beside compatibility auth.
  *
  * v1.9.0: Fix Go-style timestamp parsing from Beside. Beside sends timestamps like
  * "2026-02-27 18:54:37.777013 +0000 UTC" which Postgres can't parse (trailing " UTC").
@@ -22,14 +24,14 @@
  * v1.7.1: Fix beside auth bypass — move body parse + beside detection BEFORE auth gate.
  * v1.7.0: Recovered BESIDE_RAW_PASSTHROUGH from lost v1.6.0 deploy (Charter §10).
  *
- * @version 1.9.1
- * @date 2026-03-01
+ * @version 1.9.2
+ * @date 2026-03-12
  */
 import "jsr:@supabase/functions-js/edge-runtime.d.ts";
 import { createClient } from "jsr:@supabase/supabase-js@2";
-import { authorizeEdgeSecretRequest } from "../_shared/edge_secret_contract.ts";
+import { authorizeEdgeSecretRequest, resolveZapierLegacySecretCandidates } from "../_shared/edge_secret_contract.ts";
 
-const VERSION = "v1.9.1";
+const VERSION = "v1.9.2";
 
 function constantTimeEqual(a: string, b: string): boolean {
   if (a.length !== b.length) return false;
@@ -167,11 +169,11 @@ Deno.serve(async (req: Request) => {
   // ---- Auth materials (canonical + legacy) ----
   const incomingXEdgeSecret = req.headers.get("X-Edge-Secret") || "";
   const incomingXSecret = req.headers.get("X-Secret") || "";
-  const expectedLegacySecret = Deno.env.get("ZAPIER_INGEST_SECRET") || Deno.env.get("ZAPIER_SECRET") || "";
+  const legacySecretCandidates = resolveZapierLegacySecretCandidates();
 
   const authResult = authorizeEdgeSecretRequest(req);
   const canonicalValid = authResult.ok;
-  
+
   if (!authResult.ok && authResult.error_code === "edge_secret_missing" && authResult.status === 500) {
     await logDiagnostic("AUTH_CONFIG_MISSING", {
       expected: { edge_shared_secret_set: false },
@@ -182,9 +184,8 @@ Deno.serve(async (req: Request) => {
     );
   }
 
-  const legacyValid = expectedLegacySecret.length > 0 &&
-    incomingXSecret.length > 0 &&
-    constantTimeEqual(incomingXSecret, expectedLegacySecret);
+  const legacyValid = incomingXSecret.length > 0 &&
+    legacySecretCandidates.some((candidate) => constantTimeEqual(incomingXSecret, candidate));
 
   // ---- BESIDE_RAW_PASSTHROUGH: detect Beside-format and insert directly ----
   // SECURITY: Beside payloads must authenticate via canonical X-Edge-Secret only.
@@ -204,7 +205,7 @@ Deno.serve(async (req: Request) => {
         },
         expected: {
           edge_shared_secret_set: true,
-          zapier_legacy_secret_set: expectedLegacySecret.length > 0,
+          zapier_legacy_secret_candidates: legacySecretCandidates.length,
         },
       });
 

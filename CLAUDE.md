@@ -38,9 +38,14 @@ Boot activation (required before any non-test TRAM message):
 
 Write calls must carry `origin_session`, `origin_client`, `origin_platform` and a valid TRAM role field.
 
+## TRAM escalations (Charter refs)
+
+- Charter §9 auth escalation: if you hit auth failures (401/403) that disable work, escalate to STRAT immediately with concrete error details.
+- Charter §10 collision escalation: if two agents are working on the same resource, escalate the collision to STRAT to avoid duplicated/conflicting actions.
+- Charter §11 deploy ownership: deploy intent + deploy ownership must be single-owner; if unclear, stop and escalate so there is one owner.
+
 ## Repo pointers
 
 - Optional local devfix workspace.
 - Placement rules: `${workspace_root}/camber/MANIFEST.md`
 - Repo overview: `${workspace_root}/camber/README.md`
-

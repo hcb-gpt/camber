@@ -7,9 +7,9 @@
  *
  * Routes:
  * 1) POST /brief-serve                    (X-Edge-Secret required)
- * 2) GET  /brief-serve?id=<uuid>          (public read-proof page)
- * 3) POST /brief-serve?id=<uuid>&action=reviewed                (public action-proof)
- * 4) POST /brief-serve?id=<uuid>&action=complete_scheduler_item (public scheduler completion)
+ * 2) GET  /brief-serve?id=<uuid>          (authenticated read-proof page)
+ * 3) POST /brief-serve?id=<uuid>&action=reviewed                (authenticated action-proof)
+ * 4) POST /brief-serve?id=<uuid>&action=complete_scheduler_item (authenticated scheduler completion)
  */
 import "jsr:@supabase/functions-js/edge-runtime.d.ts";
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";

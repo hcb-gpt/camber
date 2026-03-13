@@ -5,7 +5,7 @@
  * The API key stays server-side — never sent to the browser.
  * Translates Anthropic SSE → OpenAI-compatible SSE so the client parser is unchanged.
  *
- * Auth: anon key (verify_jwt=false) + origin allowlist.
+ * Auth: gateway JWT (verify_jwt=true) + origin allowlist.
  * Streams SSE responses back to the client.
  */
 
