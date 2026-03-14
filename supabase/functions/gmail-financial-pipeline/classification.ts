@@ -42,6 +42,18 @@ export interface GmailFinanceClassification {
   financeRelevanceScore: number;
 }
 
+export interface ClassifierMetrics {
+  fallbackReviews: number;
+  httpFailures: number;
+  missingOpenAiKey: number;
+  networkFailures: number;
+  parseFailures: number;
+  retries: number;
+  successes: number;
+  timeouts: number;
+  attempts: number;
+}
+
 interface RawLlmClassification {
   decision?: string;
   decision_reason?: string;
@@ -129,6 +141,48 @@ const TAX_FORM_PATTERNS = [
   /\bw-9\b/i,
   /\btax form\b/i,
 ];
+
+const DEFAULT_CLASSIFIER_TIMEOUT_MS = 20_000;
+const DEFAULT_CLASSIFIER_MAX_ATTEMPTS = 3;
+const DEFAULT_CLASSIFIER_RETRY_BASE_MS = 400;
+
+export function createClassifierMetrics(): ClassifierMetrics {
+  return {
+    attempts: 0,
+    fallbackReviews: 0,
+    httpFailures: 0,
+    missingOpenAiKey: 0,
+    networkFailures: 0,
+    parseFailures: 0,
+    retries: 0,
+    successes: 0,
+    timeouts: 0,
+  };
+}
+
+function classifierTimeoutMs(): number {
+  const value = Number(Deno.env.get("GMAIL_FINANCIAL_CLASSIFIER_TIMEOUT_MS") || DEFAULT_CLASSIFIER_TIMEOUT_MS);
+  return Number.isFinite(value) && value > 0 ? value : DEFAULT_CLASSIFIER_TIMEOUT_MS;
+}
+
+function classifierMaxAttempts(): number {
+  const value = Number(Deno.env.get("GMAIL_FINANCIAL_CLASSIFIER_MAX_ATTEMPTS") || DEFAULT_CLASSIFIER_MAX_ATTEMPTS);
+  return Number.isFinite(value) && value >= 1 ? Math.floor(value) : DEFAULT_CLASSIFIER_MAX_ATTEMPTS;
+}
+
+function classifierRetryBaseMs(): number {
+  const value = Number(Deno.env.get("GMAIL_FINANCIAL_CLASSIFIER_RETRY_BASE_MS") || DEFAULT_CLASSIFIER_RETRY_BASE_MS);
+  return Number.isFinite(value) && value >= 0 ? Math.floor(value) : DEFAULT_CLASSIFIER_RETRY_BASE_MS;
+}
+
+async function sleep(ms: number): Promise<void> {
+  if (ms <= 0) return;
+  await new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+function isRetryableClassifierStatus(status: number): boolean {
+  return status === 429 || status >= 500;
+}
 
 function clampScore(value: unknown, fallback: number): number {
   const parsed = Number(value);
@@ -413,90 +467,139 @@ function buildPrompt(candidate: GmailFinanceCandidateInput): string {
 async function classifyCandidateWithLlm(
   candidate: GmailFinanceCandidateInput,
   warnings: string[],
+  metrics: ClassifierMetrics,
 ): Promise<GmailFinanceClassification | null> {
   const openaiKey = Deno.env.get("OPENAI_API_KEY");
   if (!openaiKey) {
+    metrics.missingOpenAiKey++;
     warnings.push("gmail_finance_classifier_missing_openai_key");
     return null;
   }
 
-  const controller = new AbortController();
-  const timeout = setTimeout(() => controller.abort(), 20_000);
-  try {
-    const response = await fetch("https://api.openai.com/v1/chat/completions", {
-      method: "POST",
-      signal: controller.signal,
-      headers: {
-        "Authorization": `Bearer ${openaiKey}`,
-        "Content-Type": "application/json",
-      },
-      body: JSON.stringify({
-        model: DEFAULT_MODEL,
-        temperature: 0,
-        max_tokens: 300,
-        response_format: { type: "json_object" },
-        messages: [
-          {
-            role: "system",
-            content:
-              "You classify Gmail finance candidates. Output strict JSON only. Be conservative: route uncertain messages to review and obvious operational/admin noise to reject.",
-          },
-          {
-            role: "user",
-            content: buildPrompt(candidate),
-          },
-        ],
-      }),
-    });
+  const maxAttempts = classifierMaxAttempts();
+  const retryBaseMs = classifierRetryBaseMs();
 
-    if (!response.ok) {
-      const errorText = await response.text().catch(() => "");
-      warnings.push(`gmail_finance_classifier_http_${response.status}:${errorText.slice(0, 120)}`);
+  for (let attempt = 1; attempt <= maxAttempts; attempt++) {
+    metrics.attempts++;
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), classifierTimeoutMs());
+    try {
+      const response = await fetch("https://api.openai.com/v1/chat/completions", {
+        method: "POST",
+        signal: controller.signal,
+        headers: {
+          "Authorization": `Bearer ${openaiKey}`,
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({
+          model: DEFAULT_MODEL,
+          temperature: 0,
+          max_tokens: 300,
+          response_format: { type: "json_object" },
+          messages: [
+            {
+              role: "system",
+              content:
+                "You classify Gmail finance candidates. Output strict JSON only. Be conservative: route uncertain messages to review and obvious operational/admin noise to reject.",
+            },
+            {
+              role: "user",
+              content: buildPrompt(candidate),
+            },
+          ],
+        }),
+      });
+
+      if (!response.ok) {
+        const errorText = await response.text().catch(() => "");
+        metrics.httpFailures++;
+        if (attempt < maxAttempts && isRetryableClassifierStatus(response.status)) {
+          metrics.retries++;
+          warnings.push(`gmail_finance_classifier_retry_http_${response.status}:attempt_${attempt}`);
+          await sleep(retryBaseMs * (2 ** (attempt - 1)));
+          continue;
+        }
+        warnings.push(`gmail_finance_classifier_http_${response.status}:${errorText.slice(0, 120)}`);
+        return null;
+      }
+
+      const json = await response.json().catch(() => null);
+      const rawContent = String(json?.choices?.[0]?.message?.content || "").trim();
+      if (!rawContent) {
+        warnings.push("gmail_finance_classifier_empty_response");
+        return null;
+      }
+
+      let parsed;
+      try {
+        parsed = parseLlmJson<RawLlmClassification>(rawContent);
+      } catch (error) {
+        metrics.parseFailures++;
+        warnings.push(`gmail_finance_classifier_parse_failed:${String((error as Error)?.message || error).slice(0, 120)}`);
+        return null;
+      }
+
+      const docType = normalizeDocType(parsed.value.doc_type);
+      const score = clampScore(parsed.value.finance_relevance_score, 0.5);
+      metrics.successes++;
+      return buildClassification(
+        candidate,
+        docType,
+        score,
+        String(parsed.value.decision_reason || "llm_classification"),
+        parsed.value.decision,
+        `${CLASSIFIER_VERSION}_llm`,
+        {
+          llm_model: DEFAULT_MODEL,
+          matched_class_hints: candidate.matchedClassHints,
+          matched_profiles: candidate.matchedProfileSlugs,
+          parse_mode: parsed.parseMode,
+          signals: Array.isArray(parsed.value.signals) ? parsed.value.signals : [],
+        },
+      );
+    } catch (error) {
+      const detail = String((error as Error)?.message || error).slice(0, 120);
+      const aborted = error instanceof DOMException && error.name === "AbortError";
+      if (aborted) {
+        metrics.timeouts++;
+        if (attempt < maxAttempts) {
+          metrics.retries++;
+          warnings.push(`gmail_finance_classifier_retry_timeout:attempt_${attempt}`);
+          await sleep(retryBaseMs * (2 ** (attempt - 1)));
+          continue;
+        }
+        warnings.push(`gmail_finance_classifier_timeout:${detail}`);
+        return null;
+      }
+
+      metrics.networkFailures++;
+      if (attempt < maxAttempts) {
+        metrics.retries++;
+        warnings.push(`gmail_finance_classifier_retry_network:attempt_${attempt}`);
+        await sleep(retryBaseMs * (2 ** (attempt - 1)));
+        continue;
+      }
+      warnings.push(`gmail_finance_classifier_error:${detail}`);
       return null;
+    } finally {
+      clearTimeout(timeout);
     }
-
-    const json = await response.json().catch(() => null);
-    const rawContent = String(json?.choices?.[0]?.message?.content || "").trim();
-    if (!rawContent) {
-      warnings.push("gmail_finance_classifier_empty_response");
-      return null;
-    }
-
-    const parsed = parseLlmJson<RawLlmClassification>(rawContent);
-    const docType = normalizeDocType(parsed.value.doc_type);
-    const score = clampScore(parsed.value.finance_relevance_score, 0.5);
-    return buildClassification(
-      candidate,
-      docType,
-      score,
-      String(parsed.value.decision_reason || "llm_classification"),
-      parsed.value.decision,
-      `${CLASSIFIER_VERSION}_llm`,
-      {
-        llm_model: DEFAULT_MODEL,
-        matched_class_hints: candidate.matchedClassHints,
-        matched_profiles: candidate.matchedProfileSlugs,
-        parse_mode: parsed.parseMode,
-        signals: Array.isArray(parsed.value.signals) ? parsed.value.signals : [],
-      },
-    );
-  } catch (error) {
-    warnings.push(`gmail_finance_classifier_error:${String((error as Error)?.message || error).slice(0, 120)}`);
-    return null;
-  } finally {
-    clearTimeout(timeout);
   }
+
+  return null;
 }
 
 export async function classifyCandidate(
   candidate: GmailFinanceCandidateInput,
   warnings: string[],
+  metrics: ClassifierMetrics = createClassifierMetrics(),
 ): Promise<GmailFinanceClassification> {
   const fastPath = classifyCandidateByRules(candidate);
   if (fastPath) return fastPath;
 
-  const llmResult = await classifyCandidateWithLlm(candidate, warnings);
+  const llmResult = await classifyCandidateWithLlm(candidate, warnings, metrics);
   if (llmResult) return llmResult;
+  metrics.fallbackReviews++;
 
   return buildClassification(
     candidate,

@@ -45,13 +45,18 @@ function base64UrlToBase64(value: string): string {
   return `${raw}${"=".repeat(padLength)}`;
 }
 
-function decodeBase64UrlUtf8(value: string): string {
+function decodeBase64UrlUtf8(value: string, warnings?: string[]): string {
   const normalized = base64UrlToBase64(value);
   if (!normalized) return "";
-  const binary = atob(normalized);
-  const bytes = new Uint8Array(binary.length);
-  for (let i = 0; i < binary.length; i++) bytes[i] = binary.charCodeAt(i);
-  return new TextDecoder().decode(bytes);
+  try {
+    const binary = atob(normalized);
+    const bytes = new Uint8Array(binary.length);
+    for (let i = 0; i < binary.length; i++) bytes[i] = binary.charCodeAt(i);
+    return new TextDecoder().decode(bytes);
+  } catch (error) {
+    warnings?.push(`base64_decode_failed:${String((error as Error)?.message || error).slice(0, 80)}`);
+    return "";
+  }
 }
 
 function stripHtml(value: string): string {
@@ -92,14 +97,27 @@ function parseDateCandidate(raw: string | null): string | null {
   const value = normalizeWhitespace(String(raw || ""));
   if (!value) return null;
 
+  const toIsoDate = (year: number, month: number, day: number): string | null => {
+    if (month < 1 || month > 12 || day < 1 || day > 31) return null;
+    const parsed = new Date(Date.UTC(year, month - 1, day));
+    if (
+      parsed.getUTCFullYear() !== year ||
+      parsed.getUTCMonth() + 1 !== month ||
+      parsed.getUTCDate() !== day
+    ) {
+      return null;
+    }
+    return `${String(year).padStart(4, "0")}-${String(month).padStart(2, "0")}-${String(day).padStart(2, "0")}`;
+  };
+
   const isoCandidate = value.match(/\b(20\d{2})-(\d{1,2})-(\d{1,2})\b/);
   if (isoCandidate) {
     const year = Number(isoCandidate[1]);
     const month = Number(isoCandidate[2]);
     const day = Number(isoCandidate[3]);
-    if (month >= 1 && month <= 12 && day >= 1 && day <= 31) {
-      return `${String(year).padStart(4, "0")}-${String(month).padStart(2, "0")}-${String(day).padStart(2, "0")}`;
-    }
+    const parsed = toIsoDate(year, month, day);
+    if (parsed) return parsed;
+    return null;
   }
 
   const slashCandidate = value.match(/\b(\d{1,2})\/(\d{1,2})\/(20\d{2}|\d{2})\b/);
@@ -107,9 +125,9 @@ function parseDateCandidate(raw: string | null): string | null {
     const month = Number(slashCandidate[1]);
     const day = Number(slashCandidate[2]);
     const year = slashCandidate[3].length === 2 ? Number(`20${slashCandidate[3]}`) : Number(slashCandidate[3]);
-    if (month >= 1 && month <= 12 && day >= 1 && day <= 31) {
-      return `${String(year).padStart(4, "0")}-${String(month).padStart(2, "0")}-${String(day).padStart(2, "0")}`;
-    }
+    const parsed = toIsoDate(year, month, day);
+    if (parsed) return parsed;
+    return null;
   }
 
   const longDate = Date.parse(value);
@@ -177,7 +195,7 @@ export function extractHeader(headers: unknown, name: string): string | null {
   return null;
 }
 
-export function decodeGmailMessageText(payload: unknown): string {
+export function decodeGmailMessageText(payload: unknown, warnings: string[] = []): string {
   const plainParts: string[] = [];
   const htmlParts: string[] = [];
 
@@ -190,7 +208,7 @@ export function decodeGmailMessageText(payload: unknown): string {
     const data = typeof body?.data === "string" ? body.data : "";
 
     if (data && !filename) {
-      const decoded = decodeBase64UrlUtf8(data);
+      const decoded = decodeBase64UrlUtf8(data, warnings);
       if (mimeType.startsWith("text/plain")) {
         plainParts.push(decoded);
       } else if (mimeType.startsWith("text/html")) {
@@ -264,7 +282,7 @@ export function extractVendor(
 
 export function extractAmount(text: string): ParsedAmount {
   const hay = String(text || "");
-  const moneyPattern = String.raw`(\(\s*\$?\s*[0-9][0-9,]*(?:\.\d{2})?\s*\)|-\s*\$?\s*[0-9][0-9,]*(?:\.\d{2})?|\$?\s*[0-9][0-9,]*(?:\.\d{2})?)`;
+  const moneyPattern = String.raw`(\(\s*(?:\$\s*[0-9][0-9,]*(?:\.\d{2})?|[0-9][0-9,]*\.\d{2})\s*\)|-\s*(?:\$\s*[0-9][0-9,]*(?:\.\d{2})?|[0-9][0-9,]*\.\d{2})|\$\s*[0-9][0-9,]*(?:\.\d{2})?|[0-9][0-9,]*\.\d{2})`;
   const contextualPatterns = [
     new RegExp(
       String.raw`\b(?:grand total|invoice total|total amount|total due|amount due|balance due|payment due|total)\b[\s:]*${moneyPattern}`,

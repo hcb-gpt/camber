@@ -48,6 +48,12 @@ Deno.test("extractAmount preserves accounting negative notation", () => {
   assertEquals(fallback.method, "largest_dollar_amount");
 });
 
+Deno.test("extractAmount ignores bare integers without currency markers or cents", () => {
+  const parsed = extractAmount("Invoice # 1042\n10 items shipped\nReference 9988");
+  assertEquals(parsed.total, null);
+  assertEquals(parsed.method, null);
+});
+
 Deno.test("extractReceiptRecord resolves vendor, amount, project, and invoice", () => {
   const record = extractReceiptRecord({
     aliasRows: ALIASES,
@@ -98,6 +104,30 @@ Deno.test("extractInvoiceOrTransaction does not capture the tail of invoice", ()
   );
 
   assertEquals(invoice, null);
+});
+
+Deno.test("decodeGmailMessageText tolerates malformed base64", () => {
+  const warnings: string[] = [];
+  const decoded = decodeGmailMessageText({
+    mimeType: "text/plain",
+    body: { data: "!!!not-base64!!!" },
+  }, warnings);
+
+  assertEquals(decoded, "");
+  assertEquals(warnings.length, 1);
+});
+
+Deno.test("extractReceiptRecord rejects impossible calendar dates", () => {
+  const record = extractReceiptRecord({
+    aliasRows: ALIASES,
+    bodyText: "Invoice Date: 2026-02-31\nAmount Due: $99.00\nWinship fixture charge",
+    fallbackIso: null,
+    fromHeader: '"Grounded Siteworks" <billing@groundedsiteworks.com>',
+    subject: "Invoice 9001 for Winship",
+    vendorHints: ["Grounded Siteworks"],
+  });
+
+  assertEquals(record.receipt_date, null);
 });
 
 Deno.test("extractReceiptRecord prefers the subject project over body alias drift", () => {

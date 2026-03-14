@@ -23,7 +23,11 @@ import {
   summarizeRetrievalCounts,
   summarizeTargets,
 } from "./search.ts";
-import { classifyCandidate, type GmailFinanceClassification } from "./classification.ts";
+import {
+  classifyCandidate,
+  createClassifierMetrics,
+  type GmailFinanceClassification,
+} from "./classification.ts";
 
 const FUNCTION_SLUG = "gmail-financial-pipeline";
 const FUNCTION_VERSION = "v1.0.0";
@@ -35,9 +39,12 @@ const DEFAULT_OVERLAP_DAYS = 2;
 const DEFAULT_PER_PROFILE_MAX_RESULTS = 50;
 const DEFAULT_PROFILE_SET = "finance_v1";
 const DEFAULT_RUN_MODE = "full";
+const HYDRATE_CONCURRENCY_LIMIT = 8;
 const MAX_CANDIDATE_LIMIT = 300;
 const MAX_MAX_TARGETS = 150;
 const MAX_PER_PROFILE_MAX_RESULTS = 100;
+const SHADOW_INTEGRITY_MARKER = "shadow_metrics_only_v2";
+const SHADOW_REMEDIATION_FUNCTION = "public.remediate_gmail_financial_shadow_state";
 const ALLOWED_SOURCES = [
   "cron",
   "gmail-financial-pipeline",
@@ -128,6 +135,12 @@ interface PipelineDeps {
   db?: any;
   gmailGetJson?: typeof gmailApiGetJson;
   resolveAccessToken?: typeof resolveGmailAccessToken;
+}
+
+interface HydrationMetrics {
+  concurrencyLimit: number;
+  decodeWarnings: number;
+  failedMessages: number;
 }
 
 function json(payload: unknown, status = 200): Response {
@@ -250,6 +263,82 @@ function responseForRun(runId: string, stats: RunStats, extra: Record<string, un
     stats,
     ...extra,
   });
+}
+
+function nextExtractionState(
+  currentState: string | null,
+  decision: string | null,
+): string {
+  if (currentState === "extracted") return "extracted";
+  if (decision === "accept_extract" || decision === "review") return "pending";
+  return "skipped";
+}
+
+function applyCandidateClassificationState(
+  candidate: CandidateWorkItem,
+  classification: GmailFinanceClassification,
+  classificationState: "classified" | "failed",
+): void {
+  candidate.classificationState = classificationState;
+  candidate.decision = classification.decision;
+  candidate.docType = classification.docType;
+  candidate.extractionState = nextExtractionState(candidate.extractionState, classification.decision);
+}
+
+function buildCandidateFailureClassification(reason: string): GmailFinanceClassification {
+  return {
+    classifierMeta: {
+      failure_mode: "candidate_exception",
+      failure_reason: reason,
+    },
+    classifierVersion: "gmail_finance_classifier_failure",
+    decision: "review",
+    decisionReason: "candidate_processing_failed",
+    docType: "unknown",
+    financeRelevanceScore: 0.45,
+  };
+}
+
+function noteClassificationCounts(
+  classification: GmailFinanceClassification,
+  stats: RunStats,
+  classificationCounts: Record<string, number>,
+  decisionCounts: Record<string, number>,
+): void {
+  stats.candidates_classified++;
+  incrementCount(classificationCounts, classification.docType);
+  incrementCount(decisionCounts, classification.decision);
+
+  if (classification.decision === "accept_extract") stats.candidates_accept_extract++;
+  if (classification.decision === "accept_non_extract") stats.candidates_accept_non_extract++;
+  if (classification.decision === "review") stats.candidates_review++;
+  if (classification.decision === "reject") stats.candidates_rejected++;
+}
+
+function shouldSkipClassificationInFullMode(candidate: CandidateWorkItem): boolean {
+  return candidate.classificationState === "classified" && !!candidate.decision;
+}
+
+async function mapWithConcurrency<T, R>(
+  items: T[],
+  concurrency: number,
+  worker: (item: T, index: number) => Promise<R>,
+): Promise<R[]> {
+  if (items.length === 0) return [];
+  const results = new Array<R>(items.length);
+  let cursor = 0;
+
+  const runWorker = async () => {
+    while (true) {
+      const index = cursor++;
+      if (index >= items.length) return;
+      results[index] = await worker(items[index], index);
+    }
+  };
+
+  const workers = Array.from({ length: Math.min(Math.max(1, concurrency), items.length) }, () => runWorker());
+  await Promise.all(workers);
+  return results;
 }
 
 async function loadAliasRows(db: any): Promise<AliasRow[]> {
@@ -505,70 +594,99 @@ async function hydrateListedMessages(args: {
   listedMessages: ListedCandidateMessage[];
   stats: RunStats;
   warnings: string[];
+  metrics: HydrationMetrics;
 }): Promise<{ candidates: CandidateWorkItem[]; maxInternalDateMs: number | null }> {
   const candidates: CandidateWorkItem[] = [];
   let maxInternalDateMs: number | null = null;
 
-  for (const listed of args.listedMessages) {
-    const msgResp = await args.gmailGetJson({
-      token: args.accessToken,
-      path: `messages/${encodeURIComponent(listed.id)}`,
-      params: {
-        fields: "id,threadId,internalDate,snippet,historyId," +
-          "payload(headers,mimeType,filename,body/data,body/attachmentId,body/size," +
-          "parts(partId,mimeType,filename,body/data,body/attachmentId,body/size,headers," +
-          "parts(partId,mimeType,filename,body/data,body/attachmentId,body/size,headers,parts)))",
-        format: "full",
-      },
-    });
+  const results = await mapWithConcurrency(args.listedMessages, args.metrics.concurrencyLimit, async (listed) => {
+    const localWarnings: string[] = [];
+    try {
+      const msgResp = await args.gmailGetJson({
+        token: args.accessToken,
+        path: `messages/${encodeURIComponent(listed.id)}`,
+        params: {
+          fields: "id,threadId,internalDate,snippet,historyId," +
+            "payload(headers,mimeType,filename,body/data,body/attachmentId,body/size," +
+            "parts(partId,mimeType,filename,body/data,body/attachmentId,body/size,headers," +
+            "parts(partId,mimeType,filename,body/data,body/attachmentId,body/size,headers,parts)))",
+          format: "full",
+        },
+      });
 
-    if (!msgResp.ok) {
-      args.stats.skipped_other++;
-      args.warnings.push(
-        msgResp.status > 0 ? `gmail_get_failed_http_${msgResp.status}` : "gmail_get_network_error",
-      );
-      continue;
+      if (!msgResp.ok) {
+        localWarnings.push(
+          msgResp.status > 0
+            ? `gmail_get_failed:${listed.id}:http_${msgResp.status}`
+            : `gmail_get_failed:${listed.id}:network`,
+        );
+        return { candidate: null, decodeWarnings: 0, examined: 0, internalDateMs: null, skippedOther: 1, warnings: localWarnings };
+      }
+
+      const message = normalizeBody(msgResp.json);
+      const payload = normalizeBody(message.payload);
+      const headers = safeArray<Record<string, unknown>>(payload.headers);
+      const subject = extractHeader(headers, "Subject");
+      const from = extractHeader(headers, "From");
+      const dateHeader = extractHeader(headers, "Date");
+      const snippet = String(message.snippet || "").replace(/\s+/g, " ").trim() || null;
+      const internalDateMs = Number(message.internalDate || 0);
+      const internalDateIso = Number.isFinite(internalDateMs) && internalDateMs > 0
+        ? new Date(internalDateMs).toISOString()
+        : safeIso(dateHeader);
+
+      const decodeWarnings: string[] = [];
+      const decodedBody = decodeGmailMessageText(payload, decodeWarnings);
+      for (const warning of decodeWarnings) {
+        localWarnings.push(`gmail_message_decode_warning:${listed.id}:${warning}`);
+      }
+      const bodyText = [snippet || "", decodedBody].filter(Boolean).join("\n\n");
+
+      return {
+        candidate: {
+          bodyExcerpt: truncate(bodyText, 5000) || null,
+          bodyText,
+          candidateId: null,
+          classificationState: null,
+          decision: null,
+          docType: null,
+          extractionReceiptId: null,
+          extractionState: null,
+          fromHeader: from,
+          internalDateIso,
+          matchedClassHints: uniqStrings(listed.class_hints),
+          matchedProfileSlugs: uniqStrings(listed.matched_profile_slugs),
+          matchedQueryFragments: uniqStrings(listed.query_fragments),
+          messageId: listed.id,
+          priority: listed.priority,
+          rawHeaders: headers,
+          snippet,
+          subject,
+          threadId: listed.threadId || (message.threadId ? String(message.threadId) : null),
+        },
+        decodeWarnings: decodeWarnings.length,
+        examined: 1,
+        internalDateMs: Number.isFinite(internalDateMs) && internalDateMs > 0 ? internalDateMs : null,
+        skippedOther: 0,
+        warnings: localWarnings,
+      };
+    } catch (error) {
+      localWarnings.push(`gmail_get_failed:${listed.id}:unexpected:${String((error as Error)?.message || error).slice(0, 80)}`);
+      return { candidate: null, decodeWarnings: 0, examined: 0, internalDateMs: null, skippedOther: 1, warnings: localWarnings };
     }
+  });
 
-    args.stats.messages_examined++;
-    const message = normalizeBody(msgResp.json);
-    const payload = normalizeBody(message.payload);
-    const headers = safeArray<Record<string, unknown>>(payload.headers);
-    const subject = extractHeader(headers, "Subject");
-    const from = extractHeader(headers, "From");
-    const dateHeader = extractHeader(headers, "Date");
-    const snippet = String(message.snippet || "").replace(/\s+/g, " ").trim() || null;
-    const internalDateMs = Number(message.internalDate || 0);
-    if (Number.isFinite(internalDateMs) && internalDateMs > 0) {
-      maxInternalDateMs = maxInternalDateMs === null ? internalDateMs : Math.max(maxInternalDateMs, internalDateMs);
+  for (const result of results) {
+    args.stats.messages_examined += result.examined;
+    args.stats.skipped_other += result.skippedOther;
+    args.metrics.decodeWarnings += result.decodeWarnings;
+    if (result.skippedOther > 0) args.metrics.failedMessages += result.skippedOther;
+    args.warnings.push(...result.warnings);
+
+    if (result.internalDateMs !== null) {
+      maxInternalDateMs = maxInternalDateMs === null ? result.internalDateMs : Math.max(maxInternalDateMs, result.internalDateMs);
     }
-
-    const internalDateIso = Number.isFinite(internalDateMs) && internalDateMs > 0
-      ? new Date(internalDateMs).toISOString()
-      : safeIso(dateHeader);
-    const bodyText = [snippet || "", decodeGmailMessageText(payload)].filter(Boolean).join("\n\n");
-
-    candidates.push({
-      bodyExcerpt: truncate(bodyText, 5000) || null,
-      bodyText,
-      candidateId: null,
-      classificationState: null,
-      decision: null,
-      docType: null,
-      extractionReceiptId: null,
-      extractionState: null,
-      fromHeader: from,
-      internalDateIso,
-      matchedClassHints: uniqStrings(listed.class_hints),
-      matchedProfileSlugs: uniqStrings(listed.matched_profile_slugs),
-      matchedQueryFragments: uniqStrings(listed.query_fragments),
-      messageId: listed.id,
-      priority: listed.priority,
-      rawHeaders: headers,
-      snippet,
-      subject,
-      threadId: listed.threadId || (message.threadId ? String(message.threadId) : null),
-    });
+    if (result.candidate) candidates.push(result.candidate);
   }
 
   return { candidates, maxInternalDateMs };
@@ -646,11 +764,7 @@ async function persistCandidateClassification(
 ): Promise<void> {
   if (!candidate.candidateId) return;
   const now = new Date().toISOString();
-  const nextExtractionState = candidate.extractionState === "extracted"
-    ? "extracted"
-    : classification.decision === "accept_extract" || classification.decision === "review"
-    ? "pending"
-    : "skipped";
+  const nextState = nextExtractionState(candidate.extractionState, classification.decision);
 
   const { error } = await db
     .from("gmail_financial_candidates")
@@ -661,7 +775,7 @@ async function persistCandidateClassification(
       decision: classification.decision,
       decision_reason: classification.decisionReason,
       doc_type: classification.docType,
-      extraction_state: nextExtractionState,
+      extraction_state: nextState,
       finance_relevance_score: classification.financeRelevanceScore,
       review_resolution: classification.decision === "review" ? null : classification.decision,
       review_resolved_at_utc: classification.decision === "review" ? null : now,
@@ -677,7 +791,44 @@ async function persistCandidateClassification(
   candidate.classificationState = "classified";
   candidate.decision = classification.decision;
   candidate.docType = classification.docType;
-  candidate.extractionState = nextExtractionState;
+  candidate.extractionState = nextState;
+}
+
+async function persistCandidateClassificationFailure(
+  db: any,
+  candidate: CandidateWorkItem,
+  classification: GmailFinanceClassification,
+  reason: string,
+): Promise<void> {
+  if (!candidate.candidateId) return;
+  const now = new Date().toISOString();
+
+  const { error } = await db
+    .from("gmail_financial_candidates")
+    .update({
+      classification_state: "failed",
+      classifier_meta: {
+        ...classification.classifierMeta,
+        failure_reason: reason,
+      },
+      classifier_version: classification.classifierVersion,
+      decision: classification.decision,
+      decision_reason: classification.decisionReason,
+      doc_type: classification.docType,
+      extraction_state: nextExtractionState(candidate.extractionState, classification.decision),
+      finance_relevance_score: classification.financeRelevanceScore,
+      review_resolution: null,
+      review_resolved_at_utc: null,
+      review_state: "pending",
+      updated_at: now,
+    })
+    .eq("id", candidate.candidateId);
+
+  if (error) {
+    throw new Error(`candidate_classification_failure_update_failed:${error.message}`);
+  }
+
+  applyCandidateClassificationState(candidate, classification, "failed");
 }
 
 async function persistCandidateExtraction(
@@ -801,6 +952,12 @@ export async function handleRequest(
     skipped_missing_vendor: 0,
     skipped_other: 0,
   };
+  const classifierMetrics = createClassifierMetrics();
+  const hydrationMetrics: HydrationMetrics = {
+    concurrencyLimit: HYDRATE_CONCURRENCY_LIMIT,
+    decodeWarnings: 0,
+    failedMessages: 0,
+  };
 
   if (legacySearchMode) warnings.push(`deprecated_search_mode_used:${legacySearchMode}`);
   if (mirrorLabels) warnings.push("mirror_labels_requested_but_gmail_scope_is_readonly");
@@ -809,7 +966,7 @@ export async function handleRequest(
     .from("gmail_financial_pipeline_runs")
     .select("finished_at_utc")
     .eq("pipeline_key", pipelineKey)
-    .in("status", ["ok", "partial", "dry_run"])
+    .in("status", ["ok", "partial"])
     .order("finished_at_utc", { ascending: false })
     .limit(1);
 
@@ -891,6 +1048,7 @@ export async function handleRequest(
         accessToken: access.token,
         gmailGetJson,
         listedMessages: listed.listedMessages,
+        metrics: hydrationMetrics,
         stats,
         warnings,
       });
@@ -958,33 +1116,49 @@ export async function handleRequest(
     if (doClassify) {
       for (const candidate of workCandidates) {
         if (!candidate.candidateId) continue;
-        if (runMode === "full" && candidate.extractionState === "extracted") continue;
-        const affinity = buildCandidateAffinitySignals(candidate, aliasRows, searchTargets);
+        if (runMode === "full" && shouldSkipClassificationInFullMode(candidate)) continue;
+        try {
+          const affinity = buildCandidateAffinitySignals(candidate, aliasRows, searchTargets);
+          const classification = await classifyCandidate({
+            bodyExcerpt: candidate.bodyExcerpt,
+            fromHeader: candidate.fromHeader,
+            matchedClassHints: candidate.matchedClassHints,
+            matchedProjectAliases: affinity.matchedProjectAliases,
+            matchedProjectIds: affinity.matchedProjectIds,
+            matchedProjectNames: affinity.matchedProjectNames,
+            matchedProfileSlugs: candidate.matchedProfileSlugs,
+            matchedTargetIds: affinity.matchedTargetIds,
+            matchedTargetTypes: affinity.matchedTargetTypes,
+            matchedVendorNames: affinity.matchedVendorNames,
+            snippet: candidate.snippet,
+            subject: candidate.subject,
+          }, warnings, classifierMetrics);
 
-        const classification = await classifyCandidate({
-          bodyExcerpt: candidate.bodyExcerpt,
-          fromHeader: candidate.fromHeader,
-          matchedClassHints: candidate.matchedClassHints,
-          matchedProjectAliases: affinity.matchedProjectAliases,
-          matchedProjectIds: affinity.matchedProjectIds,
-          matchedProjectNames: affinity.matchedProjectNames,
-          matchedProfileSlugs: candidate.matchedProfileSlugs,
-          matchedTargetIds: affinity.matchedTargetIds,
-          matchedTargetTypes: affinity.matchedTargetTypes,
-          matchedVendorNames: affinity.matchedVendorNames,
-          snippet: candidate.snippet,
-          subject: candidate.subject,
-        }, warnings);
-
-        await persistCandidateClassification(db, candidate, classification);
-        stats.candidates_classified++;
-        incrementCount(classificationCounts, classification.docType);
-        incrementCount(decisionCounts, classification.decision);
-
-        if (classification.decision === "accept_extract") stats.candidates_accept_extract++;
-        if (classification.decision === "accept_non_extract") stats.candidates_accept_non_extract++;
-        if (classification.decision === "review") stats.candidates_review++;
-        if (classification.decision === "reject") stats.candidates_rejected++;
+          if (dryRun) {
+            applyCandidateClassificationState(candidate, classification, "classified");
+          } else {
+            await persistCandidateClassification(db, candidate, classification);
+          }
+          noteClassificationCounts(classification, stats, classificationCounts, decisionCounts);
+        } catch (error) {
+          const detail = String((error as Error)?.message || error).slice(0, 160);
+          warnings.push(`candidate_classification_failed:${candidate.messageId}:${detail}`);
+          const failureClassification = buildCandidateFailureClassification(detail);
+          if (dryRun) {
+            applyCandidateClassificationState(candidate, failureClassification, "failed");
+          } else {
+            try {
+              await persistCandidateClassificationFailure(db, candidate, failureClassification, detail);
+            } catch (persistError) {
+              warnings.push(
+                `candidate_classification_failure_update_failed:${candidate.messageId}:${
+                  String((persistError as Error)?.message || persistError).slice(0, 160)
+                }`,
+              );
+            }
+          }
+          noteClassificationCounts(failureClassification, stats, classificationCounts, decisionCounts);
+        }
       }
     } else {
       for (const candidate of workCandidates) {
@@ -1001,139 +1175,171 @@ export async function handleRequest(
       );
 
       for (const candidate of extractableCandidates) {
-        const affinity = buildCandidateAffinitySignals(candidate, aliasRows, searchTargets);
-        const matchedTargets = affinity.matchedTargets;
-        const vendorHints = mergeVendorHints(KNOWN_VENDOR_HINTS, matchedTargets);
-        const receipt = applyTargetAffinity(
-          extractReceiptRecord({
-            aliasRows,
-            bodyText: candidate.bodyText || candidate.bodyExcerpt || candidate.snippet || "",
-            fallbackIso: candidate.internalDateIso,
-            fromHeader: candidate.fromHeader,
-            subject: candidate.subject,
-            vendorHints,
-          }),
-          matchedTargets,
-        );
+        try {
+          const affinity = buildCandidateAffinitySignals(candidate, aliasRows, searchTargets);
+          const matchedTargets = affinity.matchedTargets;
+          const vendorHints = mergeVendorHints(KNOWN_VENDOR_HINTS, matchedTargets);
+          const receipt = applyTargetAffinity(
+            extractReceiptRecord({
+              aliasRows,
+              bodyText: candidate.bodyText || candidate.bodyExcerpt || candidate.snippet || "",
+              fallbackIso: candidate.internalDateIso,
+              fromHeader: candidate.fromHeader,
+              subject: candidate.subject,
+              vendorHints,
+            }),
+            matchedTargets,
+          );
 
-        const evidenceLocator = candidate.threadId
-          ? `gmail:thread/${candidate.threadId}#msg=${candidate.messageId}`
-          : `gmail:msg/${candidate.messageId}`;
-        const vendorSource = receipt.reasons.find((reason) => reason.startsWith("vendor:"))?.split(":")[1] || null;
-        const amountSource = receipt.amount.method;
-        const extractionMeta = {
-          amount_method: receipt.amount.method,
-          amount_raw: receipt.amount.raw,
-          auth_mode: authMode,
-          classifier_decision: candidate.decision,
-          classifier_doc_type: candidate.docType,
-          function_slug: FUNCTION_SLUG,
-          function_version: FUNCTION_VERSION,
-          matched_class_hints: candidate.matchedClassHints,
-          matched_project_aliases: affinity.matchedProjectAliases,
-          matched_project_ids: affinity.matchedProjectIds,
-          matched_project_names: affinity.matchedProjectNames,
-          matched_profile_slugs: candidate.matchedProfileSlugs,
-          matched_query_fragments: candidate.matchedQueryFragments,
-          matched_target_ids: matchedTargets.map((target) => target.target_id),
-          matched_target_types: uniqStrings(matchedTargets.map((target) => target.target_type)),
-          matched_vendor_names: affinity.matchedVendorNames,
-          reasons: receipt.reasons,
-          retrieval_mode: "profile_registry",
-          target_affinity_used: affinity.matchedTargetIds.length > 0 || affinity.matchedProjectIds.length > 0,
-          vendor_source: vendorSource,
-          amount_source: amountSource,
-        };
+          const evidenceLocator = candidate.threadId
+            ? `gmail:thread/${candidate.threadId}#msg=${candidate.messageId}`
+            : `gmail:msg/${candidate.messageId}`;
+          const vendorSource = receipt.reasons.find((reason) => reason.startsWith("vendor:"))?.split(":")[1] || null;
+          const amountSource = receipt.amount.method;
+          const extractionMeta = {
+            amount_method: receipt.amount.method,
+            amount_raw: receipt.amount.raw,
+            auth_mode: authMode,
+            classifier_decision: candidate.decision,
+            classifier_doc_type: candidate.docType,
+            function_slug: FUNCTION_SLUG,
+            function_version: FUNCTION_VERSION,
+            matched_class_hints: candidate.matchedClassHints,
+            matched_project_aliases: affinity.matchedProjectAliases,
+            matched_project_ids: affinity.matchedProjectIds,
+            matched_project_names: affinity.matchedProjectNames,
+            matched_profile_slugs: candidate.matchedProfileSlugs,
+            matched_query_fragments: candidate.matchedQueryFragments,
+            matched_target_ids: matchedTargets.map((target) => target.target_id),
+            matched_target_types: uniqStrings(matchedTargets.map((target) => target.target_type)),
+            matched_vendor_names: affinity.matchedVendorNames,
+            reasons: receipt.reasons,
+            retrieval_mode: "profile_registry",
+            target_affinity_used: affinity.matchedTargetIds.length > 0 || affinity.matchedProjectIds.length > 0,
+            vendor_source: vendorSource,
+            amount_source: amountSource,
+          };
 
-        if (!receipt.vendor || !receipt.vendor_normalized) {
-          stats.skipped_missing_vendor++;
-          await persistCandidateExtraction(db, candidate.candidateId!, {
-            extraction_error: "missing_vendor",
+          if (!receipt.vendor || !receipt.vendor_normalized) {
+            stats.skipped_missing_vendor++;
+            if (!dryRun) {
+              await persistCandidateExtraction(db, candidate.candidateId!, {
+                extraction_error: "missing_vendor",
+                extraction_meta: extractionMeta,
+                extraction_state: "skipped",
+              });
+            }
+            continue;
+          }
+
+          if (receipt.amount.total === null) {
+            stats.skipped_missing_amount++;
+            if (!dryRun) {
+              await persistCandidateExtraction(db, candidate.candidateId!, {
+                extraction_error: "missing_amount",
+                extraction_meta: extractionMeta,
+                extraction_state: "skipped",
+              });
+            }
+            continue;
+          }
+
+          if (!receipt.receipt_date) {
+            stats.skipped_missing_date++;
+            if (!dryRun) {
+              await persistCandidateExtraction(db, candidate.candidateId!, {
+                extraction_error: "missing_date",
+                extraction_meta: extractionMeta,
+                extraction_state: "skipped",
+              });
+            }
+            continue;
+          }
+
+          const rpcPayload = {
+            body_excerpt: receipt.body_excerpt,
+            evidence_locator: evidenceLocator,
+            extraction_confidence: receipt.confidence,
             extraction_meta: extractionMeta,
-            extraction_state: "skipped",
-          });
-          continue;
-        }
+            gmail_label_id: null,
+            invoice_or_transaction: receipt.invoice_or_transaction,
+            job_name: receipt.job_name,
+            latest_gmail_internal_date: candidate.internalDateIso,
+            matched_project_alias: receipt.matched_project_alias,
+            project_id: receipt.project_id,
+            receipt_date: receipt.receipt_date,
+            sample_from: candidate.fromHeader,
+            sample_subject: candidate.subject,
+            source: "gmail_camber_scrape",
+            source_message_ids: [candidate.messageId],
+            source_thread_ids: candidate.threadId ? [candidate.threadId] : [],
+            total: receipt.amount.total,
+            vendor: receipt.vendor,
+            vendor_normalized: receipt.vendor_normalized,
+          };
 
-        if (receipt.amount.total === null) {
-          stats.skipped_missing_amount++;
+          if (dryRun) {
+            stats.receipts_inserted++;
+            continue;
+          }
+
+          const { data: upsertResult, error: upsertError } = await db.rpc("upsert_gmail_financial_receipt", {
+            p_receipt: rpcPayload,
+          });
+
+          if (upsertError) {
+            stats.skipped_other++;
+            warnings.push(`gmail_receipt_upsert_failed:${upsertError.message.slice(0, 120)}`);
+            await persistCandidateExtraction(db, candidate.candidateId!, {
+              extraction_error: upsertError.message.slice(0, 240),
+              extraction_meta: extractionMeta,
+              extraction_state: "failed",
+            });
+            continue;
+          }
+
+          const resultRow = safeArray<Record<string, unknown>>(upsertResult)[0] || {};
+          if (resultRow.is_duplicate === true) {
+            stats.duplicates_seen++;
+          } else {
+            stats.receipts_inserted++;
+          }
+
           await persistCandidateExtraction(db, candidate.candidateId!, {
-            extraction_error: "missing_amount",
-            extraction_meta: extractionMeta,
-            extraction_state: "skipped",
+            extracted_at_utc: new Date().toISOString(),
+            extraction_error: null,
+            extraction_meta: {
+              ...extractionMeta,
+              duplicate: resultRow.is_duplicate === true,
+            },
+            extraction_receipt_id: resultRow.receipt_id || null,
+            extraction_state: "extracted",
           });
-          continue;
-        }
-
-        if (!receipt.receipt_date) {
-          stats.skipped_missing_date++;
-          await persistCandidateExtraction(db, candidate.candidateId!, {
-            extraction_error: "missing_date",
-            extraction_meta: extractionMeta,
-            extraction_state: "skipped",
-          });
-          continue;
-        }
-
-        const rpcPayload = {
-          body_excerpt: receipt.body_excerpt,
-          evidence_locator: evidenceLocator,
-          extraction_confidence: receipt.confidence,
-          extraction_meta: extractionMeta,
-          gmail_label_id: null,
-          invoice_or_transaction: receipt.invoice_or_transaction,
-          job_name: receipt.job_name,
-          latest_gmail_internal_date: candidate.internalDateIso,
-          matched_project_alias: receipt.matched_project_alias,
-          project_id: receipt.project_id,
-          receipt_date: receipt.receipt_date,
-          sample_from: candidate.fromHeader,
-          sample_subject: candidate.subject,
-          source: "gmail_camber_scrape",
-          source_message_ids: [candidate.messageId],
-          source_thread_ids: candidate.threadId ? [candidate.threadId] : [],
-          total: receipt.amount.total,
-          vendor: receipt.vendor,
-          vendor_normalized: receipt.vendor_normalized,
-        };
-
-        if (dryRun) {
-          stats.receipts_inserted++;
-          continue;
-        }
-
-        const { data: upsertResult, error: upsertError } = await db.rpc("upsert_gmail_financial_receipt", {
-          p_receipt: rpcPayload,
-        });
-
-        if (upsertError) {
+        } catch (error) {
           stats.skipped_other++;
-          warnings.push(`gmail_receipt_upsert_failed:${upsertError.message.slice(0, 120)}`);
-          await persistCandidateExtraction(db, candidate.candidateId!, {
-            extraction_error: upsertError.message.slice(0, 240),
-            extraction_meta: extractionMeta,
-            extraction_state: "failed",
-          });
-          continue;
+          const detail = String((error as Error)?.message || error).slice(0, 160);
+          warnings.push(`candidate_extraction_failed:${candidate.messageId}:${detail}`);
+          if (!dryRun && candidate.candidateId) {
+            try {
+              await persistCandidateExtraction(db, candidate.candidateId, {
+                extraction_error: detail,
+                extraction_meta: {
+                  classifier_decision: candidate.decision,
+                  classifier_doc_type: candidate.docType,
+                  function_slug: FUNCTION_SLUG,
+                  function_version: FUNCTION_VERSION,
+                },
+                extraction_state: "failed",
+              });
+            } catch (persistError) {
+              warnings.push(
+                `candidate_extraction_failure_update_failed:${candidate.messageId}:${
+                  String((persistError as Error)?.message || persistError).slice(0, 160)
+                }`,
+              );
+            }
+          }
         }
-
-        const resultRow = safeArray<Record<string, unknown>>(upsertResult)[0] || {};
-        if (resultRow.is_duplicate === true) {
-          stats.duplicates_seen++;
-        } else {
-          stats.receipts_inserted++;
-        }
-
-        await persistCandidateExtraction(db, candidate.candidateId!, {
-          extracted_at_utc: new Date().toISOString(),
-          extraction_error: null,
-          extraction_meta: {
-            ...extractionMeta,
-            duplicate: resultRow.is_duplicate === true,
-          },
-          extraction_receipt_id: resultRow.receipt_id || null,
-          extraction_state: "extracted",
-        });
       }
     }
 
@@ -1144,6 +1350,7 @@ export async function handleRequest(
         classified: stats.candidates_classified,
         retrieved: stats.candidates_retrieved,
       },
+      classifier_metrics: classifierMetrics,
       classification_counts_by_doc_type: classificationCounts,
       decision_counts: decisionCounts,
       extraction_counts: {
@@ -1153,6 +1360,11 @@ export async function handleRequest(
         skipped_missing_date: stats.skipped_missing_date,
         skipped_missing_vendor: stats.skipped_missing_vendor,
         skipped_other: stats.skipped_other,
+      },
+      hydration_metrics: {
+        concurrency_limit: hydrationMetrics.concurrencyLimit,
+        decode_warning_count: hydrationMetrics.decodeWarnings,
+        failed_messages: hydrationMetrics.failedMessages,
       },
       legacy_search_mode: legacySearchMode,
       mailbox_scope: mailboxScope,
@@ -1179,6 +1391,12 @@ export async function handleRequest(
       run_mode: runMode,
       schedule_slug: scheduleSlug,
       search_targets_loaded: summarizeTargets(searchTargets, 20),
+      shadow_integrity: {
+        cursor_source_statuses: ["ok", "partial"],
+        dry_run_candidate_state: dryRun ? "ephemeral_only" : "persistent_live_mode",
+        remediation_function: SHADOW_REMEDIATION_FUNCTION,
+        shadow_integrity_marker: SHADOW_INTEGRITY_MARKER,
+      },
     };
 
     const finalStatus = dryRun ? "dry_run" : warnings.length > 0 ? "partial" : "ok";
@@ -1218,6 +1436,12 @@ export async function handleRequest(
         messages_examined: stats.messages_examined,
         messages_listed: stats.messages_listed,
         notes: {
+          classifier_metrics: classifierMetrics,
+          hydration_metrics: {
+            concurrency_limit: hydrationMetrics.concurrencyLimit,
+            decode_warning_count: hydrationMetrics.decodeWarnings,
+            failed_messages: hydrationMetrics.failedMessages,
+          },
           legacy_search_mode: legacySearchMode,
           mailbox_scope: mailboxScope,
           pipeline_key: pipelineKey,
@@ -1226,6 +1450,12 @@ export async function handleRequest(
           run_mode: runMode,
           schedule_slug: scheduleSlug,
           search_targets_loaded: summarizeTargets(searchTargets, 20),
+          shadow_integrity: {
+            cursor_source_statuses: ["ok", "partial"],
+            dry_run_candidate_state: dryRun ? "ephemeral_only" : "persistent_live_mode",
+            remediation_function: SHADOW_REMEDIATION_FUNCTION,
+            shadow_integrity_marker: SHADOW_INTEGRITY_MARKER,
+          },
         },
         receipts_inserted: stats.receipts_inserted,
         duplicates_seen: stats.duplicates_seen,

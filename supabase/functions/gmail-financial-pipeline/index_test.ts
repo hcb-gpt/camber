@@ -1,4 +1,4 @@
-import { assertEquals, assertExists } from "https://deno.land/std@0.208.0/assert/mod.ts";
+import { assertEquals, assertExists, assertStringIncludes } from "https://deno.land/std@0.208.0/assert/mod.ts";
 import { handleRequest } from "./index.ts";
 
 type Row = Record<string, unknown>;
@@ -874,5 +874,258 @@ Deno.test("handleRequest smoke test retrieve_only avoids extraction tables and p
     assertEquals(db.candidates.length, 1);
     assertEquals(db.receipts.length, 0);
     assertEquals((db.runs[0].gmail_result_estimate as number) >= 1, true);
+  });
+});
+
+Deno.test("handleRequest dry_run simulates classification and extraction without mutating candidate state", async () => {
+  await withEdgeSecretEnv(async () => {
+    const db = makeFullRunDb();
+
+    const response = await handleRequest(
+      makeRequest({
+        candidate_limit: 5,
+        dry_run: true,
+        profile_set: "finance_v1",
+        run_mode: "full",
+      }),
+      {
+        db,
+        gmailGetJson: ({ path }) =>
+          Promise.resolve(
+            path === "messages"
+              ? {
+                json: {
+                  messages: [{ id: "msg-dry-1", threadId: "thread-dry-1" }],
+                  resultSizeEstimate: 1,
+                },
+                ok: true,
+                status: 200,
+              }
+              : {
+                json: {
+                  id: "msg-dry-1",
+                  internalDate: String(Date.parse("2026-03-14T20:00:00.000Z")),
+                  payload: {
+                    body: {
+                      data: btoa(
+                        "Invoice Date: 03/13/2026\nInvoice # 7010\nAmount Due: $1,250.00\nWinship paving scope",
+                      ),
+                    },
+                    headers: [
+                      { name: "From", value: '"Grounded Siteworks" <billing@groundedsiteworks.com>' },
+                      { name: "Subject", value: "Invoice 7010 for Winship" },
+                    ],
+                    mimeType: "text/plain",
+                  },
+                  snippet: "Amount Due: $1,250.00",
+                  threadId: "thread-dry-1",
+                },
+                ok: true,
+                status: 200,
+              },
+          ),
+        resolveAccessToken: () => Promise.resolve({ authMode: "oauth_refresh_token", token: "gmail-token" }),
+      },
+    );
+
+    assertEquals(response.status, 200);
+    const json = await response.json();
+    assertEquals(json.status, "dry_run");
+    assertEquals(json.stats.receipts_inserted, 1);
+    assertEquals(db.receipts.length, 0);
+    assertEquals(db.candidates.length, 1);
+    assertEquals(db.candidates[0].classification_state, "pending");
+    assertEquals(db.candidates[0].decision, null);
+    assertEquals(db.candidates[0].extraction_state, "pending");
+    const notes = db.runs[0].notes as Row;
+    const shadowIntegrity = notes["shadow_integrity"] as Row;
+    assertEquals(shadowIntegrity["shadow_integrity_marker"], "shadow_metrics_only_v2");
+  });
+});
+
+Deno.test("handleRequest ignores dry_run runs when computing next cursor", async () => {
+  await withEdgeSecretEnv(async () => {
+    const db = makeFullRunDb();
+    db.runs = [
+      {
+        id: "run-ok-1",
+        finished_at_utc: "2026-03-10T00:00:00.000Z",
+        pipeline_key: "finance_v1",
+        status: "ok",
+      },
+      {
+        id: "run-dry-1",
+        finished_at_utc: "2026-03-13T00:00:00.000Z",
+        pipeline_key: "finance_v1",
+        status: "dry_run",
+      },
+    ];
+
+    const response = await handleRequest(
+      makeRequest({
+        overlap_days: 2,
+        profile_set: "finance_v1",
+        run_mode: "retrieve_only",
+      }),
+      {
+        db,
+        gmailGetJson: ({ path }) =>
+          Promise.resolve(
+            path === "messages"
+              ? {
+                json: {
+                  messages: [],
+                  resultSizeEstimate: 0,
+                },
+                ok: true,
+                status: 200,
+              }
+              : Promise.reject(new Error("unexpected_message_fetch")),
+          ),
+        resolveAccessToken: () => Promise.resolve({ authMode: "oauth_refresh_token", token: "gmail-token" }),
+      },
+    );
+
+    assertEquals(response.status, 200);
+    const insertedRun = db.runs.find((run) => run.id === "run-1");
+    assertEquals(insertedRun?.gmail_after_date, "2026-03-08");
+  });
+});
+
+Deno.test("handleRequest full mode skips reclassifying already-classified candidates", async () => {
+  await withEdgeSecretEnv(async () => {
+    const db = makeFullRunDb();
+    db.candidates = [{
+      body_excerpt: "Need review on this invoice thread",
+      classification_state: "classified",
+      decision: "review",
+      doc_type: "vendor_invoice",
+      extraction_receipt_id: null,
+      extraction_state: "pending",
+      from_header: '"Vendor" <billing@example.com>',
+      id: "candidate-existing-1",
+      internal_date: "2026-03-14T18:10:00.000Z",
+      matched_class_hints: ["vendor_invoice"],
+      matched_profile_slugs: ["broad_finance_candidate_net"],
+      matched_query_fragments: ["subject:invoice"],
+      message_id: "msg-existing-1",
+      raw_headers: [
+        { name: "From", value: '"Vendor" <billing@example.com>' },
+        { name: "Subject", value: "Need review" },
+      ],
+      snippet: "Need review",
+      subject: "Need review",
+      thread_id: "thread-existing-1",
+    }];
+
+    const response = await handleRequest(
+      makeRequest({
+        profile_set: "finance_v1",
+        run_mode: "full",
+      }),
+      {
+        db,
+        gmailGetJson: ({ path }) =>
+          Promise.resolve(
+            path === "messages"
+              ? {
+                json: {
+                  messages: [{ id: "msg-existing-1", threadId: "thread-existing-1" }],
+                  resultSizeEstimate: 1,
+                },
+                ok: true,
+                status: 200,
+              }
+              : {
+                json: {
+                  id: "msg-existing-1",
+                  internalDate: String(Date.parse("2026-03-14T18:10:00.000Z")),
+                  payload: {
+                    body: { data: btoa("Need review on this invoice thread") },
+                    headers: [
+                      { name: "From", value: '"Vendor" <billing@example.com>' },
+                      { name: "Subject", value: "Need review" },
+                    ],
+                    mimeType: "text/plain",
+                  },
+                  snippet: "Need review",
+                  threadId: "thread-existing-1",
+                },
+                ok: true,
+                status: 200,
+              },
+          ),
+        resolveAccessToken: () => Promise.resolve({ authMode: "oauth_refresh_token", token: "gmail-token" }),
+      },
+    );
+
+    assertEquals(response.status, 200);
+    const json = await response.json();
+    assertEquals(json.stats.candidates_classified, 0);
+    assertEquals(db.candidates[0].decision, "review");
+  });
+});
+
+Deno.test("handleRequest continues after one Gmail hydration failure", async () => {
+  await withEdgeSecretEnv(async () => {
+    const db = makeFullRunDb();
+
+    const response = await handleRequest(
+      makeRequest({
+        candidate_limit: 5,
+        profile_set: "finance_v1",
+        run_mode: "retrieve_only",
+      }),
+      {
+        db,
+        gmailGetJson: ({ path }) => {
+          if (path === "messages") {
+            return Promise.resolve({
+              json: {
+                messages: [
+                  { id: "msg-ok-1", threadId: "thread-ok-1" },
+                  { id: "msg-bad-1", threadId: "thread-bad-1" },
+                ],
+                resultSizeEstimate: 2,
+              },
+              ok: true,
+              status: 200,
+            });
+          }
+          if (path.endsWith("msg-bad-1")) {
+            return Promise.resolve({ json: null, ok: false, status: 500 });
+          }
+          return Promise.resolve({
+            json: {
+              id: "msg-ok-1",
+              internalDate: String(Date.parse("2026-03-14T19:00:00.000Z")),
+              payload: {
+                body: { data: btoa("Invoice Date: 03/13/2026\nInvoice # 9988\nAmount Due: $500.00") },
+                headers: [
+                  { name: "From", value: '"Vendor" <billing@example.com>' },
+                  { name: "Subject", value: "Invoice 9988" },
+                ],
+                mimeType: "text/plain",
+              },
+              snippet: "Amount Due: $500.00",
+              threadId: "thread-ok-1",
+            },
+            ok: true,
+            status: 200,
+          });
+        },
+        resolveAccessToken: () => Promise.resolve({ authMode: "oauth_refresh_token", token: "gmail-token" }),
+      },
+    );
+
+    assertEquals(response.status, 200);
+    const json = await response.json();
+    assertEquals(json.stats.messages_examined, 1);
+    assertEquals(json.stats.candidates_retrieved, 1);
+    assertEquals(db.candidates.length, 1);
+    assertStringIncludes(JSON.stringify(json.warnings), "gmail_get_failed:msg-bad-1:http_500");
+    const notes = db.runs[0].notes as Row;
+    const hydrationMetrics = notes["hydration_metrics"] as Row;
+    assertEquals(hydrationMetrics["failed_messages"], 1);
   });
 });
