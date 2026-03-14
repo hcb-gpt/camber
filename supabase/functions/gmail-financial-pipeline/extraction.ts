@@ -71,11 +71,21 @@ function stripHtml(value: string): string {
 }
 
 function parseMoney(raw: string | null): number | null {
-  const cleaned = String(raw || "").replace(/[^0-9.\-]/g, "");
-  if (!cleaned || !/^-?[0-9]+(\.[0-9]+)?$/.test(cleaned)) return null;
-  const parsed = Number(cleaned);
+  const normalized = normalizeWhitespace(String(raw || ""));
+  if (!normalized) return null;
+
+  const negativeByParens = /^\(\s*\$?.*\)$/.test(normalized);
+  const unsigned = normalized.replace(/[\s,$()]/g, "");
+  const negativeByMinus = unsigned.startsWith("-");
+  const magnitude = negativeByMinus ? unsigned.slice(1) : unsigned;
+
+  if (!magnitude || !/^[0-9]+(\.[0-9]+)?$/.test(magnitude)) return null;
+
+  const parsed = Number(magnitude);
   if (!Number.isFinite(parsed)) return null;
-  return Math.round(parsed * 100) / 100;
+
+  const signed = negativeByParens || negativeByMinus ? -parsed : parsed;
+  return Math.round(signed * 100) / 100;
 }
 
 function parseDateCandidate(raw: string | null): string | null {
@@ -254,9 +264,16 @@ export function extractVendor(
 
 export function extractAmount(text: string): ParsedAmount {
   const hay = String(text || "");
+  const moneyPattern = String.raw`(\(\s*\$?\s*[0-9][0-9,]*(?:\.\d{2})?\s*\)|-\s*\$?\s*[0-9][0-9,]*(?:\.\d{2})?|\$?\s*[0-9][0-9,]*(?:\.\d{2})?)`;
   const contextualPatterns = [
-    /\b(?:grand total|invoice total|total amount|total due|amount due|balance due|payment due|total)\b[\s:]*\$?\s*([0-9][0-9,]*(?:\.\d{2})?)/ig,
-    /\b(?:paid amount|amount)\b[\s:]*\$?\s*([0-9][0-9,]*(?:\.\d{2})?)/ig,
+    new RegExp(
+      String.raw`\b(?:grand total|invoice total|total amount|total due|amount due|balance due|payment due|total)\b[\s:]*${moneyPattern}`,
+      "ig",
+    ),
+    new RegExp(
+      String.raw`\b(?:paid amount|amount)\b[\s:]*${moneyPattern}`,
+      "ig",
+    ),
   ];
 
   for (const pattern of contextualPatterns) {
@@ -269,7 +286,7 @@ export function extractAmount(text: string): ParsedAmount {
     }
   }
 
-  const amountMatches = Array.from(hay.matchAll(/\$([0-9][0-9,]*(?:\.\d{2})?)/g))
+  const amountMatches = Array.from(hay.matchAll(new RegExp(moneyPattern, "g")))
     .map((match) => ({
       raw: match[1],
       total: parseMoney(match[1]),

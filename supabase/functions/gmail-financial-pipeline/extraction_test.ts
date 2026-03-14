@@ -38,6 +38,16 @@ Deno.test("extractAmount picks contextual total before other amounts", () => {
   assertEquals(parsed.method, "contextual_total");
 });
 
+Deno.test("extractAmount preserves accounting negative notation", () => {
+  const contextual = extractAmount("Credit Memo\nAmount Due: ($500.00)");
+  assertEquals(contextual.total, -500);
+  assertEquals(contextual.method, "contextual_total");
+
+  const fallback = extractAmount("Adjustment posted: ($125.50)");
+  assertEquals(fallback.total, -125.5);
+  assertEquals(fallback.method, "largest_dollar_amount");
+});
+
 Deno.test("extractReceiptRecord resolves vendor, amount, project, and invoice", () => {
   const record = extractReceiptRecord({
     aliasRows: ALIASES,
