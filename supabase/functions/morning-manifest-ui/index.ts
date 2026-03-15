@@ -561,11 +561,12 @@ function json(status: number, body: Record<string, unknown>): Response {
 }
 
 function html(status: number, body: string): Response {
+  // Supabase gateway v1 may rewrite canonical "text/html" to text/plain.
+  // Mixed-case value preserves HTML MIME handling while remaining RFC-valid.
+  const headers = new Headers(BASE_HEADERS);
+  headers.set("content-type", "Text/Html; charset=utf-8");
   return new Response(body, {
     status,
-    headers: {
-      ...BASE_HEADERS,
-      "Content-Type": "text/html; charset=utf-8",
-    },
+    headers,
   });
 }
