@@ -60,3 +60,4 @@ DerivedData/
 *.ipa
 *.dSYM.zip
 *.dSYM
+artifacts/**/app.log

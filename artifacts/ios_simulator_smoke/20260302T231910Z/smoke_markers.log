@@ -1,0 +1,4 @@
+2026-03-02 18:20:38.594 Df CamberRedline[57338:1571a58] [CamberRedline:smoke] SMOKE_EVENT THREAD_SWIPE_TARGET source=queue kind=correct queue=53249cf6-6f03-4110-879b-7a8feeaaa33b interaction=cll_SYNTH_SYNTH_STOPLINE_NO_PR_1772335634 span=021e7699-f007-446a-b007-74c103fb33ae
+2026-03-02 18:20:39.789 Df CamberRedline[57338:1571a58] [CamberRedline:smoke] SMOKE_EVENT THREAD_SWIPE_CORRECT ok=true queue=53249cf6-6f03-4110-879b-7a8feeaaa33b
+2026-03-02 18:20:40.691 Df CamberRedline[57338:1571a58] [CamberRedline:smoke] SMOKE_EVENT THREAD_SWIPE_UNDO queue=53249cf6-6f03-4110-879b-7a8feeaaa33b
+2026-03-02 18:20:41.384 Df CamberRedline[57338:1571a58] [CamberRedline:smoke] SMOKE_EVENT THREAD_SWIPE_UNDO_RESULT ok=true queue=53249cf6-6f03-4110-879b-7a8feeaaa33b

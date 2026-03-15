@@ -1,0 +1,15 @@
+bundle_id=com.heartwoodcustombuilders.CamberRedline
+device_udid=F27127D7-C087-4351-AF3A-7A57D1E1635C
+device_name=iPhone 17 Pro
+out_dir=/Users/chadbarlow/gh/hcb-gpt/_worktrees/camber-ios-proof/artifacts/ios_simulator_smoke/20260302T231910Z
+screens=/Users/chadbarlow/gh/hcb-gpt/_worktrees/camber-ios-proof/artifacts/ios_simulator_smoke/20260302T231910Z/screens
+video=/Users/chadbarlow/gh/hcb-gpt/_worktrees/camber-ios-proof/artifacts/ios_simulator_smoke/20260302T231910Z/session.mp4
+build_log=/Users/chadbarlow/gh/hcb-gpt/_worktrees/camber-ios-proof/artifacts/ios_simulator_smoke/20260302T231910Z/build.log
+app_log=/Users/chadbarlow/gh/hcb-gpt/_worktrees/camber-ios-proof/artifacts/ios_simulator_smoke/20260302T231910Z/app.log
+smoke_markers=/Users/chadbarlow/gh/hcb-gpt/_worktrees/camber-ios-proof/artifacts/ios_simulator_smoke/20260302T231910Z/smoke_markers.log
+launch_args=--smoke-thread-swipe
+edge_secret_present=1
+smoke_marker_pattern=SMOKE_EVENT THREAD_SWIPE_TARGET
+smoke_marker_seen=1
+smoke_marker_wait_seconds=9
+smoke_marker_first_line=2026-03-02 18:20:38.594 Df CamberRedline[57338:1571a58] [CamberRedline:smoke] SMOKE_EVENT THREAD_SWIPE_TARGET source=queue kind=correct queue=53249cf6-6f03-4110-879b-7a8feeaaa33b interaction=cll_SYNTH_SYNTH_STOPLINE_NO_PR_1772335634 span=021e7699-f007-446a-b007-74c103fb33ae
