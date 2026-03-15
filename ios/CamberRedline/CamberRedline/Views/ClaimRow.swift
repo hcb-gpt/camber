@@ -2,6 +2,8 @@ import SwiftUI
 
 struct ClaimRow: View {
     let claim: ClaimEntry
+    let writesLocked: Bool
+    let writesLockedBannerText: String?
     let onGrade: (GradeType, String?) -> Void
 
     @State private var showCorrectionSheet = false
@@ -46,6 +48,13 @@ struct ClaimRow: View {
                         .font(.caption2)
                         .foregroundStyle(.secondary)
                 }
+
+                if writesLocked, let writesLockedBannerText {
+                    Text(writesLockedBannerText)
+                        .font(.caption2)
+                        .foregroundStyle(.orange.opacity(0.9))
+                        .fixedSize(horizontal: false, vertical: true)
+                }
             }
         }
         // Dark card background (#1C1C1E) with horizontal insets for legibility
@@ -61,6 +70,7 @@ struct ClaimRow: View {
                 Label("Confirm", systemImage: "checkmark.circle")
             }
             .tint(.green)
+            .disabled(writesLocked)
         }
         .swipeActions(edge: .trailing) {
             Button {
@@ -69,6 +79,7 @@ struct ClaimRow: View {
                 Label("Reject", systemImage: "xmark.circle")
             }
             .tint(.red)
+            .disabled(writesLocked)
 
             Button {
                 showCorrectionSheet = true
@@ -76,6 +87,7 @@ struct ClaimRow: View {
                 Label("Correct", systemImage: "pencil.circle")
             }
             .tint(.orange)
+            .disabled(writesLocked)
         }
         .contextMenu {
             Button {
@@ -83,19 +95,24 @@ struct ClaimRow: View {
             } label: {
                 Label("Confirm", systemImage: "checkmark.circle")
             }
+            .disabled(writesLocked)
 
             Button(role: .destructive) {
                 onGrade(.reject, nil)
             } label: {
                 Label("Reject", systemImage: "xmark.circle")
             }
+            .disabled(writesLocked)
 
             Button {
                 showCorrectionSheet = true
             } label: {
                 Label("Correct", systemImage: "pencil.circle")
             }
+            .disabled(writesLocked)
         }
+        .allowsHitTesting(!writesLocked)
+        .opacity(writesLocked ? 0.65 : 1)
         .sheet(isPresented: $showCorrectionSheet) {
             CorrectionSheet { correctionText in
                 onGrade(.correct, correctionText)

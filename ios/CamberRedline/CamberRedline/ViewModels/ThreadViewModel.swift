@@ -443,6 +443,14 @@ final class ThreadViewModel {
         grade: GradeType,
         correctionText: String? = nil
     ) async {
+        if let banner = bootstrapService.writesLockedBannerText {
+            ThreadLearningLoopMetrics.log(
+                "KPI_EVENT AUTH_LOCK_BLOCKED surface=thread action=grade_claim claim=\(claimId.uuidString.lowercased())"
+            )
+            showTransientError(banner, clearAfter: .seconds(4))
+            return
+        }
+
         guard let contactId = currentContact?.contactId else {
             error = "No contact selected"
             return
@@ -457,6 +465,24 @@ final class ThreadViewModel {
                 gradedBy: "ios_reviewer"
             )
             await loadThread(contactId: contactId)
+        } catch let serviceError as ServiceError {
+            switch serviceError {
+            case .authLock(let statusCode, let requestId, let errorCode, let functionVersion, let message):
+                bootstrapService.registerWriteLock(
+                    statusCode: statusCode,
+                    requestId: requestId,
+                    errorCode: errorCode,
+                    functionVersion: functionVersion,
+                    message: message
+                )
+                showTransientError(
+                    bootstrapService.writesLockedBannerText
+                        ?? "Writes temporarily locked. Truth surface remains readable.",
+                    clearAfter: .seconds(4)
+                )
+            default:
+                self.error = serviceError.localizedDescription
+            }
         } catch {
             self.error = error.localizedDescription
         }

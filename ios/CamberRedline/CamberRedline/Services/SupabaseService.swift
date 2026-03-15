@@ -298,7 +298,34 @@ final class SupabaseService {
         request.httpBody = try JSONEncoder().encode(body)
 
         let (data, response) = try await URLSession.shared.data(for: request)
-        try validateHTTPResponse(response)
+        guard let http = response as? HTTPURLResponse else {
+            throw ServiceError.invalidResponse
+        }
+
+        if !(200...299).contains(http.statusCode) {
+            let requestId = http.value(forHTTPHeaderField: "x-request-id")
+                ?? http.value(forHTTPHeaderField: "sb-request-id")
+            let payload = try? JSONDecoder().decode(BootstrapErrorPayload.self, from: data)
+
+            if [401, 403].contains(http.statusCode) {
+                throw ServiceError.authLock(
+                    statusCode: http.statusCode,
+                    requestId: requestId,
+                    errorCode: payload?.errorCode,
+                    functionVersion: payload?.functionVersion,
+                    message: payload?.error
+                )
+            }
+
+            if let error = payload?.error, !error.isEmpty {
+                if let requestId, !requestId.isEmpty {
+                    throw ServiceError.apiError("\(error) (request_id: \(requestId))")
+                }
+                throw ServiceError.apiError(error)
+            }
+
+            throw ServiceError.httpError(statusCode: http.statusCode)
+        }
 
         if let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
            let ok = json["ok"] as? Bool, !ok
@@ -665,6 +692,7 @@ enum ServiceError: LocalizedError {
     case invalidURL
     case invalidResponse
     case httpError(statusCode: Int)
+    case authLock(statusCode: Int, requestId: String?, errorCode: String?, functionVersion: String?, message: String?)
     case apiError(String)
 
     var errorDescription: String? {
@@ -677,9 +705,36 @@ enum ServiceError: LocalizedError {
             return "Invalid response from server."
         case .httpError(let code):
             return "HTTP error \(code)."
+        case .authLock(_, let requestId, _, let functionVersion, let message):
+            var copy = message?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+            if copy.isEmpty {
+                copy = "Writes temporarily locked. Truth surface remains readable."
+            }
+            if !copy.contains("Truth surface remains readable") {
+                copy += " Truth surface remains readable."
+            }
+            if let functionVersion, !functionVersion.isEmpty {
+                copy += " (\(functionVersion))"
+            }
+            if let requestId, !requestId.isEmpty {
+                copy += " (request_id: \(requestId))"
+            }
+            return copy
         case .apiError(let message):
             return message
         }
+    }
+}
+
+private struct BootstrapErrorPayload: Decodable {
+    let error: String?
+    let errorCode: String?
+    let functionVersion: String?
+
+    enum CodingKeys: String, CodingKey {
+        case error
+        case errorCode = "error_code"
+        case functionVersion = "function_version"
     }
 }
 
