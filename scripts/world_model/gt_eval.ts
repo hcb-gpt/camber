@@ -56,6 +56,10 @@ async function main() {
   });
 
   const batchRunId = args["batch-run-id"];
+  if (!batchRunId) {
+    console.error("❌ Invalid --batch-run-id: must be non-empty");
+    Deno.exit(1);
+  }
   console.log(`\n🔍 GT Eval - Batch: ${batchRunId}\n`);
 
   // Initialize Supabase client
@@ -73,7 +77,9 @@ async function main() {
   console.log("📊 Fetching ground truth labels (human-verified)...");
   const { data: gtLabels, error: gtError } = await supabase
     .from("span_attributions")
-    .select("span_id, applied_project_id, attribution_lock, confidence, decision")
+    .select(
+      "span_id, applied_project_id, attribution_lock, confidence, decision",
+    )
     .not("applied_project_id", "is", null)
     .eq("attribution_lock", "human");
 
@@ -83,7 +89,9 @@ async function main() {
   }
 
   if (!gtLabels || gtLabels.length === 0) {
-    console.error("❌ No ground truth labels found with attribution_lock='human'");
+    console.error(
+      "❌ No ground truth labels found with attribution_lock='human'",
+    );
     Deno.exit(1);
   }
 
@@ -119,7 +127,9 @@ async function main() {
   }
 
   if (!pipelineResults || pipelineResults.length === 0) {
-    console.error(`❌ No pipeline results found for batch_run_id='${batchRunId}'`);
+    console.error(
+      `❌ No pipeline results found for batch_run_id='${batchRunId}'`,
+    );
     console.log("\n💡 Available batch_run_ids:");
 
     const { data: batches } = await supabase
@@ -128,8 +138,33 @@ async function main() {
       .order("batch_run_id");
 
     if (batches) {
-      const uniqueBatches = [...new Set(batches.map(b => b.batch_run_id))];
-      uniqueBatches.forEach(b => console.log(`  - ${b}`));
+      const allBatchRows: Array<{ batch_run_id: string }> = [];
+      const batchPageSize = 1000;
+      let batchOffset = 0;
+      while (true) {
+        const { data: batchPage, error: batchPageError } = await supabase
+          .from("labeling_results")
+          .select("batch_run_id")
+          .order("batch_run_id")
+          .range(batchOffset, batchOffset + batchPageSize - 1);
+        if (batchPageError) {
+          console.error(
+            "❌ Error fetching available batch IDs:",
+            batchPageError,
+          );
+          break;
+        }
+        if (!batchPage || batchPage.length === 0) {
+          break;
+        }
+        allBatchRows.push(...batchPage);
+        if (batchPage.length < batchPageSize) {
+          break;
+        }
+        batchOffset += batchPageSize;
+      }
+      const uniqueBatches = [...new Set((allBatchRows || batches).map((b) => b.batch_run_id))];
+      uniqueBatches.forEach((b) => console.log(`  - ${b}`));
     }
 
     Deno.exit(1);
@@ -179,14 +214,25 @@ async function main() {
   }
 
   // Step 5: Calculate metrics
-  const accuracy = matchedSpans > 0 ? (correctPredictions / matchedSpans) * 100 : 0;
+  const accuracy = matchedSpans > 0
+    ? (correctPredictions / matchedSpans) * 100
+    : 0;
   const baselineAccuracy = 8.2;
   const targetAccuracy = 50.0;
 
-  const perPassBreakdown: Record<number, { total: number; correct: number; accuracy: number }> = {};
+  const perPassBreakdown: Record<
+    number,
+    { total: number; correct: number; accuracy: number }
+  > = {};
   for (const [passNum, stats] of Object.entries(perPassStats)) {
-    const passAccuracy = stats.total > 0 ? (stats.correct / stats.total) * 100 : 0;
-    perPassBreakdown[parseInt(passNum)] = {
+    const passNumber = Number(passNum);
+    if (!Number.isFinite(passNumber)) {
+      continue;
+    }
+    const passAccuracy = stats.total > 0
+      ? (stats.correct / stats.total) * 100
+      : 0;
+    perPassBreakdown[passNumber] = {
       total: stats.total,
       correct: stats.correct,
       accuracy: passAccuracy,
@@ -217,7 +263,9 @@ async function main() {
   console.log(`\n📊 ACCURACY:          ${result.accuracy_pct}%`);
   console.log(`   Baseline:          ${result.baseline_pct}%`);
   console.log(`   Target:            ${result.target_pct}%`);
-  console.log(`   Meets Target:      ${result.meets_target ? "✅ YES" : "❌ NO"}`);
+  console.log(
+    `   Meets Target:      ${result.meets_target ? "✅ YES" : "❌ NO"}`,
+  );
 
   console.log("\n📋 PER-PASS BREAKDOWN:");
   console.log("───────────────────────────────────────────────────");
@@ -228,7 +276,9 @@ async function main() {
   for (const passNum of sortedPasses) {
     const stats = result.per_pass_breakdown[passNum];
     console.log(
-      `Pass ${passNum}:  ${stats.correct}/${stats.total} correct (${stats.accuracy.toFixed(2)}%)`
+      `Pass ${passNum}:  ${stats.correct}/${stats.total} correct (${
+        stats.accuracy.toFixed(2)
+      }%)`,
     );
   }
 

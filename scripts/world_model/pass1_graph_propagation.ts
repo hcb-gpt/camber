@@ -31,7 +31,9 @@ const DRY_RUN = Deno.args.includes("--dry-run");
 const UNLABELED_ONLY = Deno.args.includes("--unlabeled-only");
 
 const batchRunIdArg = Deno.args.find((a) => a.startsWith("--batch-run-id="));
-const BATCH_RUN_ID = batchRunIdArg?.split("=")[1] || `wm-label-${new Date().toISOString().slice(0,10).replace(/-/g,"")}-pass1`;
+const batchRunIdValue = batchRunIdArg?.split("=")[1]?.trim();
+const BATCH_RUN_ID = batchRunIdValue ||
+  `wm-label-${new Date().toISOString().slice(0,10).replace(/-/g,"")}-pass1`;
 
 // Temporal cluster: 2 hours
 const TEMPORAL_CLUSTER_MS = 2 * 60 * 60 * 1000;
