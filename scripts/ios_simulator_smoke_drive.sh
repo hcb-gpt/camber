@@ -9,10 +9,6 @@ OUT_DIR="${ROOT_DIR}/artifacts/ios_simulator_smoke/${STAMP}"
 DERIVED_DIR="${OUT_DIR}/DerivedData"
 SCREEN_DIR="${OUT_DIR}/screens"
 SYNTHETIC_IDS="${SYNTHETIC_IDS:-}"
-DRY_RUN=0
-TRUTH_SURFACE=0
-TRUTH_SURFACE_LOCAL=0
-WRITE_LOCK_RECOVERY=0
 SCREEN_STEPS=7
 SCREEN_INTERVAL_SECONDS=4
 
@@ -22,10 +18,6 @@ Usage: scripts/ios_simulator_smoke_drive.sh [options]
 
 Options:
   --synthetic-ids <csv>   Comma-separated interaction IDs to target in triage smoke.
-  --truth-surface         Run picker-first truth surface smoke (adds --smoke-truth-surface).
-  --truth-surface-local   Run truth surface smoke with a local synthetic queue (no network).
-  --write-lock-recovery   Run write-lock recovery smoke (adds --smoke-write-lock-recovery).
-  --dry-run               Print chosen simulator and exit (no build).
   --help, -h              Show this help.
 EOF
 }
@@ -33,30 +25,8 @@ EOF
 while [[ $# -gt 0 ]]; do
   case "$1" in
     --synthetic-ids)
-      if [[ $# -lt 2 || -z "${2:-}" ]]; then
-        echo "ERROR: --synthetic-ids requires a comma-separated value" >&2
-        usage >&2
-        exit 2
-      fi
-      SYNTHETIC_IDS="${2}"
+      SYNTHETIC_IDS="${2:-}"
       shift 2
-      ;;
-    --truth-surface)
-      TRUTH_SURFACE=1
-      shift 1
-      ;;
-    --truth-surface-local)
-      TRUTH_SURFACE=1
-      TRUTH_SURFACE_LOCAL=1
-      shift 1
-      ;;
-    --write-lock-recovery)
-      WRITE_LOCK_RECOVERY=1
-      shift 1
-      ;;
-    --dry-run)
-      DRY_RUN=1
-      shift
       ;;
     --help|-h)
       usage
@@ -70,23 +40,67 @@ while [[ $# -gt 0 ]]; do
   esac
 done
 
-if [[ "${TRUTH_SURFACE}" -eq 1 ]]; then
-  # Truth-surface proof wants tighter sampling around the triage sheet.
-  SCREEN_STEPS=12
-  SCREEN_INTERVAL_SECONDS=2
-fi
+mkdir -p "${SCREEN_DIR}"
 
-if [[ "${WRITE_LOCK_RECOVERY}" -eq 1 ]]; then
-  # Recovery proof needs extra captures while the sheet transitions through checking->unlocked.
-  SCREEN_STEPS=14
-  SCREEN_INTERVAL_SECONDS=2
-fi
+# In sandboxed sessions, toolchains cannot always write under ~/Library.
+# Use a local HOME for simctl + xcodebuild.
+SIMCTL_HOME="${ROOT_DIR}/.simctl-home"
+mkdir -p "${SIMCTL_HOME}/Library/Logs/CoreSimulator"
 
-source "${ROOT_DIR}/scripts/ios_simulator_smoke_lib.sh"
+simctl() {
+  HOME="${SIMCTL_HOME}" xcrun simctl "$@"
+}
 
-if [[ "${DRY_RUN}" -eq 0 ]]; then
-  echo "[smoke] output: ${OUT_DIR}"
-fi
+wait_for_simctl() {
+  local max_tries=12
+  local try
+  for try in $(seq 1 "${max_tries}"); do
+    if simctl list devices >/dev/null 2>&1; then
+      return 0
+    fi
+    echo "[smoke] waiting for CoreSimulatorService (${try}/${max_tries})"
+    open -a Simulator >/dev/null 2>&1 || true
+    sleep 3
+  done
+  # Final check after last sleep — avoids off-by-one false-negative
+  simctl list devices >/dev/null 2>&1
+}
+
+pick_simulator_udid() {
+  local udid=""
+
+  # Prefer an already-booted iPhone (reduces flakiness and avoids iPad/Mac-catalyst destinations).
+  udid="$(simctl list devices | awk -F '[()]' '/Booted/ && /iPhone/{print $2; exit}')"
+  if [[ -n "${udid}" ]]; then
+    echo "${udid}"
+    return 0
+  fi
+
+  # Prefer newest iPhones (common CI/dev defaults).
+  for pref in "iPhone 17" "iPhone 16" "iPhone 15"; do
+    udid="$(simctl list devices available | awk -F '[()]' -v pref="${pref}" '$0 ~ pref {print $2; exit}')"
+    if [[ -n "${udid}" ]]; then
+      echo "${udid}"
+      return 0
+    fi
+  done
+
+  # Fallback: first available iPhone.
+  udid="$(simctl list devices available | awk -F '[()]' '/iPhone/{print $2; exit}')"
+  if [[ -n "${udid}" ]]; then
+    echo "${udid}"
+    return 0
+  fi
+
+  return 1
+}
+
+is_booted() {
+  local udid="${1}"
+  simctl list devices | awk -v udid="${udid}" '$0 ~ udid && /Booted/ {found=1} END {exit !found}'
+}
+
+echo "[smoke] output: ${OUT_DIR}"
 
 if ! wait_for_simctl; then
   echo "ERROR: CoreSimulatorService unavailable" >&2
@@ -98,18 +112,6 @@ if [[ -z "${DEVICE_UDID}" ]]; then
   echo "ERROR: no iPhone simulator found" >&2
   exit 1
 fi
-
-DEVICE_NAME="$(device_name_for_udid "${DEVICE_UDID}" || true)"
-
-if [[ "${DRY_RUN}" -eq 1 ]]; then
-  cat <<EOF
-device_udid=${DEVICE_UDID}
-device_name=${DEVICE_NAME}
-EOF
-  exit 0
-fi
-
-mkdir -p "${SCREEN_DIR}"
 
 if ! is_booted "${DEVICE_UDID}"; then
   simctl boot "${DEVICE_UDID}" || true
@@ -163,36 +165,10 @@ trap cleanup EXIT
 
 echo "[smoke] launching app with automation flag"
 LAUNCH_ARGS=(--smoke-drive)
-if [[ "${TRUTH_SURFACE}" -eq 1 ]]; then
-  LAUNCH_ARGS+=(--smoke-truth-surface)
-fi
-if [[ "${TRUTH_SURFACE_LOCAL}" -eq 1 ]]; then
-  LAUNCH_ARGS+=(--smoke-truth-surface-local)
-fi
-if [[ "${WRITE_LOCK_RECOVERY}" -eq 1 ]]; then
-  LAUNCH_ARGS+=(--smoke-write-lock-recovery)
-fi
 if [[ -n "${SYNTHETIC_IDS}" ]]; then
   LAUNCH_ARGS+=(--smoke-synthetic-ids "${SYNTHETIC_IDS}")
 fi
-
-if [[ "${WRITE_LOCK_RECOVERY}" -eq 1 ]]; then
-  export SIMCTL_CHILD_SMOKE_FORCE_WRITE_LOCK=1
-  if [[ -n "${EDGE_SHARED_SECRET:-}" ]]; then
-    export SIMCTL_CHILD_EDGE_SHARED_SECRET="${EDGE_SHARED_SECRET}"
-  fi
-fi
 simctl launch "${DEVICE_UDID}" "${BUNDLE_ID}" "${LAUNCH_ARGS[@]}" > "${OUT_DIR}/launch.txt" 2>&1
-unset SIMCTL_CHILD_SMOKE_FORCE_WRITE_LOCK || true
-unset SIMCTL_CHILD_EDGE_SHARED_SECRET || true
-
-SMOKE_MARKER_PATTERN="SMOKE_EVENT START"
-SMOKE_MARKER_TIMEOUT_SECONDS=20
-SMOKE_MARKER_SEEN=0
-SMOKE_MARKER_WAIT_SECONDS=0
-if SMOKE_MARKER_WAIT_SECONDS="$(wait_for_log_pattern "${SMOKE_MARKER_PATTERN}" "${SMOKE_MARKER_TIMEOUT_SECONDS}" "${OUT_DIR}/app.log")"; then
-  SMOKE_MARKER_SEEN=1
-fi
 
 for step in $(seq 1 "${SCREEN_STEPS}"); do
   sleep "${SCREEN_INTERVAL_SECONDS}"
@@ -206,12 +182,10 @@ trap - EXIT
 
 SMOKE_MARKERS="${OUT_DIR}/smoke_markers.log"
 grep -E "SMOKE_EVENT" "${OUT_DIR}/app.log" > "${SMOKE_MARKERS}" || true
-SMOKE_MARKER_FIRST_LINE="$(grep -m 1 -E "${SMOKE_MARKER_PATTERN}" "${OUT_DIR}/app.log" 2>/dev/null || true)"
 
 cat > "${OUT_DIR}/summary.txt" <<EOF
 bundle_id=${BUNDLE_ID}
 device_udid=${DEVICE_UDID}
-device_name=${DEVICE_NAME}
 out_dir=${OUT_DIR}
 screens=${SCREEN_DIR}
 video=${OUT_DIR}/session.mp4
@@ -219,12 +193,7 @@ build_log=${OUT_DIR}/build.log
 app_log=${OUT_DIR}/app.log
 smoke_markers=${SMOKE_MARKERS}
 synthetic_ids=${SYNTHETIC_IDS}
-write_lock_recovery=${WRITE_LOCK_RECOVERY}
 launch_args=${LAUNCH_ARGS[*]}
-smoke_marker_pattern=${SMOKE_MARKER_PATTERN}
-smoke_marker_seen=${SMOKE_MARKER_SEEN}
-smoke_marker_wait_seconds=${SMOKE_MARKER_WAIT_SECONDS}
-smoke_marker_first_line=${SMOKE_MARKER_FIRST_LINE}
 EOF
 
 echo "[smoke] done"

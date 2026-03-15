@@ -136,7 +136,7 @@ export function checkTopLevelEdgeSecret(
 export async function checkTopLevelEdgeSecretOrAnonKey(
   req: Request,
   expectedEdgeSecret = Deno.env.get("EDGE_SHARED_SECRET"),
-  expectedAnonKey = Deno.env.get("CANONICAL_SUPABASE_ANON_KEY") ?? Deno.env.get("SUPABASE_ANON_KEY"),
+  expectedAnonKey = Deno.env.get("SUPABASE_ANON_KEY"),
   supabaseUrl = Deno.env.get("SUPABASE_URL"),
 ): Promise<TopLevelGateResult> {
   const providedSecret = req.headers.get("X-Edge-Secret");

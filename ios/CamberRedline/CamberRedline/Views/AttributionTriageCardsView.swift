@@ -1,33 +1,15 @@
 import SwiftUI
 import os
-#if canImport(UIKit)
-import UIKit
-#endif
 
 private enum TriageSmokeAutomation {
     static let launchFlag = "--smoke-drive"
     static let syntheticIdsFlag = "--smoke-synthetic-ids"
-    static let truthSurfaceFlag = "--smoke-truth-surface"
-    static let truthSurfaceLocalFlag = "--smoke-truth-surface-local"
-    static let writeLockRecoveryFlag = "--smoke-write-lock-recovery"
     static let triageNotification = Notification.Name("camber.smoke.runTriage")
     static let triageDoneNotification = Notification.Name("camber.smoke.triageDone")
     static let logger = Logger(subsystem: "CamberRedline", category: "smoke")
 
     static var isEnabled: Bool {
         ProcessInfo.processInfo.arguments.contains(launchFlag)
-    }
-
-    static var truthSurfaceEnabled: Bool {
-        ProcessInfo.processInfo.arguments.contains(truthSurfaceFlag)
-    }
-
-    static var truthSurfaceLocalEnabled: Bool {
-        ProcessInfo.processInfo.arguments.contains(truthSurfaceLocalFlag)
-    }
-
-    static var writeLockRecoveryEnabled: Bool {
-        ProcessInfo.processInfo.arguments.contains(writeLockRecoveryFlag)
     }
 
     static var targetInteractionIds: Set<String> {
@@ -41,14 +23,6 @@ private enum TriageSmokeAutomation {
             .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
             .filter { !$0.isEmpty }
         return Set(values)
-    }
-}
-
-private enum TriageLearningLoopMetrics {
-    static let logger = Logger(subsystem: "CamberRedline", category: "learning_loop")
-
-    static func log(_ message: String) {
-        logger.log("\(message, privacy: .public)")
     }
 }
 
@@ -67,10 +41,10 @@ private extension Color {
 
 struct AttributionTriageCardsView: View {
     @State private var viewModel = CardTriageViewModel()
+    @State private var showProjectPicker = false
     @State private var pickerCard: CardItem?
     @State private var pickerMode: PickerMode = .project
-    @State private var selectedProjectIdByCardId: [String: String] = [:]
-    @State private var pendingResolveNoteByCardId: [String: String] = [:]
+    @State private var pendingResolveNote: String?
     @State private var showCommentComposer = false
     @State private var commentCard: CardItem?
     @State private var didRunSmokeTriage = false
@@ -78,11 +52,6 @@ struct AttributionTriageCardsView: View {
     @State private var escalateCard: CardItem?
     @State private var showAnalysisDrawer = false
     @State private var analysisCard: CardItem?
-    @State private var evidenceCard: CardItem?
-    @State private var showWriteRecoverySheet = false
-    @State private var triageSurfaceAppearedAt: Date?
-    @State private var didRecordFirstValidPick = false
-    @State private var didLogAuthLockVisible = false
 
     var body: some View {
         NavigationStack {
@@ -117,26 +86,6 @@ struct AttributionTriageCardsView: View {
                 }
             }
             .navigationTitle("Triage")
-            .onAppear {
-                triageSurfaceAppearedAt = Date()
-                didRecordFirstValidPick = false
-                didLogAuthLockVisible = false
-                TriageLearningLoopMetrics.log(
-                    "KPI_EVENT PICK_SURFACE_APPEAR surface=triage_cards queue_depth=\(viewModel.queue.count)"
-                )
-                if viewModel.isAttributionWritesLocked {
-                    didLogAuthLockVisible = true
-                    logAuthLockUiDisabled()
-                }
-            }
-            .onChange(of: viewModel.isAttributionWritesLocked) { _, isLocked in
-                if isLocked, !didLogAuthLockVisible {
-                    didLogAuthLockVisible = true
-                    logAuthLockUiDisabled()
-                } else if !isLocked {
-                    didLogAuthLockVisible = false
-                }
-            }
             .task {
                 if viewModel.queue.isEmpty {
                     await viewModel.loadQueue()
@@ -148,58 +97,33 @@ struct AttributionTriageCardsView: View {
                 didRunSmokeTriage = true
                 Task { await runSmokeSwipes() }
             }
-            .sheet(item: $pickerCard) { card in
-                ProjectPickerSheet(
-                    card: card,
-                    projects: viewModel.projectOptions(for: card),
-                    recentProjects: viewModel.recentProjects(for: card),
-                    suggestedProject: viewModel.suggestedProject(for: card),
-                    onSelect: { projectId in
-                        viewModel.rememberProjectSelection(projectId)
-                        selectedProjectIdByCardId[card.id] = projectId
-                        recordFirstValidPickIfNeeded(card: card, projectId: projectId, source: "picker_select")
-                        let notes = pendingResolveNoteByCardId[card.id]
-                        let shouldResolveNow = pickerMode == .commentOnly
-
-                        pickerCard = nil
-                        pickerMode = .project
-
-                        if shouldResolveNow {
+            .sheet(isPresented: $showProjectPicker) {
+                if let card = pickerCard {
+                    ProjectPickerSheet(
+                        card: card,
+                        projects: viewModel.projectOptions(for: card),
+                        onSelect: { projectId in
+                            let notes = pendingResolveNote
+                            pendingResolveNote = nil
+                            Task { await viewModel.resolve(card, to: projectId, notes: notes) }
+                        },
+                        onDismissItem: {
+                            Task { await viewModel.dismiss(card) }
+                        },
+                        onBizDevNoProject: {
                             Task {
-                                await viewModel.resolve(card, to: projectId, notes: notes)
-                                if !viewModel.queue.contains(where: { $0.id == card.id }) {
-                                    selectedProjectIdByCardId[card.id] = nil
-                                    pendingResolveNoteByCardId[card.id] = nil
-                                }
+                                await viewModel.dismiss(
+                                    card,
+                                    reason: "bizdev_no_project",
+                                    notes: "no_project_selected"
+                                )
                             }
-                        }
-                    },
-                    onDismissItem: {
-                        Task {
-                            await viewModel.dismiss(card)
-                            if !viewModel.queue.contains(where: { $0.id == card.id }) {
-                                selectedProjectIdByCardId[card.id] = nil
-                                pendingResolveNoteByCardId[card.id] = nil
-                            }
-                        }
-                    },
-                    onBizDevNoProject: {
-                        Task {
-                            await viewModel.dismiss(
-                                card,
-                                reason: "bizdev_no_project",
-                                notes: "no_project_selected"
-                            )
-                            if !viewModel.queue.contains(where: { $0.id == card.id }) {
-                                selectedProjectIdByCardId[card.id] = nil
-                                pendingResolveNoteByCardId[card.id] = nil
-                            }
-                        }
-                    },
-                    showsDismissAction: pickerMode != .commentOnly,
-                    writesLocked: viewModel.isAttributionWritesLocked,
-                    writesLockedBannerText: viewModel.attributionWritesLockedBannerText
-                )
+                        },
+                        showsDismissAction: pickerMode != .commentOnly,
+                        writesLocked: viewModel.isAttributionWritesLocked,
+                        writesLockedBannerText: viewModel.attributionWritesLockedBannerText
+                    )
+                }
             }
             .sheet(isPresented: $showCommentComposer) {
                 if let card = commentCard {
@@ -212,19 +136,13 @@ struct AttributionTriageCardsView: View {
                         onSubmit: { note in
                             let trimmed = note.trimmingCharacters(in: .whitespacesAndNewlines)
                             let finalNote = trimmed.isEmpty ? nil : trimmed
-                            pendingResolveNoteByCardId[card.id] = finalNote
-
-                            if let selectedProjectId = selectedProjectIdByCardId[card.id] {
-                                Task {
-                                    await viewModel.resolve(card, to: selectedProjectId, notes: finalNote)
-                                    if !viewModel.queue.contains(where: { $0.id == card.id }) {
-                                        selectedProjectIdByCardId[card.id] = nil
-                                        pendingResolveNoteByCardId[card.id] = nil
-                                    }
-                                }
+                            if let projectId = card.projectId {
+                                Task { await viewModel.resolve(card, to: projectId, notes: finalNote) }
                             } else {
+                                pendingResolveNote = finalNote
                                 pickerMode = .commentOnly
                                 pickerCard = card
+                                showProjectPicker = true
                             }
                             commentCard = nil
                         }
@@ -237,13 +155,7 @@ struct AttributionTriageCardsView: View {
                         card: card,
                         onCancel: { escalateCard = nil },
                         onSubmit: { reason in
-                            Task {
-                                await viewModel.escalate(card, reason: reason)
-                                if !viewModel.queue.contains(where: { $0.id == card.id }) {
-                                    selectedProjectIdByCardId[card.id] = nil
-                                    pendingResolveNoteByCardId[card.id] = nil
-                                }
-                            }
+                            Task { await viewModel.escalate(card, reason: reason) }
                             escalateCard = nil
                         }
                     )
@@ -255,14 +167,6 @@ struct AttributionTriageCardsView: View {
                         card: card,
                         projectName: viewModel.projectName(for: card.projectId)
                     )
-                }
-            }
-            .sheet(item: $evidenceCard) { card in
-                EvidenceTokensSheet(card: card)
-            }
-            .sheet(isPresented: $showWriteRecoverySheet) {
-                WriteLockRecoverySheet {
-                    await viewModel.recoverWriteAccess()
                 }
             }
         }
@@ -363,53 +267,35 @@ struct AttributionTriageCardsView: View {
         ZStack {
             ForEach(Array(viewModel.queue.prefix(3).enumerated().reversed()), id: \.element.id) { index, card in
                 let isTop = index == 0
-                let selectedProjectId = selectedProjectIdByCardId[card.id]
-                let selectedProjectName = viewModel.projectName(for: selectedProjectId)
                 SwipeableTriageCard(
                     card: card,
-                    aiSuggestedProjectName: viewModel.projectName(for: card.projectId),
-                    selectedProjectId: selectedProjectId,
-                    selectedProjectName: selectedProjectName,
+                    projectName: viewModel.projectName(for: card.projectId),
                     isTop: isTop,
                     writesLocked: viewModel.isAttributionWritesLocked,
                     onBlockedWrite: {
-                        TriageLearningLoopMetrics.log(
-                            "KPI_EVENT AUTH_LOCK_BLOCKED surface=triage_cards action=confirm_swipe queue=\(card.queueId)"
-                        )
                         if let banner = viewModel.attributionWritesLockedBannerText {
                             viewModel.error = banner
                         }
                     },
-                    onConfirm: { projectId in
-                        viewModel.rememberProjectSelection(projectId)
-                        let note = pendingResolveNoteByCardId[card.id] ?? nil
-                        Task {
-                            await viewModel.resolve(card, to: projectId, notes: note)
-                            if !viewModel.queue.contains(where: { $0.id == card.id }) {
-                                selectedProjectIdByCardId[card.id] = nil
-                                pendingResolveNoteByCardId[card.id] = nil
-                            }
+                    onSwipeRight: {
+                        guard let projectId = card.projectId else {
+                            pickerMode = .project
+                            pickerCard = card
+                            showProjectPicker = true
+                            return
                         }
+                        Task { await viewModel.resolve(card, to: projectId) }
                     },
-                    onOpenPicker: {
+                    onSwipeLeft: {
                         pickerMode = .project
                         pickerCard = card
-                    },
-                    onUseSuggestedProject: { suggestedProjectId in
-                        viewModel.rememberProjectSelection(suggestedProjectId)
-                        selectedProjectIdByCardId[card.id] = suggestedProjectId
-                        recordFirstValidPickIfNeeded(card: card, projectId: suggestedProjectId, source: "suggested_tap")
-                    },
-                    onTapEvidenceTokens: {
-                        evidenceCard = card
+                        showProjectPicker = true
                     },
                     onSwipeUp: {
                         escalateCard = card
                         showEscalateSheet = true
                     },
                     onSwipeDown: {
-                        selectedProjectIdByCardId[card.id] = nil
-                        pendingResolveNoteByCardId[card.id] = nil
                         viewModel.skip(card)
                     },
                     onTapAnalysis: {
@@ -437,10 +323,10 @@ struct AttributionTriageCardsView: View {
                     .fontWeight(.semibold)
                     .foregroundStyle(Color.noRed.opacity(0.7))
                 Spacer()
-                Label("CONFIRM", systemImage: "arrow.right")
+                Label("ACCEPT", systemImage: "arrow.right")
                     .font(.caption)
                     .fontWeight(.semibold)
-                    .foregroundStyle(Color.commentBlue.opacity(0.8))
+                    .foregroundStyle(Color.yesGreen.opacity(0.7))
             }
             HStack(spacing: 0) {
                 Label("ESCALATE", systemImage: "arrow.up")
@@ -466,7 +352,7 @@ struct AttributionTriageCardsView: View {
                 .foregroundStyle(Color.undoAmber.opacity(0.9))
 
             VStack(alignment: .leading, spacing: 2) {
-                Text("Writes are temporarily locked")
+                Text("Read-only mode")
                     .font(.caption)
                     .fontWeight(.semibold)
                     .foregroundStyle(.white)
@@ -477,16 +363,6 @@ struct AttributionTriageCardsView: View {
             }
 
             Spacer(minLength: 0)
-
-            Button("Recover") {
-                showWriteRecoverySheet = true
-            }
-            .font(.caption2)
-            .fontWeight(.semibold)
-            .foregroundStyle(.black)
-            .padding(.horizontal, 10)
-            .padding(.vertical, 6)
-            .background(Color.undoAmber, in: Capsule())
         }
         .padding(12)
         .background(Color.undoAmber.opacity(0.12), in: RoundedRectangle(cornerRadius: 14))
@@ -502,65 +378,21 @@ struct AttributionTriageCardsView: View {
     // MARK: - Undo Banner
 
     private func undoBanner(_ action: CardTriageViewModel.TriageAction) -> some View {
-        HStack(spacing: 10) {
-            Image(systemName: "checkmark.circle.fill")
-                .font(.caption)
-                .foregroundStyle(Color.yesGreen)
-
-            VStack(alignment: .leading, spacing: 2) {
-                Text(action.title)
+        Button {
+            Task { await viewModel.undo() }
+        } label: {
+            HStack(spacing: 8) {
+                Image(systemName: "arrow.uturn.backward")
                     .font(.caption)
-                    .fontWeight(.semibold)
-                    .foregroundStyle(.white)
-                if let receipt = action.receipt {
-                    Text(receipt.compactLabel)
-                        .font(.caption2.monospaced())
-                        .foregroundStyle(.secondary)
-                }
+                Text("Undo \(action.label)")
+                    .font(.caption)
+                    .fontWeight(.medium)
             }
-
-            Spacer(minLength: 0)
-
-            #if DEBUG
-            if let receipt = action.receipt {
-                Button("Copy receipt") {
-                    #if canImport(UIKit)
-                    UIPasteboard.general.string = receipt.copyText
-                    #endif
-                }
-                .font(.caption2)
-                .foregroundStyle(Color.commentBlue)
-                .buttonStyle(.plain)
-            }
-            #endif
-
-            Button("Undo") {
-                let actionName: String = switch action.kind {
-                case .resolved: "resolved"
-                case .dismissed: "dismissed"
-                case .escalated: "escalated"
-                case .skipped: "skipped"
-                }
-                let ageMs = max(0, Int(Date().timeIntervalSince(action.timestamp) * 1000))
-                TriageLearningLoopMetrics.log(
-                    "KPI_EVENT UNDO_TAP surface=triage_cards queue=\(action.queueId) undo_of=\(actionName) age_ms=\(ageMs)"
-                )
-                Task { await viewModel.undo() }
-            }
-            .font(.caption)
-            .fontWeight(.semibold)
             .foregroundStyle(.black)
-            .padding(.horizontal, 12)
-            .padding(.vertical, 8)
+            .padding(.horizontal, 16)
+            .padding(.vertical, 10)
             .background(Color.undoAmber, in: Capsule())
         }
-        .padding(.horizontal, 12)
-        .padding(.vertical, 10)
-        .background(Color.cardFace.opacity(0.94), in: Capsule())
-        .overlay(
-            Capsule().stroke(Color.cardStroke, lineWidth: 1)
-        )
-        .padding(.horizontal, 16)
         .padding(.bottom, 16)
     }
 
@@ -599,31 +431,6 @@ struct AttributionTriageCardsView: View {
             .onTapGesture { viewModel.error = nil }
     }
 
-    private func recordFirstValidPickIfNeeded(card: CardItem, projectId: String, source: String) {
-        let trimmedProjectId = projectId.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !trimmedProjectId.isEmpty else { return }
-        guard !didRecordFirstValidPick else { return }
-        guard let appearedAt = triageSurfaceAppearedAt else { return }
-
-        let elapsedMs = max(0, Int(Date().timeIntervalSince(appearedAt) * 1000))
-        let aiSuggested = ((card.projectId ?? "").trimmingCharacters(in: .whitespacesAndNewlines).isEmpty == false) ? 1 : 0
-        TriageLearningLoopMetrics.log(
-            "KPI_EVENT PICK_TIME_SAMPLE surface=triage_cards elapsed_ms=\(elapsedMs) queue=\(card.queueId) card=\(card.id) source=\(source) had_ai_suggestion=\(aiSuggested) evidence_count=\(card.evidenceAnchors.count)"
-        )
-        didRecordFirstValidPick = true
-    }
-
-    private func logAuthLockUiDisabled() {
-        let statusCode = viewModel.writeLockStatusCode.map(String.init) ?? "missing"
-        let errorCode = (viewModel.writeLockErrorCode ?? "missing").trimmingCharacters(in: .whitespacesAndNewlines)
-        let requestId = (viewModel.writeLockRequestId ?? "missing").trimmingCharacters(in: .whitespacesAndNewlines)
-        let functionVersion = (viewModel.writeLockFunctionVersion ?? "missing").trimmingCharacters(in: .whitespacesAndNewlines)
-
-        TriageLearningLoopMetrics.log(
-            "KPI_EVENT AUTH_LOCK_UI_DISABLED surface=triage_cards queue_depth=\(viewModel.queue.count) status_code=\(statusCode) error_code=\(errorCode) request_id=\(requestId) function_version=\(functionVersion)"
-        )
-    }
-
     private func runSmokeSwipes() async {
         // Retry queue loading to handle race with .task loadQueue
         var retries = 0
@@ -657,10 +464,6 @@ struct AttributionTriageCardsView: View {
                let matched = viewModel.queue.first(where: { targetIds.contains($0.interactionId) }) {
                 return matched
             }
-            if TriageSmokeAutomation.truthSurfaceEnabled,
-               let withProjectAndEvidence = viewModel.queue.first(where: { $0.projectId != nil && !$0.evidenceAnchors.isEmpty }) {
-                return withProjectAndEvidence
-            }
             if let withProject = viewModel.queue.first(where: { $0.projectId != nil }) {
                 return withProject
             }
@@ -678,22 +481,16 @@ struct AttributionTriageCardsView: View {
             "SMOKE_EVENT TRIAGE_TARGET queue=\(card.queueId, privacy: .public) interaction=\(card.interactionId, privacy: .public) event_at=\(eventAt, privacy: .public)"
         )
 
-        if TriageSmokeAutomation.writeLockRecoveryEnabled {
-            await runWriteLockRecoverySmoke(card: card)
-        } else if TriageSmokeAutomation.truthSurfaceEnabled {
-            await runTruthSurfaceSmoke(card: card)
+        if let projectId = card.projectId, !projectId.isEmpty {
+            TriageSmokeAutomation.logger.log(
+                "SMOKE_EVENT TRIAGE_RESOLVE queue=\(card.queueId, privacy: .public) interaction=\(card.interactionId, privacy: .public) project=\(projectId, privacy: .public)"
+            )
+            await viewModel.resolve(card, to: projectId, notes: "smoke")
         } else {
-            if let projectId = card.projectId, !projectId.isEmpty {
-                TriageSmokeAutomation.logger.log(
-                    "SMOKE_EVENT TRIAGE_RESOLVE queue=\(card.queueId, privacy: .public) interaction=\(card.interactionId, privacy: .public) project=\(projectId, privacy: .public)"
-                )
-                await viewModel.resolve(card, to: projectId, notes: "smoke")
-            } else {
-                TriageSmokeAutomation.logger.log(
-                    "SMOKE_EVENT TRIAGE_DISMISS queue=\(card.queueId, privacy: .public) interaction=\(card.interactionId, privacy: .public)"
-                )
-                await viewModel.dismiss(card, reason: "smoke", notes: "smoke")
-            }
+            TriageSmokeAutomation.logger.log(
+                "SMOKE_EVENT TRIAGE_DISMISS queue=\(card.queueId, privacy: .public) interaction=\(card.interactionId, privacy: .public)"
+            )
+            await viewModel.dismiss(card, reason: "smoke", notes: "smoke")
         }
 
         if viewModel.isAttributionWritesLocked, let banner = viewModel.attributionWritesLockedBannerText {
@@ -713,149 +510,6 @@ struct AttributionTriageCardsView: View {
         NotificationCenter.default.post(name: TriageSmokeAutomation.triageDoneNotification, object: nil)
     }
 
-    private func runWriteLockRecoverySmoke(card: CardItem) async {
-        let retryProjectId: String? = {
-            if let pid = card.projectId, !pid.isEmpty { return pid }
-            if let candidate = card.candidates.first?.projectId, !candidate.isEmpty { return candidate }
-            return nil
-        }()
-
-        if !viewModel.isAttributionWritesLocked {
-            if let retryProjectId {
-                TriageSmokeAutomation.logger.log(
-                    "SMOKE_EVENT WRITE_LOCK_RECOVERY_PRIME_RESOLVE queue=\(card.queueId, privacy: .public) interaction=\(card.interactionId, privacy: .public) project=\(retryProjectId, privacy: .public)"
-                )
-                await viewModel.resolve(card, to: retryProjectId, notes: "smoke_write_lock_recovery_prime")
-            } else {
-                TriageSmokeAutomation.logger.log(
-                    "SMOKE_EVENT WRITE_LOCK_RECOVERY_PRIME_DISMISS queue=\(card.queueId, privacy: .public) interaction=\(card.interactionId, privacy: .public)"
-                )
-                await viewModel.dismiss(card, reason: "smoke_write_lock_recovery_prime", notes: "no_project")
-            }
-            try? await Task.sleep(for: .milliseconds(600))
-        }
-
-        if let banner = viewModel.attributionWritesLockedBannerText {
-            TriageSmokeAutomation.logger.log(
-                "SMOKE_EVENT WRITE_LOCK_RECOVERY_LOCKED banner=\(banner, privacy: .public)"
-            )
-
-            await MainActor.run {
-                showWriteRecoverySheet = true
-            }
-
-            // Hold while sheet runs its initial auto-recovery.
-            try? await Task.sleep(for: .seconds(4))
-
-            var waitSeconds = 0
-            while viewModel.isAttributionWritesLocked && waitSeconds < 15 {
-                try? await Task.sleep(for: .seconds(1))
-                waitSeconds += 1
-            }
-
-            let unlocked = !viewModel.isAttributionWritesLocked
-            TriageSmokeAutomation.logger.log(
-                "SMOKE_EVENT WRITE_LOCK_RECOVERY_RESULT unlocked=\(unlocked ? 1 : 0, privacy: .public) wait_seconds=\(waitSeconds, privacy: .public)"
-            )
-
-            try? await Task.sleep(for: .seconds(2))
-            await MainActor.run {
-                showWriteRecoverySheet = false
-            }
-        } else {
-            TriageSmokeAutomation.logger.log("SMOKE_EVENT WRITE_LOCK_RECOVERY_LOCKED missing_lock_state=1")
-        }
-
-        guard !viewModel.isAttributionWritesLocked else {
-            TriageSmokeAutomation.logger.log("SMOKE_EVENT WRITE_LOCK_RECOVERY_ABORT reason=still_locked")
-            return
-        }
-
-        guard let retryProjectId else {
-            TriageSmokeAutomation.logger.log("SMOKE_EVENT WRITE_LOCK_RECOVERY_ABORT reason=no_project_for_retry")
-            return
-        }
-
-        guard let retryCard = viewModel.queue.first(where: { $0.id == card.id }) else {
-            TriageSmokeAutomation.logger.log(
-                "SMOKE_EVENT WRITE_LOCK_RECOVERY_RETRY_SKIPPED reason=card_missing queue=\(card.queueId, privacy: .public)"
-            )
-            return
-        }
-
-        TriageSmokeAutomation.logger.log(
-            "SMOKE_EVENT WRITE_LOCK_RECOVERY_RETRY queue=\(retryCard.queueId, privacy: .public) interaction=\(retryCard.interactionId, privacy: .public) project=\(retryProjectId, privacy: .public)"
-        )
-        await viewModel.resolve(retryCard, to: retryProjectId, notes: "smoke_write_lock_recovery_retry")
-    }
-
-    private func runTruthSurfaceSmoke(card: CardItem) async {
-        let evidenceCount = card.evidenceAnchors.count
-        let hasAiSuggestion = (card.projectId ?? "").isEmpty == false
-        let aiProjectId = card.projectId ?? "missing"
-
-        TriageSmokeAutomation.logger.log(
-            "SMOKE_EVENT TRUTH_SURFACE_START queue=\(card.queueId, privacy: .public) interaction=\(card.interactionId, privacy: .public) ai_suggested=\(hasAiSuggestion ? 1 : 0, privacy: .public) ai_project=\(aiProjectId, privacy: .public) evidence_count=\(evidenceCount, privacy: .public)"
-        )
-
-        let initialSelected = await MainActor.run { selectedProjectIdByCardId[card.id] }
-        TriageSmokeAutomation.logger.log(
-            "SMOKE_EVENT TRUTH_SURFACE_STAGE stage=unpicked selected=\((initialSelected ?? "missing"), privacy: .public)"
-        )
-
-        // Hold on unpicked state so simctl screenshots can capture it.
-        try? await Task.sleep(for: .seconds(4))
-
-        guard !viewModel.isAttributionWritesLocked else {
-            TriageSmokeAutomation.logger.log("SMOKE_EVENT TRUTH_SURFACE_ABORT reason=writes_locked")
-            return
-        }
-
-        if initialSelected != nil {
-            TriageSmokeAutomation.logger.log("SMOKE_EVENT TRUTH_SURFACE_WARN unexpected_preselect=1")
-        }
-
-        let pickedProjectId: String? = {
-            if let pid = card.projectId, !pid.isEmpty { return pid }
-            if let candidate = card.candidates.first?.projectId, !candidate.isEmpty { return candidate }
-            return nil
-        }()
-
-        guard let pickedProjectId else {
-            TriageSmokeAutomation.logger.log("SMOKE_EVENT TRUTH_SURFACE_BLOCKED reason=no_project_to_pick")
-            await viewModel.dismiss(card, reason: "smoke_truth_surface", notes: "no_project_to_pick")
-            return
-        }
-
-        await MainActor.run {
-            selectedProjectIdByCardId[card.id] = pickedProjectId
-            recordFirstValidPickIfNeeded(card: card, projectId: pickedProjectId, source: "truth_surface_auto_pick")
-        }
-        TriageSmokeAutomation.logger.log(
-            "SMOKE_EVENT TRUTH_SURFACE_STAGE stage=picked project=\(pickedProjectId, privacy: .public) evidence_count=\(evidenceCount, privacy: .public)"
-        )
-
-        // Hold on picked state so simctl screenshots can capture it.
-        try? await Task.sleep(for: .seconds(4))
-
-        guard evidenceCount > 0 else {
-            TriageSmokeAutomation.logger.log("SMOKE_EVENT TRUTH_SURFACE_BLOCKED reason=no_evidence_tokens")
-            await viewModel.dismiss(card, reason: "smoke_truth_surface", notes: "no_evidence_tokens")
-            return
-        }
-
-        if TriageSmokeAutomation.truthSurfaceLocalEnabled {
-            TriageSmokeAutomation.logger.log(
-                "SMOKE_EVENT TRUTH_SURFACE_CONFIRM_LOCAL queue=\(card.queueId, privacy: .public) project=\(pickedProjectId, privacy: .public)"
-            )
-        } else {
-            TriageSmokeAutomation.logger.log(
-                "SMOKE_EVENT TRUTH_SURFACE_CONFIRM queue=\(card.queueId, privacy: .public) project=\(pickedProjectId, privacy: .public)"
-            )
-        }
-        await viewModel.resolve(card, to: pickedProjectId, notes: "smoke_truth_surface")
-    }
-
     private enum PickerMode {
         case project
         case commentOnly
@@ -866,16 +520,12 @@ struct AttributionTriageCardsView: View {
 
 private struct SwipeableTriageCard: View {
     let card: CardItem
-    let aiSuggestedProjectName: String?
-    let selectedProjectId: String?
-    let selectedProjectName: String?
+    let projectName: String?
     let isTop: Bool
     let writesLocked: Bool
     let onBlockedWrite: () -> Void
-    let onConfirm: (String) -> Void
-    let onOpenPicker: () -> Void
-    let onUseSuggestedProject: (String) -> Void
-    let onTapEvidenceTokens: () -> Void
+    let onSwipeRight: () -> Void
+    let onSwipeLeft: () -> Void
     let onSwipeUp: () -> Void
     let onSwipeDown: () -> Void
     let onTapAnalysis: () -> Void
@@ -884,71 +534,11 @@ private struct SwipeableTriageCard: View {
     @State private var rotation: Double = 0
     @State private var showAlternatives = false
     @State private var transcriptExpanded = false
-    @State private var showConfirmBlockedAlert = false
 
     private let horizontalSwipeThreshold: CGFloat = 100
     private let verticalSwipeThreshold: CGFloat = 90
 
     var body: some View {
-        cardChrome
-            .offset(x: offset.width, y: offset.height)
-            .rotationEffect(.degrees(rotation))
-            .gesture(dragGesture)
-            .animation(.interactiveSpring(response: 0.4, dampingFraction: 0.7), value: offset)
-            .alert("Can’t confirm yet", isPresented: $showConfirmBlockedAlert) {
-                Button("OK", role: .cancel) {}
-            } message: {
-                Text(confirmBlockedMessage)
-            }
-    }
-
-    // MARK: - Card Sections
-
-    private var cardChrome: some View {
-        cardContent
-            .padding(16)
-            .background(Color.cardFace, in: RoundedRectangle(cornerRadius: 16))
-            .overlay(
-                RoundedRectangle(cornerRadius: 16)
-                    .stroke(swipeIndicatorColor, lineWidth: swipeIndicatorOpacity > 0 ? 2 : 1)
-            )
-            .overlay(alignment: .topLeading) {
-                if offset.width < -40 {
-                    swipeLabel("PICK", icon: "arrow.left.arrow.right", color: .noRed)
-                        .padding(16)
-                        .opacity(min(1, Double(-offset.width - 40) / 60))
-                }
-            }
-            .overlay(alignment: .topTrailing) {
-                if offset.width > 40 {
-                    Group {
-                        if canConfirm {
-                            swipeLabel("CONFIRM", icon: "checkmark", color: .commentBlue)
-                        } else {
-                            swipeLabel("BLOCKED", icon: "xmark", color: .noRed)
-                        }
-                    }
-                    .padding(16)
-                    .opacity(min(1, Double(offset.width - 40) / 60))
-                }
-            }
-            .overlay(alignment: .top) {
-                if offset.height < -40 {
-                    swipeLabel("ESCALATE", icon: "exclamationmark.triangle", color: .escalateOrange)
-                        .padding(.top, 16)
-                        .opacity(min(1, Double(-offset.height - 40) / 60))
-                }
-            }
-            .overlay(alignment: .bottom) {
-                if offset.height > 40 {
-                    swipeLabel("SKIP", icon: "arrow.down.to.line", color: .skipGray)
-                        .padding(.bottom, 16)
-                        .opacity(min(1, Double(offset.height - 40) / 60))
-                }
-            }
-    }
-
-    private var cardContent: some View {
         VStack(alignment: .leading, spacing: 12) {
             // Header: contact + confidence
             HStack(alignment: .top) {
@@ -971,8 +561,6 @@ private struct SwipeableTriageCard: View {
                 reasonCodesRow
             }
 
-            truthSurfaceRail
-
             // Transcript (tap to expand/collapse)
             Text(card.transcriptSegment)
                 .font(.subheadline)
@@ -990,7 +578,35 @@ private struct SwipeableTriageCard: View {
 
             Divider().background(Color.cardStroke)
 
-            selectionSection
+            // AI guess
+            if let name = projectName {
+                HStack(spacing: 8) {
+                    Image(systemName: "cpu")
+                        .font(.caption)
+                        .foregroundStyle(Color.yesGreen.opacity(0.7))
+                    Text(name)
+                        .font(.subheadline)
+                        .fontWeight(.medium)
+                        .foregroundStyle(.white)
+                    Spacer()
+                    Text("Swipe \(Image(systemName: "arrow.right")) to confirm")
+                        .font(.caption2)
+                        .foregroundStyle(.secondary)
+                }
+            } else {
+                HStack(spacing: 8) {
+                    Image(systemName: "questionmark.circle")
+                        .font(.caption)
+                        .foregroundStyle(Color.undoAmber.opacity(0.7))
+                    Text("No AI guess")
+                        .font(.subheadline)
+                        .foregroundStyle(.secondary)
+                    Spacer()
+                    Text("Swipe to pick project")
+                        .font(.caption2)
+                        .foregroundStyle(.secondary)
+                }
+            }
 
             // Collapsible alternatives
             if !card.candidates.isEmpty {
@@ -1014,163 +630,97 @@ private struct SwipeableTriageCard: View {
                 .background(Color.commentBlue.opacity(0.1), in: Capsule())
             }
         }
-    }
-
-    private var dragGesture: some Gesture {
-        DragGesture()
-            .onChanged { value in
-                guard isTop else { return }
-                guard !writesLocked else { return }
-                offset = value.translation
-                rotation = Double(value.translation.width / 20)
+        .padding(16)
+        .background(Color.cardFace, in: RoundedRectangle(cornerRadius: 16))
+        .overlay(
+            RoundedRectangle(cornerRadius: 16)
+                .stroke(swipeIndicatorColor, lineWidth: swipeIndicatorOpacity > 0 ? 2 : 1)
+        )
+        .overlay(alignment: .topLeading) {
+            if offset.width < -40 {
+                swipeLabel("PICK", icon: "arrow.left.arrow.right", color: .noRed)
+                    .padding(16)
+                    .opacity(min(1, Double(-offset.width - 40) / 60))
             }
-            .onEnded { value in
-                guard isTop else { return }
-                if writesLocked {
-                    if value.translation.height > verticalSwipeThreshold,
-                       abs(value.translation.height) > abs(value.translation.width) {
+        }
+        .overlay(alignment: .topTrailing) {
+            if offset.width > 40 {
+                swipeLabel("ACCEPT", icon: "checkmark", color: .yesGreen)
+                    .padding(16)
+                    .opacity(min(1, Double(offset.width - 40) / 60))
+            }
+        }
+        .overlay(alignment: .top) {
+            if offset.height < -40 {
+                swipeLabel("ESCALATE", icon: "exclamationmark.triangle", color: .escalateOrange)
+                    .padding(.top, 16)
+                    .opacity(min(1, Double(-offset.height - 40) / 60))
+            }
+        }
+        .overlay(alignment: .bottom) {
+            if offset.height > 40 {
+                swipeLabel("SKIP", icon: "arrow.down.to.line", color: .skipGray)
+                    .padding(.bottom, 16)
+                    .opacity(min(1, Double(offset.height - 40) / 60))
+            }
+        }
+        .offset(x: offset.width, y: offset.height)
+        .rotationEffect(.degrees(rotation))
+        .gesture(
+            DragGesture()
+                .onChanged { value in
+                    guard isTop else { return }
+                    guard !writesLocked else { return }
+                    offset = value.translation
+                    rotation = Double(value.translation.width / 20)
+                }
+                .onEnded { value in
+                    guard isTop else { return }
+                    if writesLocked {
+                        if value.translation.height > verticalSwipeThreshold,
+                           abs(value.translation.height) > abs(value.translation.width) {
+                            snapBack()
+                            onSwipeDown()
+                            return
+                        }
+
+                        if value.translation.width > horizontalSwipeThreshold
+                            || value.translation.width < -horizontalSwipeThreshold
+                            || value.translation.height < -verticalSwipeThreshold
+                        {
+                            snapBack()
+                            onBlockedWrite()
+                            return
+                        }
+
+                        snapBack()
+                        return
+                    }
+                    if value.translation.width > horizontalSwipeThreshold,
+                       abs(value.translation.width) >= abs(value.translation.height) {
+                        swipeAway(direction: .right)
+                    } else if value.translation.width < -horizontalSwipeThreshold,
+                              abs(value.translation.width) >= abs(value.translation.height) {
+                        swipeAway(direction: .left)
+                    } else if value.translation.height < -verticalSwipeThreshold,
+                              abs(value.translation.height) > abs(value.translation.width) {
+                        // UP: snap back then open escalation sheet
+                        snapBack()
+                        onSwipeUp()
+                    } else if value.translation.height > verticalSwipeThreshold,
+                              abs(value.translation.height) > abs(value.translation.width) {
+                        // DOWN: skip — snap back and reorder
                         snapBack()
                         onSwipeDown()
-                        return
-                    }
-
-                    if value.translation.width > horizontalSwipeThreshold
-                        || value.translation.width < -horizontalSwipeThreshold
-                        || value.translation.height < -verticalSwipeThreshold
-                    {
+                    } else {
                         snapBack()
-                        onBlockedWrite()
-                        return
                     }
-
-                    snapBack()
-                    return
                 }
-
-                if value.translation.width > horizontalSwipeThreshold,
-                   abs(value.translation.width) >= abs(value.translation.height) {
-                    guard canConfirm else {
-                        snapBack()
-                        showConfirmBlockedAlert = true
-                        return
-                    }
-                    swipeAway(direction: .right)
-                } else if value.translation.width < -horizontalSwipeThreshold,
-                          abs(value.translation.width) >= abs(value.translation.height) {
-                    swipeAway(direction: .left)
-                } else if value.translation.height < -verticalSwipeThreshold,
-                          abs(value.translation.height) > abs(value.translation.width) {
-                    // UP: snap back then open escalation sheet
-                    snapBack()
-                    onSwipeUp()
-                } else if value.translation.height > verticalSwipeThreshold,
-                          abs(value.translation.height) > abs(value.translation.width) {
-                    // DOWN: skip — snap back and reorder
-                    snapBack()
-                    onSwipeDown()
-                } else {
-                    snapBack()
-                }
-            }
+        )
+        .animation(.interactiveSpring(response: 0.4, dampingFraction: 0.7), value: offset)
     }
 
-    private var truthSurfaceRail: some View {
-        HStack(spacing: 8) {
-            statusChip
-            Button {
-                onOpenPicker()
-            } label: {
-                chip(
-                    selectedProjectId == nil ? "Pick" : "Change",
-                    icon: "arrow.left.arrow.right",
-                    color: .commentBlue
-                )
-            }
-            Button {
-                onTapEvidenceTokens()
-            } label: {
-                chip(
-                    "Evidence \(evidenceTokenCount) · \(evidenceFreshnessText)",
-                    icon: "doc.text.magnifyingglass",
-                    color: evidenceTokenCount > 0 ? .commentBlue : .skipGray
-                )
-            }
-            Spacer()
-        }
-    }
-
-    private var selectionSection: some View {
-        VStack(alignment: .leading, spacing: 10) {
-            HStack(spacing: 8) {
-                Image(systemName: selectedProjectId == nil ? "circle.dashed" : "checkmark.circle.fill")
-                    .font(.caption)
-                    .foregroundStyle(selectedProjectId == nil ? Color.skipGray.opacity(0.8) : Color.commentBlue.opacity(0.9))
-
-                VStack(alignment: .leading, spacing: 1) {
-                    Text(selectedProjectId == nil ? "Pick required" : "Selected")
-                        .font(.caption2)
-                        .foregroundStyle(.secondary)
-                    Text(selectedProjectName ?? "—")
-                        .font(.subheadline)
-                        .fontWeight(.medium)
-                        .foregroundStyle(selectedProjectId == nil ? Color.secondary : Color.white)
-                        .lineLimit(1)
-                }
-
-                Spacer()
-
-                if canConfirm {
-                    Text("Swipe \(Image(systemName: "arrow.right")) to confirm")
-                        .font(.caption2)
-                        .foregroundStyle(.secondary)
-                } else {
-                    Button {
-                        showConfirmBlockedAlert = true
-                    } label: {
-                        Text("Swipe \(Image(systemName: "arrow.right")) to confirm")
-                            .font(.caption2)
-                            .foregroundStyle(.secondary)
-                    }
-                    .buttonStyle(.plain)
-                }
-            }
-
-            if let suggestedProjectId = card.projectId, let name = aiSuggestedProjectName {
-                HStack(spacing: 8) {
-                    Image(systemName: "cpu")
-                        .font(.caption)
-                        .foregroundStyle(Color.skipGray.opacity(0.8))
-                    Text("AI suggests")
-                        .font(.caption2)
-                        .foregroundStyle(.secondary)
-                    Text(name)
-                        .font(.caption)
-                        .fontWeight(.semibold)
-                        .foregroundStyle(.white.opacity(0.85))
-                        .lineLimit(1)
-                    Spacer()
-                    if selectedProjectId == nil {
-                        Button("Use") {
-                            onUseSuggestedProject(suggestedProjectId)
-                        }
-                        .font(.caption2)
-                        .fontWeight(.semibold)
-                        .foregroundStyle(Color.commentBlue)
-                        .buttonStyle(.plain)
-                    }
-                }
-            } else {
-                HStack(spacing: 8) {
-                    Image(systemName: "questionmark.circle")
-                        .font(.caption)
-                        .foregroundStyle(Color.skipGray.opacity(0.8))
-                    Text("No AI suggestion")
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
-                }
-            }
-        }
-    }
+    // MARK: - Card Sections
 
     private var reasonCodesRow: some View {
         ScrollView(.horizontal, showsIndicators: false) {
@@ -1264,69 +814,8 @@ private struct SwipeableTriageCard: View {
             .background(color.opacity(0.15), in: Capsule())
     }
 
-    private var evidenceTokenCount: Int { card.evidenceAnchors.count }
-
-    private var evidenceFreshnessText: String {
-        guard let date = card.eventDate else { return "—" }
-        let seconds = max(0, Date().timeIntervalSince(date))
-        let minutes = Int(seconds / 60)
-        if minutes < 60 { return "\(minutes)m" }
-        let hours = minutes / 60
-        if hours < 48 { return "\(hours)h" }
-        let days = hours / 24
-        return "\(days)d"
-    }
-
-    private var canConfirm: Bool {
-        guard !writesLocked else { return false }
-        guard selectedProjectId != nil else { return false }
-        guard evidenceTokenCount > 0 else { return false }
-        return true
-    }
-
-    private var confirmBlockedMessage: String {
-        if writesLocked {
-            return "Attribution writes temporarily locked. Truth surface remains readable."
-        }
-        if evidenceTokenCount == 0 {
-            return "No evidence tokens on this card. Escalate or skip instead of confirming."
-        }
-        return "Pick a project first."
-    }
-
-    private var statusChip: some View {
-        let label: String
-        let color: Color
-        if writesLocked || evidenceTokenCount == 0 {
-            label = "Blocked"
-            color = .noRed
-        } else if selectedProjectId != nil {
-            label = "Ready"
-            color = .commentBlue
-        } else {
-            label = "Pending"
-            color = .skipGray
-        }
-        return chip(label, icon: "circle.fill", color: color)
-    }
-
-    private func chip(_ text: String, icon: String, color: Color) -> some View {
-        HStack(spacing: 4) {
-            Image(systemName: icon)
-                .font(.system(size: 8))
-            Text(text)
-                .font(.caption2)
-                .fontWeight(.semibold)
-                .lineLimit(1)
-        }
-        .foregroundStyle(color)
-        .padding(.horizontal, 10)
-        .padding(.vertical, 6)
-        .background(color.opacity(0.12), in: Capsule())
-    }
-
     private var swipeIndicatorColor: Color {
-        if offset.width > 40 { return Color.commentBlue.opacity(swipeIndicatorOpacity) }
+        if offset.width > 40 { return Color.yesGreen.opacity(swipeIndicatorOpacity) }
         if offset.width < -40 { return Color.noRed.opacity(swipeIndicatorOpacity) }
         if offset.height < -40 { return Color.escalateOrange.opacity(swipeIndicatorOpacity) }
         if offset.height > 40 { return Color.skipGray.opacity(swipeIndicatorOpacity) }
@@ -1365,12 +854,8 @@ private struct SwipeableTriageCard: View {
             offset = .zero
             rotation = 0
             switch direction {
-            case .right:
-                if let selectedProjectId {
-                    onConfirm(selectedProjectId)
-                }
-            case .left:
-                onOpenPicker()
+            case .right: onSwipeRight()
+            case .left: onSwipeLeft()
             }
         }
     }
@@ -1397,64 +882,6 @@ private struct SwipeableTriageCard: View {
     }
 
     private enum SwipeDirection { case left, right }
-}
-
-// MARK: - EvidenceTokensSheet
-
-private struct EvidenceTokensSheet: View {
-    @Environment(\.dismiss) private var dismiss
-    let card: CardItem
-
-    var body: some View {
-        NavigationStack {
-            List {
-                Section("Evidence Tokens") {
-                    if card.evidenceAnchors.isEmpty {
-                        VStack(alignment: .leading, spacing: 6) {
-                            Text("No evidence tokens.")
-                                .font(.subheadline)
-                                .fontWeight(.semibold)
-                            Text("This card has 0 anchor tokens right now.")
-                                .font(.caption)
-                                .foregroundStyle(.secondary)
-                        }
-                        .padding(.vertical, 6)
-                    } else {
-                        ForEach(Array(card.evidenceAnchors.enumerated()), id: \.offset) { _, anchor in
-                            VStack(alignment: .leading, spacing: 4) {
-                                Text(anchor.quote ?? anchor.text ?? "—")
-                                    .font(.subheadline)
-                                if let matchType = anchor.matchType {
-                                    Text(matchType)
-                                        .font(.caption)
-                                        .foregroundStyle(.secondary)
-                                }
-                            }
-                            .padding(.vertical, 4)
-                        }
-                    }
-                }
-
-                Section("Keywords") {
-                    if card.keywords.isEmpty {
-                        Text("No keywords.")
-                            .foregroundStyle(.secondary)
-                    } else {
-                        ForEach(card.keywords.prefix(20), id: \.self) { keyword in
-                            Text(keyword)
-                        }
-                    }
-                }
-            }
-            .navigationTitle("Evidence")
-            .toolbar {
-                ToolbarItem(placement: .topBarTrailing) {
-                    Button("Done") { dismiss() }
-                }
-            }
-        }
-        .presentationDetents([.medium, .large])
-    }
 }
 
 // MARK: - EscalateReasonSheet

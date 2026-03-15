@@ -1,40 +1,6 @@
 import Foundation
 import Observation
 import Supabase
-import os
-
-private enum RealtimeCleanupSmokeProof {
-    static let launchFlag = "--smoke-realtime-cleanup-proof"
-    static let logger = Logger(subsystem: "CamberRedline", category: "smoke")
-
-    static var isEnabled: Bool {
-#if DEBUG
-        ProcessInfo.processInfo.arguments.contains(launchFlag)
-#else
-        false
-#endif
-    }
-
-    static var forceClaimGradesCancel: Bool {
-        isEnabled && ProcessInfo.processInfo.environment["SMOKE_FORCE_CLAIM_GRADES_CANCEL"] == "1"
-    }
-
-    static var forceThreadInteractionsSubscribeFail: Bool {
-        isEnabled && ProcessInfo.processInfo.environment["SMOKE_FORCE_THREAD_INTERACTIONS_SUBSCRIBE_FAIL"] == "1"
-    }
-
-    static var forceContactListSubscribeFail: Bool {
-        isEnabled && ProcessInfo.processInfo.environment["SMOKE_FORCE_CONTACTLIST_SUBSCRIBE_FAIL"] == "1"
-    }
-}
-
-private enum ThreadLearningLoopMetrics {
-    static let logger = Logger(subsystem: "CamberRedline", category: "learning_loop")
-
-    static func log(_ message: String) {
-        logger.log("\(message, privacy: .public)")
-    }
-}
 
 enum NoteTargetType: String, Codable {
     case sms
@@ -77,37 +43,8 @@ final class ThreadViewModel {
         bootstrapService.writeLockState != nil
     }
 
-    var writeLockStatusCode: Int? {
-        bootstrapService.writeLockState?.statusCode
-    }
-
-    var writeLockErrorCode: String? {
-        bootstrapService.writeLockState?.errorCode
-    }
-
-    var writeLockRequestId: String? {
-        bootstrapService.writeLockState?.requestId
-    }
-
-    var writeLockFunctionVersion: String? {
-        bootstrapService.writeLockState?.functionVersion
-    }
-
     var attributionWritesLockedBannerText: String? {
         bootstrapService.writesLockedBannerText
-    }
-
-    func recoverWriteAccess() async -> BootstrapWriteRecoveryOutcome {
-        let outcome = await bootstrapService.recoverWriteAccess()
-        switch outcome {
-        case .unlocked:
-            error = nil
-        case .stillLocked(let state):
-            error = BootstrapServiceError.writesLocked(state).errorDescription
-        case .failed(let message, _, _):
-            error = message
-        }
-        return outcome
     }
 
     // MARK: - Dependencies
@@ -497,24 +434,18 @@ final class ThreadViewModel {
         notes: String? = nil,
         reloadAfterResolve: Bool = true
     ) async -> Bool {
-	        if let banner = bootstrapService.writesLockedBannerText {
-	            ThreadLearningLoopMetrics.log(
-	                "KPI_EVENT AUTH_LOCK_BLOCKED surface=thread action=resolve_single queue=\(reviewQueueId) \(writeLockMetaForKpi())"
-	            )
-	            showTransientError(banner, clearAfter: .seconds(4))
-	            return false
-	        }
+        if let banner = bootstrapService.writesLockedBannerText {
+            showTransientError(banner, clearAfter: .seconds(4))
+            return false
+        }
 
         error = nil
         do {
-            let response = try await bootstrapService.resolve(
+            _ = try await bootstrapService.resolve(
                 queueId: reviewQueueId,
                 projectId: projectId,
                 notes: notes,
                 userId: "ios_redline"
-            )
-            ThreadLearningLoopMetrics.log(
-                "KPI_EVENT WRITE_ACTION surface=thread action=resolve_single queue=\(reviewQueueId) request_id=\(response.requestId ?? "missing")"
             )
             if reloadAfterResolve {
                 schedulePostResolveSync()
@@ -532,13 +463,10 @@ final class ThreadViewModel {
 
     @discardableResult
     func resolveAttributions(reviewQueueIds: [String], projectId: String, notes: String? = nil) async -> Bool {
-	        if let banner = bootstrapService.writesLockedBannerText {
-	            ThreadLearningLoopMetrics.log(
-	                "KPI_EVENT AUTH_LOCK_BLOCKED surface=thread action=resolve_bulk queue_count=\(reviewQueueIds.count) \(writeLockMetaForKpi())"
-	            )
-	            showTransientError(banner, clearAfter: .seconds(4))
-	            return false
-	        }
+        if let banner = bootstrapService.writesLockedBannerText {
+            showTransientError(banner, clearAfter: .seconds(4))
+            return false
+        }
 
         var seen = Set<String>()
         let uniqueQueueIds = reviewQueueIds.filter { seen.insert($0).inserted }
@@ -546,14 +474,11 @@ final class ThreadViewModel {
 
         do {
             for queueId in uniqueQueueIds {
-                let response = try await bootstrapService.resolve(
+                _ = try await bootstrapService.resolve(
                     queueId: queueId,
                     projectId: projectId,
                     notes: notes,
                     userId: "ios_redline"
-                )
-                ThreadLearningLoopMetrics.log(
-                    "KPI_EVENT WRITE_ACTION surface=thread action=resolve_bulk queue=\(queueId) request_id=\(response.requestId ?? "missing")"
                 )
             }
             schedulePostResolveSync()
@@ -575,24 +500,18 @@ final class ThreadViewModel {
         notes: String? = nil,
         reloadAfterResolve: Bool = true
     ) async -> Bool {
-	        if let banner = bootstrapService.writesLockedBannerText {
-	            ThreadLearningLoopMetrics.log(
-	                "KPI_EVENT AUTH_LOCK_BLOCKED surface=thread action=dismiss_single queue=\(reviewQueueId) \(writeLockMetaForKpi())"
-	            )
-	            showTransientError(banner, clearAfter: .seconds(4))
-	            return false
-	        }
+        if let banner = bootstrapService.writesLockedBannerText {
+            showTransientError(banner, clearAfter: .seconds(4))
+            return false
+        }
 
         error = nil
         do {
-            let response = try await bootstrapService.dismiss(
+            _ = try await bootstrapService.dismiss(
                 queueId: reviewQueueId,
                 reason: reason,
                 notes: notes,
                 userId: "ios_redline"
-            )
-            ThreadLearningLoopMetrics.log(
-                "KPI_EVENT WRITE_ACTION surface=thread action=dismiss_single queue=\(reviewQueueId) request_id=\(response.requestId ?? "missing")"
             )
             if reloadAfterResolve {
                 schedulePostResolveSync()
@@ -610,13 +529,10 @@ final class ThreadViewModel {
 
     @discardableResult
     func dismissAttributions(reviewQueueIds: [String], reason: String? = nil, notes: String? = nil) async -> Bool {
-	        if let banner = bootstrapService.writesLockedBannerText {
-	            ThreadLearningLoopMetrics.log(
-	                "KPI_EVENT AUTH_LOCK_BLOCKED surface=thread action=dismiss_bulk queue_count=\(reviewQueueIds.count) \(writeLockMetaForKpi())"
-	            )
-	            showTransientError(banner, clearAfter: .seconds(4))
-	            return false
-	        }
+        if let banner = bootstrapService.writesLockedBannerText {
+            showTransientError(banner, clearAfter: .seconds(4))
+            return false
+        }
 
         var seen = Set<String>()
         let uniqueQueueIds = reviewQueueIds.filter { seen.insert($0).inserted }
@@ -624,14 +540,11 @@ final class ThreadViewModel {
 
         do {
             for queueId in uniqueQueueIds {
-                let response = try await bootstrapService.dismiss(
+                _ = try await bootstrapService.dismiss(
                     queueId: queueId,
                     reason: reason,
                     notes: notes,
                     userId: "ios_redline"
-                )
-                ThreadLearningLoopMetrics.log(
-                    "KPI_EVENT WRITE_ACTION surface=thread action=dismiss_bulk queue=\(queueId) request_id=\(response.requestId ?? "missing")"
                 )
             }
             schedulePostResolveSync()
@@ -650,20 +563,14 @@ final class ThreadViewModel {
 
     @discardableResult
     func undoAttribution(reviewQueueId: String, reloadAfterUndo: Bool = true) async -> Bool {
-	        if let banner = bootstrapService.writesLockedBannerText {
-	            ThreadLearningLoopMetrics.log(
-	                "KPI_EVENT AUTH_LOCK_BLOCKED surface=thread action=undo queue=\(reviewQueueId) \(writeLockMetaForKpi())"
-	            )
-	            showTransientError(banner, clearAfter: .seconds(4))
-	            return false
-	        }
+        if let banner = bootstrapService.writesLockedBannerText {
+            showTransientError(banner, clearAfter: .seconds(4))
+            return false
+        }
 
         error = nil
         do {
-            let response = try await bootstrapService.undo(queueId: reviewQueueId)
-            ThreadLearningLoopMetrics.log(
-                "KPI_EVENT UNDO_COMMIT surface=thread queue=\(reviewQueueId) request_id=\(response.requestId ?? "missing")"
-            )
+            try await bootstrapService.undo(queueId: reviewQueueId)
             if reloadAfterUndo {
                 schedulePostResolveSync()
             }
@@ -678,10 +585,10 @@ final class ThreadViewModel {
         }
     }
 
-	    private func schedulePostResolveSync() {
-	        postResolveRefreshTask?.cancel()
-	        postResolveRefreshTask = Task { @MainActor [weak self] in
-	            guard let self else { return }
+    private func schedulePostResolveSync() {
+        postResolveRefreshTask?.cancel()
+        postResolveRefreshTask = Task { @MainActor [weak self] in
+            guard let self else { return }
             do {
                 try await Task.sleep(for: .milliseconds(350))
             } catch {
@@ -692,20 +599,12 @@ final class ThreadViewModel {
             self.service.invalidateThreadCache(for: contactId)
             await self.loadThread(contactId: contactId)
             NotificationCenter.default.post(name: .redlineAttributionDidResolve, object: nil)
-	        }
-	    }
+        }
+    }
 
-	    private func writeLockMetaForKpi() -> String {
-	        let statusCode = bootstrapService.writeLockState.map { String($0.statusCode) } ?? "missing"
-	        let errorCode = (bootstrapService.writeLockState?.errorCode ?? "missing").trimmingCharacters(in: .whitespacesAndNewlines)
-	        let requestId = (bootstrapService.writeLockState?.requestId ?? "missing").trimmingCharacters(in: .whitespacesAndNewlines)
-	        let functionVersion = (bootstrapService.writeLockState?.functionVersion ?? "missing").trimmingCharacters(in: .whitespacesAndNewlines)
-	        return "status_code=\(statusCode) error_code=\(errorCode) request_id=\(requestId) function_version=\(functionVersion)"
-	    }
-
-	    private func refreshReviewProjectsInBackgroundIfNeeded() {
-	        let cacheAge = bootstrapService.reviewProjectsCacheAge() ?? .infinity
-	        guard cacheAge >= 5 * 60 else { return }
+    private func refreshReviewProjectsInBackgroundIfNeeded() {
+        let cacheAge = bootstrapService.reviewProjectsCacheAge() ?? .infinity
+        guard cacheAge >= 5 * 60 else { return }
 
         Task { @MainActor [weak self] in
             guard let self else { return }
@@ -785,28 +684,13 @@ final class ThreadViewModel {
         )
 
         do {
-#if DEBUG
-            if RealtimeCleanupSmokeProof.forceClaimGradesCancel {
-                throw CancellationError()
-            }
-#endif
             try await channel.subscribeWithError()
         } catch {
-            await stopClaimGradeSubscription()
-#if DEBUG
-            if RealtimeCleanupSmokeProof.isEnabled {
-                let cleanupOk = gradeChannel == nil
-                    && subscribedContactId == nil
-                    && gradeInsertTask == nil
-                    && gradeUpdateTask == nil
-                RealtimeCleanupSmokeProof.logger
-                    .log("SMOKE_EVENT REALTIME_CLEANUP_PROOF claim_grades_cleanup_ok=\(cleanupOk, privacy: .public)")
-            }
-#endif
             if shouldIgnoreRealtimeError(error) {
                 return
             }
             print("Claim grade realtime unavailable: \(error.localizedDescription)")
+            await stopClaimGradeSubscription()
             return
         }
         error = nil
@@ -941,35 +825,13 @@ final class ThreadViewModel {
         )
 
         do {
-#if DEBUG
-            if RealtimeCleanupSmokeProof.forceThreadInteractionsSubscribeFail {
-                throw CancellationError()
-            }
-#endif
             try await interactionsChannel.subscribeWithError()
             try await smsChannel.subscribeWithError()
         } catch {
-            await service.client.removeChannel(reviewQueueChannel)
-#if DEBUG
-            if RealtimeCleanupSmokeProof.isEnabled {
-                RealtimeCleanupSmokeProof.logger
-                    .log("SMOKE_EVENT REALTIME_CLEANUP_PROOF thread_interactions_removed_review_queue=1")
+            if !shouldIgnoreRealtimeError(error) {
+                print("Thread interactions realtime unavailable: \(error.localizedDescription)")
             }
-#endif
             await stopInteractionsSubscription()
-#if DEBUG
-            if RealtimeCleanupSmokeProof.isEnabled {
-                let channelsCleared = threadInteractionsChannel == nil
-                    && threadSMSChannel == nil
-                    && threadReviewQueueChannel == nil
-                RealtimeCleanupSmokeProof.logger
-                    .log("SMOKE_EVENT REALTIME_CLEANUP_PROOF thread_interactions_channels_cleared=\(channelsCleared, privacy: .public)")
-            }
-#endif
-            if shouldIgnoreRealtimeError(error) {
-                return
-            }
-            print("Thread interactions realtime unavailable: \(error.localizedDescription)")
             startThreadFallbackRefresh(contactId: contactId)
             return
         }
@@ -1118,7 +980,6 @@ final class ThreadViewModel {
         guard threadFallbackRefreshTask == nil else { return }
         threadFallbackRefreshTask = Task { @MainActor [weak self] in
             guard let self else { return }
-            defer { self.threadFallbackRefreshTask = nil }
             while !Task.isCancelled {
                 do {
                     try await Task.sleep(for: .seconds(5))
@@ -1336,27 +1197,18 @@ final class ContactListViewModel {
         )
 
         do {
-#if DEBUG
-            if RealtimeCleanupSmokeProof.forceContactListSubscribeFail {
-                throw CancellationError()
-            }
-#endif
             try await channel.subscribeWithError()
             try await smsChannel.subscribeWithError()
         } catch {
-            await service.client.removeChannel(channel)
-            await service.client.removeChannel(smsChannel)
-            await service.client.removeChannel(reviewQueueChannel)
-#if DEBUG
-            if RealtimeCleanupSmokeProof.isEnabled {
-                RealtimeCleanupSmokeProof.logger
-                    .log("SMOKE_EVENT REALTIME_CLEANUP_PROOF contactlist_removed_review_queue=1")
-            }
-#endif
             if shouldIgnoreRealtimeError(error) {
                 return
             }
             print("Interactions realtime unavailable: \(error.localizedDescription)")
+            if let channel = interactionsChannel {
+                interactionsChannel = nil
+                await service.client.removeChannel(channel)
+            }
+            await service.client.removeChannel(smsChannel)
             return
         }
 

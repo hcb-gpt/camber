@@ -3,10 +3,3 @@ set -euo pipefail
 
 repo_root="$(git rev-parse --show-toplevel)"
 "$repo_root/scripts/secret-scan.sh" --staged
-
-AGENT_SYNC_SCRIPT="${repo_root}/../orbit/scripts/agent-doc-sync.sh"
-if [ -x "$AGENT_SYNC_SCRIPT" ]; then
-  if git diff --cached --name-only | rg -q "(AGENTS\\.md|CLAUDE\\.md|GEMINI\\.md)$"; then
-    "$AGENT_SYNC_SCRIPT" --check --repo-root "$repo_root/.."
-  fi
-fi

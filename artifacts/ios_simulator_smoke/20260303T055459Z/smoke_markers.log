@@ -1,0 +1,6 @@
+2026-03-03 00:56:28.902 Df CamberRedline[43608:17c9ab7] [CamberRedline:smoke] SMOKE_EVENT START
+2026-03-03 00:56:29.907 Df CamberRedline[43608:17c9ab7] [CamberRedline:smoke] SMOKE_EVENT OPEN_TRIAGE
+2026-03-03 00:56:30.134 Df CamberRedline[43608:17c9ab7] [CamberRedline:smoke] SMOKE_EVENT TRIAGE_LOCAL_QUEUE_READY items=1
+2026-03-03 00:56:30.821 Df CamberRedline[43608:17c9ab7] [CamberRedline:smoke] SMOKE_EVENT TRIAGE_TARGET queue=rq_smoke_truth_surface_v1 interaction=cll_smoke_truth_surface_v1 event_at=2026-03-03T04:56:30Z
+2026-03-03 00:56:30.821 Df CamberRedline[43608:17c9ab7] [CamberRedline:smoke] SMOKE_EVENT TRUTH_SURFACE_START queue=rq_smoke_truth_surface_v1 interaction=cll_smoke_truth_surface_v1 ai_suggested=1 ai_project=proj_smoke_truth_surface_v1 evidence_count=1
+2026-03-03 00:56:30.821 Df CamberRedline[43608:17c9ab7] [CamberRedline:smoke] SMOKE_EVENT TRUTH_SURFACE_STAGE stage=unpicked selected=missing

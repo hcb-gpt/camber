@@ -5,8 +5,6 @@ struct ProjectPickerSheet: View {
 
     let card: CardItem
     let projects: [ReviewProject]
-    var recentProjects: [ReviewProject] = []
-    var suggestedProject: ReviewProject? = nil
     let onSelect: (String) -> Void
     let onDismissItem: () -> Void
     let onBizDevNoProject: () -> Void
@@ -20,10 +18,6 @@ struct ProjectPickerSheet: View {
         guard !searchText.isEmpty else { return projects }
         let query = searchText.lowercased()
         return projects.filter { $0.name.lowercased().contains(query) }
-    }
-
-    private var hasQuickPicks: Bool {
-        suggestedProject != nil || !recentProjects.isEmpty
     }
 
     var body: some View {
@@ -42,31 +36,6 @@ struct ProjectPickerSheet: View {
                                 .fixedSize(horizontal: false, vertical: true)
                         }
                         .padding(.vertical, 4)
-                    }
-                }
-
-                if hasQuickPicks {
-                    Section("Quick pick") {
-                        ScrollView(.horizontal, showsIndicators: false) {
-                            HStack(spacing: 8) {
-                                if let suggestedProject {
-                                    quickPickButton(
-                                        project: suggestedProject,
-                                        title: "Suggested",
-                                        icon: "cpu"
-                                    )
-                                }
-
-                                ForEach(recentProjects.prefix(6)) { recentProject in
-                                    quickPickButton(
-                                        project: recentProject,
-                                        title: "Recent",
-                                        icon: "clock.arrow.circlepath"
-                                    )
-                                }
-                            }
-                            .padding(.vertical, 2)
-                        }
                     }
                 }
 
@@ -125,33 +94,5 @@ struct ProjectPickerSheet: View {
         .presentationDetents([.medium, .large])
         .presentationDragIndicator(.visible)
         .preferredColorScheme(.dark)
-    }
-
-    private func quickPickButton(project: ReviewProject, title: String, icon: String) -> some View {
-        Button {
-            dismiss()
-            onSelect(project.id)
-        } label: {
-            VStack(alignment: .leading, spacing: 4) {
-                Label(title, systemImage: icon)
-                    .font(.caption2)
-                    .fontWeight(.semibold)
-                    .foregroundStyle(.secondary)
-                Text(project.name)
-                    .font(.caption)
-                    .fontWeight(.medium)
-                    .foregroundStyle(.white)
-                    .lineLimit(1)
-            }
-            .padding(.horizontal, 10)
-            .padding(.vertical, 8)
-            .background(Color(red: 0.145, green: 0.145, blue: 0.157), in: RoundedRectangle(cornerRadius: 10))
-            .overlay(
-                RoundedRectangle(cornerRadius: 10)
-                    .stroke(Color(red: 0.165, green: 0.165, blue: 0.18), lineWidth: 1)
-            )
-        }
-        .buttonStyle(.plain)
-        .disabled(writesLocked)
     }
 }

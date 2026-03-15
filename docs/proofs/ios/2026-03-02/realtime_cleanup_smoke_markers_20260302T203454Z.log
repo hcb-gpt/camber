@@ -1,6 +1,0 @@
-2026-03-02 15:35:38.343 Df CamberRedline[56127:14415e1] [CamberRedline:smoke] SMOKE_EVENT REALTIME_CLEANUP_PROOF_START
-2026-03-02 15:35:38.470 Df CamberRedline[56127:14415e1] [CamberRedline:smoke] SMOKE_EVENT REALTIME_CLEANUP_PROOF claim_grades_cleanup_ok=true
-2026-03-02 15:35:38.610 Df CamberRedline[56127:14415e1] [CamberRedline:smoke] SMOKE_EVENT REALTIME_CLEANUP_PROOF thread_interactions_removed_review_queue=1
-2026-03-02 15:35:38.696 Df CamberRedline[56127:14415e1] [CamberRedline:smoke] SMOKE_EVENT REALTIME_CLEANUP_PROOF thread_interactions_channels_cleared=true
-2026-03-02 15:35:38.702 Df CamberRedline[56127:14415e1] [CamberRedline:smoke] SMOKE_EVENT REALTIME_CLEANUP_PROOF contactlist_removed_review_queue=1
-2026-03-02 15:35:38.703 Df CamberRedline[56127:14415e1] [CamberRedline:smoke] SMOKE_EVENT REALTIME_CLEANUP_PROOF_END

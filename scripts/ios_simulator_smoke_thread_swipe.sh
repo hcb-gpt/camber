@@ -10,41 +10,67 @@ DERIVED_DIR="${OUT_DIR}/DerivedData"
 SCREEN_DIR="${OUT_DIR}/screens"
 SCREEN_STEPS=7
 SCREEN_INTERVAL_SECONDS=4
-DRY_RUN=0
 
-usage() {
-  cat <<'EOF'
-Usage: scripts/ios_simulator_smoke_thread_swipe.sh [options]
+mkdir -p "${SCREEN_DIR}"
 
-Options:
-  --dry-run               Print chosen simulator and exit (no build).
-  --help, -h              Show this help.
-EOF
+# In sandboxed sessions, toolchains cannot always write under ~/Library.
+# Use a local HOME for simctl + xcodebuild.
+SIMCTL_HOME="${ROOT_DIR}/.simctl-home"
+mkdir -p "${SIMCTL_HOME}/Library/Logs/CoreSimulator"
+
+simctl() {
+  HOME="${SIMCTL_HOME}" xcrun simctl "$@"
 }
 
-while [[ $# -gt 0 ]]; do
-  case "$1" in
-    --dry-run)
-      DRY_RUN=1
-      shift
-      ;;
-    --help|-h)
-      usage
-      exit 0
-      ;;
-    *)
-      echo "ERROR: unknown argument: $1" >&2
-      usage >&2
-      exit 2
-      ;;
-  esac
-done
+wait_for_simctl() {
+  local max_tries=12
+  local try
+  for try in $(seq 1 "${max_tries}"); do
+    if simctl list devices >/dev/null 2>&1; then
+      return 0
+    fi
+    echo "[smoke] waiting for CoreSimulatorService (${try}/${max_tries})"
+    open -a Simulator >/dev/null 2>&1 || true
+    sleep 3
+  done
+  simctl list devices >/dev/null 2>&1
+}
 
-source "${ROOT_DIR}/scripts/ios_simulator_smoke_lib.sh"
+pick_simulator_udid() {
+  local udid=""
 
-if [[ "${DRY_RUN}" -eq 0 ]]; then
-  echo "[smoke] output: ${OUT_DIR}"
-fi
+  # Prefer an already-booted iPhone (reduces flakiness and avoids iPad/Mac-catalyst destinations).
+  udid="$(simctl list devices | awk -F '[()]' '/Booted/ && /iPhone/{print $2; exit}')"
+  if [[ -n "${udid}" ]]; then
+    echo "${udid}"
+    return 0
+  fi
+
+  # Prefer newest iPhones (common CI/dev defaults).
+  for pref in "iPhone 17" "iPhone 16" "iPhone 15"; do
+    udid="$(simctl list devices available | awk -F '[()]' -v pref="${pref}" '$0 ~ pref {print $2; exit}')"
+    if [[ -n "${udid}" ]]; then
+      echo "${udid}"
+      return 0
+    fi
+  done
+
+  # Fallback: first available iPhone.
+  udid="$(simctl list devices available | awk -F '[()]' '/iPhone/{print $2; exit}')"
+  if [[ -n "${udid}" ]]; then
+    echo "${udid}"
+    return 0
+  fi
+
+  return 1
+}
+
+is_booted() {
+  local udid="${1}"
+  simctl list devices | awk -v udid="${udid}" '$0 ~ udid && /Booted/ {found=1} END {exit !found}'
+}
+
+echo "[smoke] output: ${OUT_DIR}"
 
 if ! wait_for_simctl; then
   echo "ERROR: CoreSimulatorService unavailable" >&2
@@ -56,18 +82,6 @@ if [[ -z "${DEVICE_UDID}" ]]; then
   echo "ERROR: no iPhone simulator found" >&2
   exit 1
 fi
-
-DEVICE_NAME="$(device_name_for_udid "${DEVICE_UDID}" || true)"
-
-if [[ "${DRY_RUN}" -eq 1 ]]; then
-  cat <<EOF
-device_udid=${DEVICE_UDID}
-device_name=${DEVICE_NAME}
-EOF
-  exit 0
-fi
-
-mkdir -p "${SCREEN_DIR}"
 
 if ! is_booted "${DEVICE_UDID}"; then
   simctl boot "${DEVICE_UDID}" || true
@@ -129,14 +143,6 @@ fi
 
 simctl launch "${DEVICE_UDID}" "${BUNDLE_ID}" "${LAUNCH_ARGS[@]}" > "${OUT_DIR}/launch.txt" 2>&1
 
-SMOKE_MARKER_PATTERN="SMOKE_EVENT THREAD_SWIPE_TARGET"
-SMOKE_MARKER_TIMEOUT_SECONDS=20
-SMOKE_MARKER_SEEN=0
-SMOKE_MARKER_WAIT_SECONDS=0
-if SMOKE_MARKER_WAIT_SECONDS="$(wait_for_log_pattern "${SMOKE_MARKER_PATTERN}" "${SMOKE_MARKER_TIMEOUT_SECONDS}" "${OUT_DIR}/app.log")"; then
-  SMOKE_MARKER_SEEN=1
-fi
-
 for step in $(seq 1 "${SCREEN_STEPS}"); do
   sleep "${SCREEN_INTERVAL_SECONDS}"
   step_label=$(printf "%02d" "${step}")
@@ -149,12 +155,10 @@ trap - EXIT
 
 SMOKE_MARKERS="${OUT_DIR}/smoke_markers.log"
 grep -E "SMOKE_EVENT" "${OUT_DIR}/app.log" > "${SMOKE_MARKERS}" || true
-SMOKE_MARKER_FIRST_LINE="$(grep -m 1 -E "${SMOKE_MARKER_PATTERN}" "${OUT_DIR}/app.log" 2>/dev/null || true)"
 
 cat > "${OUT_DIR}/summary.txt" <<EOF
 bundle_id=${BUNDLE_ID}
 device_udid=${DEVICE_UDID}
-device_name=${DEVICE_NAME}
 out_dir=${OUT_DIR}
 screens=${SCREEN_DIR}
 video=${OUT_DIR}/session.mp4
@@ -163,10 +167,6 @@ app_log=${OUT_DIR}/app.log
 smoke_markers=${SMOKE_MARKERS}
 launch_args=${LAUNCH_ARGS[*]}
 edge_secret_present=${EDGE_SECRET_PRESENT}
-smoke_marker_pattern=${SMOKE_MARKER_PATTERN}
-smoke_marker_seen=${SMOKE_MARKER_SEEN}
-smoke_marker_wait_seconds=${SMOKE_MARKER_WAIT_SECONDS}
-smoke_marker_first_line=${SMOKE_MARKER_FIRST_LINE}
 EOF
 
 echo "[smoke] done"

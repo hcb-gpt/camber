@@ -3,14 +3,9 @@
 # Sources credentials for scripts that need them
 # Usage: source scripts/load-env.sh
 
-# Idempotent: avoid re-loading in the same shell.
-# If CAMBER_CREDS_LOADED is exported, it leaks to child shells and can freeze
-# stale credentials after rotations. Unset and continue loading in that case.
+# Idempotent: avoid re-loading in the same shell
 if [ -n "${CAMBER_CREDS_LOADED:-}" ]; then
-    if printenv CAMBER_CREDS_LOADED >/dev/null 2>&1; then
-        echo "WARN: CAMBER_CREDS_LOADED is exported; unsetting to allow credential reload." >&2
-        unset CAMBER_CREDS_LOADED
-    elif [ -n "${SUPABASE_URL:-}" ] && [ -n "${SUPABASE_SERVICE_ROLE_KEY:-}" ] && [ -n "${EDGE_SHARED_SECRET:-}" ]; then
+    if [ -n "${SUPABASE_URL:-}" ] && [ -n "${SUPABASE_SERVICE_ROLE_KEY:-}" ] && [ -n "${EDGE_SHARED_SECRET:-}" ]; then
         return 0 2>/dev/null || exit 0
     fi
 fi
@@ -18,8 +13,7 @@ fi
 # Prefer central loader (Keychain-aware)
 if [ -f "${HOME:-}/.camber/load-credentials.sh" ]; then
     # shellcheck source=/dev/null
-    # Silence loader output (some versions print secret prefixes).
-    source "${HOME:-}/.camber/load-credentials.sh" >/dev/null 2>&1 || true
+    source "${HOME:-}/.camber/load-credentials.sh" 2>/dev/null || true
 fi
 
 # Fallback to central file if still missing
@@ -57,9 +51,8 @@ if [ -n "$MISSING" ]; then
     return 1 2>/dev/null || exit 1
 fi
 
-# Mark successful load for this shell (intentionally NOT exported — exporting
-# leaks idempotence into child shells, causing stale secret rotations).
-CAMBER_CREDS_LOADED=1
+# Mark successful load for this shell
+export CAMBER_CREDS_LOADED=1
 
 # Export Supabase CLI token if available
 if [ -n "${CLI:-}" ]; then

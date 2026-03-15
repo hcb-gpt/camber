@@ -37,19 +37,6 @@ private enum TruthGraphDemoAutomation {
     }
 }
 
-private enum RealtimeCleanupProofAutomation {
-    static let launchFlag = "--smoke-realtime-cleanup-proof"
-    static let logger = Logger(subsystem: "CamberRedline", category: "smoke")
-
-    static var isEnabled: Bool {
-#if DEBUG
-        ProcessInfo.processInfo.arguments.contains(launchFlag)
-#else
-        false
-#endif
-    }
-}
-
 enum RedlineTab: Hashable {
     case inbox
     case calls
@@ -66,7 +53,6 @@ struct CamberRedlineApp: App {
     @State private var isTriagePresented = false
     @State private var isTruthGraphDemoPresented = false
     @State private var didRunSmokeDrive = false
-    @State private var didRunRealtimeCleanupProof = false
     @Environment(\.scenePhase) private var scenePhase
 
     // #0A84FF — system blue (Beside-like tint)
@@ -148,8 +134,6 @@ struct CamberRedlineApp: App {
             .task {
                 if TruthGraphDemoAutomation.isEnabled {
                     isTruthGraphDemoPresented = true
-                } else if RealtimeCleanupProofAutomation.isEnabled {
-                    await runRealtimeCleanupProofIfEnabled()
                 } else if AppSmokeAutomation.isEnabled {
                     // Smoke mode: skip Redline bootstrapping to reach triage faster.
                     // Contact list, cache warming, and subscriptions are not needed
@@ -193,7 +177,6 @@ struct CamberRedlineApp: App {
     private func updateBadge() {
         guard !AppSmokeAutomation.isEnabled else { return }
         guard !ThreadSwipeSmokeAutomation.isEnabled else { return }
-        guard !RealtimeCleanupProofAutomation.isEnabled else { return }
         let count = contactListViewModel.totalUngraded
         UNUserNotificationCenter.current().setBadgeCount(count)
     }
@@ -201,25 +184,6 @@ struct CamberRedlineApp: App {
     private func requestBadgePermission() async {
         let center = UNUserNotificationCenter.current()
         _ = try? await center.requestAuthorization(options: [.badge])
-    }
-
-    @MainActor
-    private func runRealtimeCleanupProofIfEnabled() async {
-        guard RealtimeCleanupProofAutomation.isEnabled else { return }
-        guard !didRunRealtimeCleanupProof else { return }
-        didRunRealtimeCleanupProof = true
-
-        RealtimeCleanupProofAutomation.logger.log("SMOKE_EVENT REALTIME_CLEANUP_PROOF_START")
-
-        let contactId = UUID()
-        await threadViewModel.startClaimGradeSubscription(contactId: contactId)
-        await threadViewModel.startInteractionsSubscription(contactId: contactId)
-        await contactListViewModel.subscribeToNewInteractions()
-
-        RealtimeCleanupProofAutomation.logger.log("SMOKE_EVENT REALTIME_CLEANUP_PROOF_END")
-
-        // Brief settle delay so log markers flush before the harness stops streaming.
-        try? await Task.sleep(for: .milliseconds(800))
     }
 
     @MainActor

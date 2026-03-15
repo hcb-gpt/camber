@@ -1,18 +1,8 @@
 import "jsr:@supabase/functions-js/edge-runtime.d.ts";
 import { createClient, type SupabaseClient } from "https://esm.sh/@supabase/supabase-js@2";
 import { getModelConfigCached } from "../_shared/model_config.ts";
-import {
-  agePhrase,
-  buildDeterministicFallback,
-  buildEvidenceItemsFromHighlights,
-  classifyIntent,
-  type EvidenceItem,
-  extractOpenLoopHintsFromEvidence,
-  type Intent,
-  sanitizeSuperintendentFragment,
-} from "./superintendent_v1.ts";
 
-const FUNCTION_VERSION = "redline-assistant_v0.6.0";
+const FUNCTION_VERSION = "redline-assistant_v0.5.0";
 const CONTRACT_VERSION = "assistant_context_v1";
 const DEFAULT_MODEL_ID = "gpt-4o";
 const DEFAULT_MAX_TOKENS = 2048;
@@ -45,7 +35,7 @@ function corsHeaders(): Record<string, string> {
     "Access-Control-Allow-Headers": "authorization, x-client-info, apikey, content-type, x-edge-secret, x-request-id",
     "Access-Control-Allow-Methods": "POST, OPTIONS",
     "Access-Control-Expose-Headers":
-      "x-request-id,x-contract-version,x-function-version,x-model-id,x-model-config-source,x-assistant-style,x-assistant-intent",
+      "x-request-id,x-contract-version,x-function-version,x-model-id,x-model-config-source",
   };
 }
 
@@ -70,51 +60,6 @@ function json(
 
 function toStringOrNull(value: unknown): string | null {
   return typeof value === "string" && value.trim().length > 0 ? value : null;
-}
-
-function toIntOrNull(value: unknown): number | null {
-  if (typeof value === "number" && Number.isFinite(value)) return Math.trunc(value);
-  if (typeof value === "string" && value.trim().length > 0) {
-    const n = Number.parseInt(value.trim(), 10);
-    return Number.isFinite(n) ? n : null;
-  }
-  return null;
-}
-
-function wordCount(value: string): number {
-  const s = String(value || "").trim();
-  if (!s) return 0;
-  return s.split(/\s+/).length;
-}
-
-const SUPERINTENDENT_STYLE = "superintendent_v1" as const;
-const LEGACY_STYLE = "legacy" as const;
-type ResponseStyle = typeof SUPERINTENDENT_STYLE | typeof LEGACY_STYLE;
-
-const BANNED_OUTPUT_PATTERNS: Array<{ re: RegExp; label: string }> = [
-  { re: /\bUTC\b/i, label: "UTC" },
-  { re: /\binbound\b/i, label: "inbound" },
-  { re: /\boutbound\b/i, label: "outbound" },
-  { re: /\binteraction(s)?\b/i, label: "interaction" },
-  { re: /\bthese interactions show\b/i, label: "these_interactions_show" },
-  { re: /\b[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\b/i, label: "uuid" },
-  { re: /\b\d{4}-\d{2}-\d{2}(?:[T\s]\d{2}:\d{2}(?::\d{2})?)?/i, label: "iso_datetime" },
-  { re: /\b\d{1,2}\/\d{1,2}\/\d{2,4}\b/i, label: "slash_date" },
-  {
-    re: /\b(?:jan|feb|mar|apr|may|jun|jul|aug|sep|sept|oct|nov|dec)[a-z]*\s+\d{1,2}(?:,\s*\d{4})?\b/i,
-    label: "month_date",
-  },
-  { re: /(^|\n)\s*\d+\.\s+/, label: "numbered_log" },
-];
-
-function violatesSuperintendentStyle(text: string): string | null {
-  const wc = wordCount(text);
-  if (wc > 200) return `too_long_words=${wc}`;
-  for (const { re, label } of BANNED_OUTPUT_PATTERNS) {
-    if (re.test(text)) return `banned_token=${label}`;
-  }
-  if (!/(^|\n)(Next:|Want me to)/i.test(text)) return "missing_next";
-  return null;
 }
 
 // ---------------------------------------------------------------------------
@@ -451,34 +396,7 @@ async function fetchDirectHighlights(
 }
 
 // ---------------------------------------------------------------------------
-// Project snapshot (open loops, commitments, phase)
-// ---------------------------------------------------------------------------
-
-type ProjectSnapshot = {
-  project_id?: string;
-  system_record?: Record<string, unknown> | null;
-  last_activity?: string | null;
-  open_loops?: Array<Record<string, unknown>>;
-  active_commitments?: Array<Record<string, unknown>>;
-  error?: string;
-};
-
-async function fetchProjectSnapshot(
-  db: SupabaseClient,
-  projectId: string,
-): Promise<{ snapshot: ProjectSnapshot | null; error: string | null }> {
-  try {
-    const { data, error } = await db.rpc("get_project_state_snapshot", { p_project_id: projectId });
-    if (error) return { snapshot: null, error: error.message };
-    if (!data || typeof data !== "object") return { snapshot: null, error: "snapshot_empty" };
-    return { snapshot: data as ProjectSnapshot, error: null };
-  } catch (err: unknown) {
-    return { snapshot: null, error: err instanceof Error ? err.message : "snapshot_exception" };
-  }
-}
-
-// ---------------------------------------------------------------------------
-// OpenAI
+// OpenAI streaming
 // ---------------------------------------------------------------------------
 
 async function openAiChatCompletionsStream(
@@ -506,157 +424,6 @@ async function openAiChatCompletionsStream(
       ],
     }),
   });
-}
-
-async function openAiChatCompletionText(
-  openAiKey: string,
-  model: string,
-  maxTokens: number,
-  temperature: number,
-  systemPrompt: string,
-  userMessage: string,
-): Promise<{ ok: boolean; status: number; content: string; errorText: string | null }> {
-  const resp = await fetch("https://api.openai.com/v1/chat/completions", {
-    method: "POST",
-    headers: {
-      "Content-Type": "application/json",
-      "Authorization": `Bearer ${openAiKey}`,
-    },
-    body: JSON.stringify({
-      model,
-      stream: false,
-      max_tokens: maxTokens,
-      temperature,
-      messages: [
-        { role: "system", content: systemPrompt },
-        { role: "user", content: userMessage },
-      ],
-    }),
-  });
-
-  if (!resp.ok) {
-    const t = await resp.text().catch(() => "");
-    return { ok: false, status: resp.status, content: "", errorText: t.slice(0, 1000) };
-  }
-
-  const jsonResp = await resp.json().catch(() => null) as Record<string, unknown> | null;
-  const choices = Array.isArray(jsonResp?.choices) ? jsonResp!.choices as Array<Record<string, unknown>> : [];
-  const msg = choices.length > 0 && typeof choices[0].message === "object"
-    ? choices[0].message as Record<string, unknown>
-    : null;
-  const content = msg && typeof msg.content === "string" ? msg.content : "";
-  return { ok: true, status: 200, content: String(content || ""), errorText: null };
-}
-
-function buildSuperintendentSystemPrompt(params: {
-  intent: Intent;
-  nowUtcIso: string;
-  clientTzName: string | null;
-  clientUtcOffsetMinutes: number | null;
-  project: {
-    name: string;
-    statusLine: string | null;
-  };
-  evidence: EvidenceItem[];
-  openLoops: Array<{ description: string; age: string }> | null;
-  commitments: Array<{ who: string; text: string; age: string }> | null;
-  openLoopHints: string[];
-  snapshotError: string | null;
-}): string {
-  const templateProjectStatus = `
-TEMPLATE (project status / "tell me about <project>"):
-<Project> — <status/phase if known>.
-
-Latest: <1 sentence: what happened + who + human time>.
-
-Open loop: <1 sentence: what's still not closed>.
-
-Next: <1 suggestion or offer to help>.
-`;
-
-  const templateSchedule = `
-TEMPLATE (schedule / "who's coming tomorrow"):
-<Who> is scheduled <when>. That's <tomorrow/today>.
-
-I don't see anyone else confirmed.
-
-Heads up: <1 dependency/risk>.
-
-Want me to <next action>?
-`;
-
-  const templateYesNo = `
-TEMPLATE (yes/no follow-up / "did the inspector call back"):
-Yes/No.
-
-Context: <who + human time + what it was about>.
-
-Next: <concrete next action>.
-`;
-
-  const templateMoney = `
-TEMPLATE (money / "what do I owe Eddie"):
-$<amount> OR "I can't compute that from the evidence I have."
-
-If you state a dollar amount, show the math (quantity @ rate) AND quote the exact evidence line.
-
-You told him <promise> (<human time>).
-
-Want me to <next step>?
-`;
-
-  const templateBottleneck = `
-TEMPLATE (bottleneck / "what's the holdup"):
-It's stuck on <single bottleneck>.
-
-Chain: <A> -> <B> -> <C>.
-
-Risk: <1 sentence>.
-
-Suggestion: <next step>.
-
-If you can't justify a full chain from evidence, say so and fall back to: Latest + Open loop + Next.
-`;
-
-  const intentTemplate = params.intent === "schedule_who"
-    ? templateSchedule
-    : params.intent === "yes_no_followup"
-    ? templateYesNo
-    : params.intent === "money_owed"
-    ? templateMoney
-    : params.intent === "bottleneck"
-    ? templateBottleneck
-    : templateProjectStatus;
-
-  const groundingNotes = params.snapshotError
-    ? `SNAPSHOT_WARNING: project snapshot unavailable (${params.snapshotError}). Rely only on EVIDENCE + OPEN_LOOP_HINTS.`
-    : "SNAPSHOT_OK: project snapshot available.";
-
-  return `You are the HCB Redline Assistant for Heartwood Custom Builders.
-You speak like a sharp superintendent on a jobsite: short, direct, actionable.
-
-HARD RULES (must follow):
-1) Plain text only. No JSON.
-2) First line must be the answer (no preamble).
-3) Use human time phrases; DO NOT print timestamps or ISO dates.
-4) Do NOT use these words/phrases: "UTC", "interaction", "inbound", "outbound", "These interactions show".
-5) Do NOT print IDs/UUIDs.
-6) Keep it under 200 words (aim under 120).
-7) If the evidence is insufficient, say so plainly. No guessing.
-
-${intentTemplate.trim()}
-
-DATA GROUNDING (strict):
-- Use ONLY facts in CONTEXT below.
-- Prefer naming people (Jorge, the homeowner) over metadata.
-- Surface one open loop if present (or a hinted open loop), even if the user didn't ask.
-- End with a useful next step ("Want me to…").
-
-${groundingNotes}
-
-CONTEXT:
-${JSON.stringify(params, null, 2)}
-`;
 }
 
 // ---------------------------------------------------------------------------
@@ -717,18 +484,9 @@ Deno.serve(async (req: Request): Promise<Response> => {
       );
     }
 
-    const intent = classifyIntent(userMessage);
     const requestedModel = toStringOrNull(body.model);
     const inputProjectId = toStringOrNull(body.project_id);
     const contactId = toStringOrNull(body.contact_id);
-    const clientTzName = toStringOrNull(body.client_tz_name);
-    const clientUtcOffsetMinutes = toIntOrNull(body.client_utc_offset_minutes);
-    const requestedStyleRaw = toStringOrNull(body.response_style);
-    const requestedStyle: ResponseStyle | null = requestedStyleRaw === LEGACY_STYLE
-      ? LEGACY_STYLE
-      : requestedStyleRaw === SUPERINTENDENT_STYLE
-      ? SUPERINTENDENT_STYLE
-      : null;
 
     const db = createClient(supabaseUrl, supabaseKey);
 
@@ -744,29 +502,6 @@ Deno.serve(async (req: Request): Promise<Response> => {
     ]);
 
     const groundedPayload = groundedResult.payload;
-
-    const provider = requestedModel ? "openai" : modelConfig.provider;
-    const primaryModel = requestedModel ?? modelConfig.modelId;
-    const fallbackModel = !requestedModel &&
-        provider === "openai" &&
-        modelConfig.fallbackProvider === "openai" &&
-        modelConfig.fallbackModelId
-      ? modelConfig.fallbackModelId
-      : null;
-
-    if (provider !== "openai") {
-      return json(
-        {
-          ok: false,
-          error: "unsupported_model_provider",
-          provider,
-          request_id: requestId,
-          function_version: FUNCTION_VERSION,
-        },
-        500,
-        requestId,
-      );
-    }
 
     // Extract projects roster from grounded context
     const projectsRoster: RosterProject[] = Array.isArray(groundedPayload?.projects_roster)
@@ -796,33 +531,6 @@ Deno.serve(async (req: Request): Promise<Response> => {
       }
     }
 
-    const defaultStyle: ResponseStyle = effectiveProjectId ? SUPERINTENDENT_STYLE : LEGACY_STYLE;
-    const responseStyle: ResponseStyle = requestedStyle ?? defaultStyle;
-
-    // Disambiguation: deterministic + jobsite tone (no IDs, no timestamps).
-    if (!effectiveProjectId && resolution.mode === "ambiguous" && resolution.matches.length > 0) {
-      const options = resolution.matches.slice(0, 5).map((p) => {
-        const status = p.status ? ` (${sanitizeSuperintendentFragment(p.status)})` : "";
-        return `- ${sanitizeSuperintendentFragment(p.name)}${status}`;
-      });
-      const answer = `Which one do you mean?\n\n${options.join("\n")}\n`;
-      return textSseResponse(answer, requestId, {
-        "x-assistant-style": SUPERINTENDENT_STYLE,
-        "x-assistant-intent": intent,
-      });
-    }
-
-    if (!effectiveProjectId && resolution.mode === "none") {
-      const suggestions = projectsRoster.slice(0, 5).map((p) => `- ${sanitizeSuperintendentFragment(p.name)}`);
-      const answer = suggestions.length > 0
-        ? `Which project do you mean?\n\nHere are a few:\n${suggestions.join("\n")}\n`
-        : "Which project do you mean?\n";
-      return textSseResponse(answer, requestId, {
-        "x-assistant-style": SUPERINTENDENT_STYLE,
-        "x-assistant-intent": intent,
-      });
-    }
-
     // Handle roster-listing queries directly (no LLM needed)
     if (isProjectsRosterQuery(userMessage)) {
       const lines = projectsRoster.slice(0, 15).map((p, i) => {
@@ -832,163 +540,7 @@ Deno.serve(async (req: Request): Promise<Response> => {
       const answer = projectsRoster.length > 0
         ? `Active project roster (${lines.length} shown):\n${lines.join("\n")}`
         : "No projects found in the current context.";
-      return textSseResponse(answer, requestId, {
-        "x-assistant-style": responseStyle,
-        "x-assistant-intent": intent,
-      });
-    }
-
-    if (responseStyle === SUPERINTENDENT_STYLE && effectiveProjectId) {
-      const nowUtc = new Date();
-
-      const projectFromRoster = projectsRoster.find((p) => p.id === effectiveProjectId) ?? null;
-
-      const [directHighlights, snapshotResult] = await Promise.all([
-        fetchDirectHighlights(db, effectiveProjectId),
-        fetchProjectSnapshot(db, effectiveProjectId),
-      ]);
-
-      const snapshot = snapshotResult.snapshot;
-      const snapshotError = snapshotResult.error;
-
-      const sys = snapshot && snapshot.system_record && typeof snapshot.system_record === "object"
-        ? snapshot.system_record as Record<string, unknown>
-        : null;
-      const projectName = toStringOrNull(sys?.name) ?? projectFromRoster?.name ?? "This project";
-      const phase = toStringOrNull(sys?.phase);
-      const status = toStringOrNull(sys?.status);
-      const statusParts = [
-        phase && phase.toLowerCase() !== "unknown" ? phase : null,
-        status && status.toLowerCase() !== "unknown" ? status : null,
-      ].filter((v): v is string => typeof v === "string" && v.trim().length > 0);
-      const statusLine = statusParts.length > 0 ? statusParts.join(" / ") : (projectFromRoster?.status ?? null);
-
-      let evidence = buildEvidenceItemsFromHighlights({
-        highlights: directHighlights,
-        now_utc: nowUtc,
-        client_tz_name: clientTzName,
-        client_utc_offset_minutes: clientUtcOffsetMinutes,
-      });
-
-      // Fallback evidence: use assistant_context_v1 highlight_text if direct-query slice is empty.
-      if (evidence.length === 0 && Array.isArray(groundedPayload?.project_recent_highlights)) {
-        const entry = (groundedPayload!.project_recent_highlights as Array<Record<string, unknown>>)
-          .find((ph) => String(ph.project_id) === effectiveProjectId);
-        const rpcHighlights = entry && Array.isArray(entry.highlights)
-          ? entry.highlights as Array<Record<string, unknown>>
-          : [];
-        if (rpcHighlights.length > 0) {
-          const mapped = rpcHighlights.map((h) => ({
-            event_at_utc: toStringOrNull(h.event_at_utc),
-            channel: toStringOrNull(h.interaction_type),
-            contact_name: null,
-            summary_text: toStringOrNull(h.highlight_text),
-          }));
-          evidence = buildEvidenceItemsFromHighlights({
-            highlights: mapped,
-            now_utc: nowUtc,
-            client_tz_name: clientTzName,
-            client_utc_offset_minutes: clientUtcOffsetMinutes,
-          });
-        }
-      }
-
-      const openLoopsRaw = snapshot && Array.isArray(snapshot.open_loops) ? snapshot.open_loops : [];
-      const openLoops = openLoopsRaw
-        .slice(0, 3)
-        .map((o) => ({
-          description: sanitizeSuperintendentFragment(toStringOrNull(o?.description) ?? ""),
-          age: agePhrase(toStringOrNull(o?.created_at), nowUtc),
-        }))
-        .filter((o) => o.description.length > 0);
-
-      const commitmentsRaw = snapshot && Array.isArray(snapshot.active_commitments) ? snapshot.active_commitments : [];
-      const commitments = commitmentsRaw
-        .slice(0, 3)
-        .map((c) => ({
-          who: sanitizeSuperintendentFragment(toStringOrNull(c?.speaker_label) ?? "") || "(someone)",
-          text: sanitizeSuperintendentFragment(toStringOrNull(c?.claim_text) ?? ""),
-          age: agePhrase(toStringOrNull(c?.created_at), nowUtc),
-        }))
-        .filter((c) => c.text.length > 0);
-
-      const openLoopHints = extractOpenLoopHintsFromEvidence(evidence.map((e) => e.excerpt));
-
-      const systemPrompt = buildSuperintendentSystemPrompt({
-        intent,
-        nowUtcIso: nowUtc.toISOString(),
-        clientTzName: clientTzName ?? null,
-        clientUtcOffsetMinutes,
-        project: { name: projectName, statusLine },
-        evidence,
-        openLoops: openLoops.length > 0 ? openLoops : null,
-        commitments: commitments.length > 0 ? commitments : null,
-        openLoopHints,
-        snapshotError,
-      });
-
-      const maxTokens = Math.min(512, Math.max(128, modelConfig.maxTokens));
-      const temperature = 0.2;
-
-      let activeModel = primaryModel;
-      let llmResp = await openAiChatCompletionText(
-        openAiKey,
-        primaryModel,
-        maxTokens,
-        temperature,
-        systemPrompt,
-        userMessage,
-      );
-
-      if (!llmResp.ok && fallbackModel && fallbackModel !== primaryModel) {
-        console.warn(
-          `[redline-assistant] superintendent primary model failed (${primaryModel}). falling back to ${fallbackModel}. status=${llmResp.status} body=${llmResp.errorText}`,
-        );
-        activeModel = fallbackModel;
-        llmResp = await openAiChatCompletionText(
-          openAiKey,
-          fallbackModel,
-          maxTokens,
-          temperature,
-          systemPrompt,
-          userMessage,
-        );
-      }
-
-      const fallbackText = buildDeterministicFallback({
-        projectName,
-        projectStatusLine: statusLine,
-        evidence,
-        openLoops: openLoops.length > 0 ? openLoops : null,
-        openLoopHints,
-      });
-
-      let finalText = fallbackText;
-      let modelHeader = "deterministic_fallback";
-
-      if (llmResp.ok) {
-        const content = String(llmResp.content || "").trim();
-        const violation = content ? violatesSuperintendentStyle(content) : "empty";
-        if (!violation) {
-          finalText = content.endsWith("\n") ? content : content + "\n";
-          modelHeader = activeModel;
-        } else {
-          console.warn(
-            `[redline-assistant] superintendent output violated style: ${violation}. request_id=${requestId}`,
-          );
-        }
-      } else {
-        console.warn(
-          `[redline-assistant] superintendent llm error. request_id=${requestId} status=${llmResp.status} body=${llmResp.errorText}`,
-        );
-      }
-
-      return textSseResponse(finalText, requestId, {
-        "x-model-id": modelHeader,
-        "x-model-config-source": modelConfig.source,
-        "x-assistant-style": SUPERINTENDENT_STYLE,
-        "x-assistant-intent": intent,
-      });
+      return textSseResponse(answer, requestId);
     }
 
     // Extract highlights for the effective project (if any)
@@ -1064,6 +616,29 @@ CONTEXT_PACKET:
 ${JSON.stringify(contextPacket, null, 2)}
 `;
 
+    const provider = requestedModel ? "openai" : modelConfig.provider;
+    const primaryModel = requestedModel ?? modelConfig.modelId;
+    const fallbackModel = !requestedModel &&
+        provider === "openai" &&
+        modelConfig.fallbackProvider === "openai" &&
+        modelConfig.fallbackModelId
+      ? modelConfig.fallbackModelId
+      : null;
+
+    if (provider !== "openai") {
+      return json(
+        {
+          ok: false,
+          error: "unsupported_model_provider",
+          provider,
+          request_id: requestId,
+          function_version: FUNCTION_VERSION,
+        },
+        500,
+        requestId,
+      );
+    }
+
     let activeModel = primaryModel;
     let openAiResponse = await openAiChatCompletionsStream(
       openAiKey,
@@ -1118,8 +693,6 @@ ${JSON.stringify(contextPacket, null, 2)}
         "x-contract-version": CONTRACT_VERSION,
         "x-model-id": activeModel,
         "x-model-config-source": modelConfig.source,
-        "x-assistant-style": responseStyle,
-        "x-assistant-intent": intent,
       },
     });
   } catch (error: unknown) {

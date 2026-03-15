@@ -1,5 +1,4 @@
 import SwiftUI
-import Observation
 
 fileprivate enum InboxFilter: String, CaseIterable {
     case all = "All"
@@ -15,8 +14,8 @@ fileprivate enum ThreadSwipeSmokeAutomation {
 }
 
 struct ContactListView: View {
-    @Bindable var contactListViewModel: ContactListViewModel
-    @Bindable var threadViewModel: ThreadViewModel
+    var contactListViewModel: ContactListViewModel
+    var threadViewModel: ThreadViewModel
     @Binding var selectedTab: RedlineTab
     @Binding var isTriagePresented: Bool
 
@@ -94,7 +93,6 @@ struct ContactListView: View {
             .toolbar { topBarToolbar }
             .overlay { loadingOverlay }
             .overlay { searchEmptyOverlay }
-            .overlay { emptyInboxOverlay }
             .overlay(alignment: Alignment.bottom) { errorOverlay }
             .onReceive(NotificationCenter.default.publisher(for: .redlineAttributionDidResolve)) { _ in
                 Task {
@@ -155,35 +153,6 @@ struct ContactListView: View {
         if !searchText.isEmpty && visibleContacts.isEmpty && !contactListViewModel.isLoading {
             ContentUnavailableView.search(text: searchText)
                 .foregroundStyle(.white)
-        }
-    }
-
-    @ViewBuilder
-    private var emptyInboxOverlay: some View {
-        if searchText.isEmpty,
-           visibleContacts.isEmpty,
-           contactListViewModel.contacts.isEmpty,
-           !contactListViewModel.isLoading,
-           contactListViewModel.error == nil {
-            VStack(spacing: 10) {
-                Image(systemName: "tray")
-                    .font(.title2)
-                    .foregroundStyle(.secondary)
-                Text("Inbox is empty")
-                    .font(.headline)
-                    .foregroundStyle(.white)
-                Text("No threads are available yet. Pull to refresh or tap reload.")
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-                    .multilineTextAlignment(.center)
-                Button("Reload") {
-                    Task { await contactListViewModel.loadContacts() }
-                }
-                .buttonStyle(.borderedProminent)
-            }
-            .padding(20)
-            .background(.ultraThinMaterial, in: RoundedRectangle(cornerRadius: 14))
-            .padding(.horizontal, 28)
         }
     }
 
