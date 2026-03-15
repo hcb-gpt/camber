@@ -1785,7 +1785,7 @@ async function handleThread(
         if (contactPhoneVariants.length === 1) query = query.eq("contact_phone", contactPhoneVariants[0]);
         else if (contactPhoneVariants.length > 1) query = query.in("contact_phone", contactPhoneVariants);
         else query = query.eq("contact_phone", "__no_match__");
-        
+
         const { data, error } = await query;
         if (error) throw error;
         return data || [];
@@ -2458,6 +2458,9 @@ async function handleGrade(db: any, req: Request, t0: number): Promise<Response>
   const { claim_id, grade, correction_text, graded_by } = body;
 
   if (!claim_id) return json({ ok: false, error_code: "missing_claim_id" }, 400);
+  if (!isValidUUID(claim_id)) {
+    return json({ ok: false, error_code: "invalid_claim_id", error: "claim_id must be a valid UUID" }, 400);
+  }
   if (!grade) return json({ ok: false, error_code: "missing_grade" }, 400);
   if (!["confirm", "reject", "correct"].includes(grade)) {
     return json({ ok: false, error_code: "invalid_grade", error: "grade must be confirm, reject, or correct" }, 400);

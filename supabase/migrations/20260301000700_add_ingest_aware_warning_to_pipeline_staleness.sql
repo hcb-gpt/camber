@@ -161,45 +161,45 @@ BEGIN
 
   IF v_call_hard_stale THEN
     v_details := v_details || format(
-      'CALLS_HARD: event=%s (%s min), ingest=%s (%s min), recent_rows_120=%s, null_event_ratio_120=%.2f. ',
+      'CALLS_HARD: event=%s (%s min), ingest=%s (%s min), recent_rows_120=%s, null_event_ratio_120=%s. ',
       coalesce(v_last_call_event::text, 'null'),
       coalesce(v_call_event_age_min::text, 'null'),
       coalesce(v_last_call_ingested::text, 'null'),
       coalesce(v_call_ingest_age_min::text, 'null'),
       v_call_recent_rows_120,
-      coalesce(v_call_null_ratio_120, 0)
+      coalesce(round(v_call_null_ratio_120, 2)::text, '0')
     );
   ELSIF v_call_warning THEN
     v_details := v_details || format(
-      'CALLS_WARNING: event=%s (%s min), ingest_fresh=%s (%s min), recent_rows_120=%s, null_event_ratio_120=%.2f. ',
+      'CALLS_WARNING: event=%s (%s min), ingest_fresh=%s (%s min), recent_rows_120=%s, null_event_ratio_120=%s. ',
       coalesce(v_last_call_event::text, 'null'),
       coalesce(v_call_event_age_min::text, 'null'),
       coalesce(v_last_call_ingested::text, 'null'),
       coalesce(v_call_ingest_age_min::text, 'null'),
       v_call_recent_rows_120,
-      coalesce(v_call_null_ratio_120, 0)
+      coalesce(round(v_call_null_ratio_120, 2)::text, '0')
     );
   END IF;
 
   IF v_sms_hard_stale THEN
     v_details := v_details || format(
-      'SMS_HARD: event=%s (%s min), ingest=%s (%s min), recent_rows_120=%s, null_event_ratio_120=%.2f. ',
+      'SMS_HARD: event=%s (%s min), ingest=%s (%s min), recent_rows_120=%s, null_event_ratio_120=%s. ',
       coalesce(v_last_sms_event::text, 'null'),
       coalesce(v_sms_event_age_min::text, 'null'),
       coalesce(v_last_sms_ingested::text, 'null'),
       coalesce(v_sms_ingest_age_min::text, 'null'),
       v_sms_recent_rows_120,
-      coalesce(v_sms_null_ratio_120, 0)
+      coalesce(round(v_sms_null_ratio_120, 2)::text, '0')
     );
   ELSIF v_sms_warning THEN
     v_details := v_details || format(
-      'SMS_WARNING: event=%s (%s min), ingest_fresh=%s (%s min), recent_rows_120=%s, null_event_ratio_120=%.2f. ',
+      'SMS_WARNING: event=%s (%s min), ingest_fresh=%s (%s min), recent_rows_120=%s, null_event_ratio_120=%s. ',
       coalesce(v_last_sms_event::text, 'null'),
       coalesce(v_sms_event_age_min::text, 'null'),
       coalesce(v_last_sms_ingested::text, 'null'),
       coalesce(v_sms_ingest_age_min::text, 'null'),
       v_sms_recent_rows_120,
-      coalesce(v_sms_null_ratio_120, 0)
+      coalesce(round(v_sms_null_ratio_120, 2)::text, '0')
     );
   END IF;
 

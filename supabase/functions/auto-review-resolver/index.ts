@@ -24,6 +24,7 @@ const ALLOWED_SOURCES = [
   "agent-teams",
   "auto-review-resolver",
   "cron",
+  "pg_cron:auto-review-resolver",
   "claude-chat",
   "test",
 ];

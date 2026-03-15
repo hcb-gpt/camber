@@ -4,6 +4,7 @@ import {
   extractAmount,
   extractInvoiceOrTransaction,
   extractReceiptRecord,
+  extractVendor,
 } from "./extraction.ts";
 import { assertEquals, assertExists } from "https://deno.land/std@0.208.0/assert/mod.ts";
 
@@ -158,4 +159,154 @@ Deno.test("extractReceiptRecord prefers a real vendor hint over HCB in forwarded
 
   assertEquals(record.vendor, "Carter Lumber");
   assertEquals(record.vendor_normalized, "carter lumber");
+});
+
+// --- Forwarded-vendor attribution regression tests (E-5 fix) ---
+
+Deno.test("extractVendor suppresses From header when domain matches mailbox owner", () => {
+  const result = extractVendor(
+    '"Heartwood Custom Builders" <noreply@heartwoodcustombuilders.com>',
+    "Fwd: Carter Lumber Invoice 2044",
+    "Please see attached invoice from Carter Lumber for framing package.",
+    [],
+    "heartwoodcustombuilders.com",
+  );
+
+  assertEquals(result.source, "from_header_suppressed_owner_domain");
+  assertEquals(result.vendor, null);
+});
+
+Deno.test("extractVendor finds vendor hint via normalized match when raw match fails", () => {
+  // "Carter Lumber" hint should match even when the body has slightly different formatting
+  const result = extractVendor(
+    '"Heartwood Custom Builders" <noreply@heartwoodcustombuilders.com>',
+    "Fwd: Invoice for framing",
+    "Invoice from Carter  Lumber LLC for the Winship framing package.",
+    ["Carter Lumber"],
+    "heartwoodcustombuilders.com",
+  );
+
+  assertEquals(result.vendor, "Carter Lumber");
+  assertEquals(result.vendor_normalized, "carter lumber");
+  assertEquals(result.source, "vendor_hint");
+});
+
+Deno.test("extractVendor rejects accounting boilerplate terms as vendor names", () => {
+  const result = extractVendor(
+    '"Accounts Receivable" <ar@example.com>',
+    "Statement",
+    "Your statement is attached.",
+    [],
+    null,
+  );
+
+  assertEquals(result.source, "from_header_rejected_boilerplate");
+  assertEquals(result.vendor, null);
+});
+
+Deno.test("extractReceiptRecord threads mailboxDomain to suppress forwarded HCB vendor", () => {
+  const record = extractReceiptRecord({
+    aliasRows: ALIASES,
+    bodyText: "Invoice from Carter Lumber. Total Due: $4,103.22. Woodbery framing package.",
+    fallbackIso: "2026-03-14T12:00:00.000Z",
+    fromHeader: '"Heartwood Custom Builders" <noreply@heartwoodcustombuilders.com>',
+    mailboxDomain: "heartwoodcustombuilders.com",
+    subject: "Fwd: Carter Lumber Invoice for Woodbery",
+    vendorHints: ["Carter Lumber", "HCB"],
+  });
+
+  assertEquals(record.vendor, "Carter Lumber");
+  assertEquals(record.vendor_normalized, "carter lumber");
+});
+
+// --- BuilderTrend internal notification regression tests ---
+
+Deno.test("extractVendor rejects concatenated internal vendor name from BuilderTrend", () => {
+  const result = extractVendor(
+    '"heartwoodcustombuildersllc" <heartwoodcustombuildersllc@buildertrend.com>',
+    "Invoice Created - _Test_Job",
+    "An invoice has been created for _Test_Job. Amount: $27,530.00",
+    [],
+    null,
+  );
+
+  assertEquals(result.source, "from_header_rejected_internal_vendor");
+  assertEquals(result.vendor, null);
+});
+
+Deno.test("extractVendor rejects 'Heartwood Custom Builders LLC' display name as internal vendor", () => {
+  const result = extractVendor(
+    '"Heartwood Custom Builders LLC" <notifications@buildertrend.com>',
+    "Invoice Updated",
+    "An invoice has been updated. Total: $48,480.56",
+    [],
+    null,
+  );
+
+  assertEquals(result.source, "from_header_rejected_internal_vendor");
+  assertEquals(result.vendor, null);
+});
+
+Deno.test("extractVendor rejects QuickBooks as forwarding platform boilerplate", () => {
+  const result = extractVendor(
+    '"QuickBooks" <quickbooks@notification.intuit.com>',
+    "New payment request from TLP Construction, LLC - invoice 895",
+    "You have a new payment request. Amount Due: $14,925.00",
+    [],
+    null,
+  );
+
+  assertEquals(result.source, "from_header_rejected_boilerplate");
+  assertEquals(result.vendor, null);
+});
+
+Deno.test("extractVendor still uses From header when domain does NOT match mailbox", () => {
+  const result = extractVendor(
+    '"Carter Lumber" <billing@carterlumber.com>',
+    "Invoice 2044",
+    "Your invoice is attached.",
+    [],
+    "heartwoodcustombuilders.com",
+  );
+
+  assertEquals(result.vendor, "Carter Lumber");
+  assertEquals(result.vendor_normalized, "carter lumber");
+  assertEquals(result.source, "from_header");
+});
+
+// --- DB-backed vendor registry override tests ---
+
+Deno.test("extractVendor uses registry rejectSet override instead of hardcoded VENDOR_REJECT_TERMS", () => {
+  // "billing" is in hardcoded VENDOR_REJECT_TERMS but NOT in our custom set
+  const customRejectSet = new Set(["custom blocker"]);
+  const result = extractVendor(
+    '"Billing" <billing@example.com>',
+    "Invoice",
+    "Your invoice is attached.",
+    [],
+    null,
+    { rejectSet: customRejectSet },
+  );
+
+  // "billing" should NOT be rejected because it's not in the custom set
+  assertEquals(result.vendor, "Billing");
+  assertEquals(result.source, "from_header");
+});
+
+Deno.test("extractVendor uses registry internalPatterns override", () => {
+  // "hcb" is caught by hardcoded INTERNAL_VENDOR_PATTERNS but not by our custom list
+  const customPatterns = [/^acme$/];
+  const result = extractVendor(
+    '"HCB" <info@hcb.llc>',
+    "Statement",
+    "Your statement.",
+    [],
+    null,
+    { rejectSet: new Set(), internalPatterns: customPatterns },
+  );
+
+  // With empty rejectSet and custom internalPatterns that don't match "hcb",
+  // the vendor should pass through
+  assertEquals(result.vendor, "HCB");
+  assertEquals(result.source, "from_header");
 });

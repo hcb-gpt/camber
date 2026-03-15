@@ -9,6 +9,7 @@
  */
 import "jsr:@supabase/functions-js/edge-runtime.d.ts";
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
+import { gmailApiGetJson, resolveGmailAccessToken } from "../../../../shared/gmail.js";
 
 const LOOKBACK_DAYS_DEFAULT = 30;
 const MAX_RESULTS_DEFAULT = 5;
@@ -16,8 +17,6 @@ const CACHE_TTL_SECONDS_DEFAULT = 3600;
 const MAX_GMAIL_API_CALLS = 5;
 const LIST_CALLS = 1;
 const MAX_GET_CALLS = Math.max(0, MAX_GMAIL_API_CALLS - LIST_CALLS);
-const GMAIL_SCOPE = "https://www.googleapis.com/auth/gmail.readonly";
-const GMAIL_TOKEN_URL = "https://oauth2.googleapis.com/token";
 
 const DEFAULT_STOPWORDS = new Set([
   "re",
@@ -73,11 +72,6 @@ interface EmailLookupMeta {
   auth_mode: string | null;
   warnings: string[];
   truncation: string[];
-}
-
-interface AccessTokenResult {
-  token: string | null;
-  auth_mode: string | null;
 }
 
 function safeArray<T>(value: unknown): T[] {
@@ -228,205 +222,6 @@ async function sha256Hex(input: string): Promise<string> {
   const digest = await crypto.subtle.digest("SHA-256", bytes);
   const parts = Array.from(new Uint8Array(digest)).map((b) => b.toString(16).padStart(2, "0"));
   return parts.join("");
-}
-
-function toBase64Url(input: string | Uint8Array): string {
-  const bytes = typeof input === "string" ? new TextEncoder().encode(input) : input;
-  let binary = "";
-  for (const b of bytes) binary += String.fromCharCode(b);
-  return btoa(binary).replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/g, "");
-}
-
-function pemToPkcs8(pemRaw: string): ArrayBuffer {
-  const pem = pemRaw.replace(/\\n/g, "\n");
-  const normalized = pem
-    .replace("-----BEGIN PRIVATE KEY-----", "")
-    .replace("-----END PRIVATE KEY-----", "")
-    .replace(/\s+/g, "");
-  const binary = atob(normalized);
-  const bytes = new Uint8Array(binary.length);
-  for (let i = 0; i < binary.length; i++) bytes[i] = binary.charCodeAt(i);
-  return bytes.buffer;
-}
-
-async function buildSignedJwt(claims: Record<string, unknown>, privateKeyPem: string): Promise<string> {
-  const header = { alg: "RS256", typ: "JWT" };
-  const signingInput = `${toBase64Url(JSON.stringify(header))}.${toBase64Url(JSON.stringify(claims))}`;
-  const key = await crypto.subtle.importKey(
-    "pkcs8",
-    pemToPkcs8(privateKeyPem),
-    { name: "RSASSA-PKCS1-v1_5", hash: "SHA-256" },
-    false,
-    ["sign"],
-  );
-  const signature = await crypto.subtle.sign(
-    "RSASSA-PKCS1-v1_5",
-    key,
-    new TextEncoder().encode(signingInput),
-  );
-  return `${signingInput}.${toBase64Url(new Uint8Array(signature))}`;
-}
-
-async function getAccessTokenFromRefreshToken(warnings: string[]): Promise<string | null> {
-  const clientId = Deno.env.get("GMAIL_OAUTH_CLIENT_ID");
-  const clientSecret = Deno.env.get("GMAIL_OAUTH_CLIENT_SECRET");
-  const refreshToken = Deno.env.get("GMAIL_OAUTH_REFRESH_TOKEN");
-  if (!clientId || !clientSecret || !refreshToken) return null;
-
-  const body = new URLSearchParams({
-    client_id: clientId,
-    client_secret: clientSecret,
-    refresh_token: refreshToken,
-    grant_type: "refresh_token",
-  });
-
-  const response = await fetch(GMAIL_TOKEN_URL, {
-    method: "POST",
-    headers: { "Content-Type": "application/x-www-form-urlencoded" },
-    body,
-  });
-
-  if (!response.ok) {
-    warnings.push(`gmail_refresh_failed_http_${response.status}`);
-    return null;
-  }
-
-  const json = await response.json().catch(() => null);
-  const token = typeof json?.access_token === "string" ? json.access_token : null;
-  if (!token) warnings.push("gmail_refresh_missing_access_token");
-  return token;
-}
-
-function parseServiceAccountFromEnv(): { client_email: string; private_key: string; subject: string | null } | null {
-  const rawJson = Deno.env.get("GMAIL_SERVICE_ACCOUNT_JSON");
-  if (rawJson) {
-    try {
-      const parsed = JSON.parse(rawJson);
-      if (typeof parsed?.client_email === "string" && typeof parsed?.private_key === "string") {
-        const subject = typeof parsed?.subject === "string" ? parsed.subject : null;
-        return {
-          client_email: parsed.client_email,
-          private_key: parsed.private_key,
-          subject,
-        };
-      }
-    } catch {
-      // Fall through to discrete env vars.
-    }
-  }
-
-  const clientEmail = Deno.env.get("GMAIL_SERVICE_ACCOUNT_EMAIL");
-  const privateKey = Deno.env.get("GMAIL_SERVICE_ACCOUNT_PRIVATE_KEY");
-  const subject = Deno.env.get("GMAIL_IMPERSONATED_USER") || Deno.env.get("GMAIL_SERVICE_ACCOUNT_SUBJECT") || null;
-  if (!clientEmail || !privateKey) return null;
-  return { client_email: clientEmail, private_key: privateKey, subject };
-}
-
-async function getAccessTokenFromServiceAccount(warnings: string[]): Promise<string | null> {
-  const serviceAccount = parseServiceAccountFromEnv();
-  if (!serviceAccount) return null;
-
-  const now = Math.floor(Date.now() / 1000);
-  const claims: Record<string, unknown> = {
-    iss: serviceAccount.client_email,
-    scope: GMAIL_SCOPE,
-    aud: GMAIL_TOKEN_URL,
-    iat: now,
-    exp: now + 3600,
-  };
-
-  if (serviceAccount.subject) {
-    claims.sub = serviceAccount.subject;
-  } else {
-    warnings.push("gmail_service_account_no_subject");
-  }
-
-  let assertion: string;
-  try {
-    assertion = await buildSignedJwt(claims, serviceAccount.private_key);
-  } catch (error: unknown) {
-    warnings.push(`gmail_service_account_sign_failed:${String((error as Error)?.message || error).slice(0, 80)}`);
-    return null;
-  }
-
-  const body = new URLSearchParams({
-    grant_type: "urn:ietf:params:oauth:grant-type:jwt-bearer",
-    assertion,
-  });
-
-  const response = await fetch(GMAIL_TOKEN_URL, {
-    method: "POST",
-    headers: { "Content-Type": "application/x-www-form-urlencoded" },
-    body,
-  });
-
-  if (!response.ok) {
-    warnings.push(`gmail_service_account_token_failed_http_${response.status}`);
-    return null;
-  }
-
-  const json = await response.json().catch(() => null);
-  const token = typeof json?.access_token === "string" ? json.access_token : null;
-  if (!token) warnings.push("gmail_service_account_missing_access_token");
-  return token;
-}
-
-async function resolveAccessToken(warnings: string[]): Promise<AccessTokenResult> {
-  const staticToken = Deno.env.get("GMAIL_OAUTH_ACCESS_TOKEN");
-  if (staticToken) {
-    return { token: staticToken, auth_mode: "static_access_token" };
-  }
-
-  const refreshTokenValue = await getAccessTokenFromRefreshToken(warnings);
-  if (refreshTokenValue) {
-    return { token: refreshTokenValue, auth_mode: "oauth_refresh_token" };
-  }
-
-  const serviceAccountToken = await getAccessTokenFromServiceAccount(warnings);
-  if (serviceAccountToken) {
-    return { token: serviceAccountToken, auth_mode: "service_account" };
-  }
-
-  warnings.push("gmail_auth_unconfigured");
-  return { token: null, auth_mode: null };
-}
-
-interface GmailResponse {
-  ok: boolean;
-  status: number;
-  json: any;
-}
-
-async function gmailGetJson(
-  token: string,
-  path: string,
-  params: Record<string, string | number | Array<string | number>>,
-): Promise<GmailResponse> {
-  const url = new URL(`https://gmail.googleapis.com/gmail/v1/users/me/${path}`);
-  for (const [key, value] of Object.entries(params || {})) {
-    if (value === undefined || value === null) continue;
-    if (Array.isArray(value)) {
-      for (const item of value) url.searchParams.append(key, String(item));
-    } else {
-      url.searchParams.set(key, String(value));
-    }
-  }
-
-  let response: Response;
-  try {
-    response = await fetch(url.toString(), {
-      method: "GET",
-      headers: {
-        Authorization: `Bearer ${token}`,
-        Accept: "application/json",
-      },
-    });
-  } catch (_networkError) {
-    return { ok: false, status: 0, json: null };
-  }
-
-  const json = await response.json().catch(() => null);
-  return { ok: response.ok, status: response.status, json };
 }
 
 function constantTimeEqual(a: string, b: string): boolean {
@@ -650,8 +445,8 @@ Deno.serve(async (req: Request) => {
     warnings.push(`cache_read_exception:${String((error as Error)?.message || error).slice(0, 80)}`);
   }
 
-  const access = await resolveAccessToken(warnings);
-  meta.auth_mode = access.auth_mode;
+  const access = await resolveGmailAccessToken({ env: Deno.env, warnings });
+  meta.auth_mode = access.authMode;
   if (!access.token) {
     meta.lookup_ms = Date.now() - startedAt;
     return new Response(JSON.stringify({ ok: true, email_context: [], email_lookup_meta: meta }), {
@@ -696,11 +491,15 @@ Deno.serve(async (req: Request) => {
   }
 
   meta.gmail_api_calls += 1;
-  const listResp = await gmailGetJson(access.token, "messages", {
-    q: query,
-    maxResults: effectiveMax,
-    includeSpamTrash: "false",
-    fields: "messages(id,threadId),resultSizeEstimate",
+  const listResp = await gmailApiGetJson({
+    token: access.token,
+    path: "messages",
+    params: {
+      q: query,
+      maxResults: effectiveMax,
+      includeSpamTrash: "false",
+      fields: "messages(id,threadId),resultSizeEstimate",
+    },
   });
 
   if (!listResp.ok) {
@@ -730,10 +529,14 @@ Deno.serve(async (req: Request) => {
     }
 
     meta.gmail_api_calls += 1;
-    const msgResp = await gmailGetJson(access.token, `messages/${encodeURIComponent(id)}`, {
-      format: "metadata",
-      metadataHeaders: ["Subject", "From", "To", "Date"],
-      fields: "id,threadId,internalDate,snippet,payload(headers)",
+    const msgResp = await gmailApiGetJson({
+      token: access.token,
+      path: `messages/${encodeURIComponent(id)}`,
+      params: {
+        format: "metadata",
+        metadataHeaders: ["Subject", "From", "To", "Date"],
+        fields: "id,threadId,internalDate,snippet,payload(headers)",
+      },
     });
 
     if (!msgResp.ok) {

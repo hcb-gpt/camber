@@ -439,6 +439,14 @@ interface RecentProject {
   last_seen: string | null;
 }
 
+interface LookupContactRow {
+  contact_id: string;
+  contact_name: string | null;
+  contact_company: string | null;
+  contact_type: string | null;
+  matched_on: string | null;
+}
+
 interface PlaceMention {
   place_name: string;
   geo_place_id: string | null;
@@ -548,7 +556,12 @@ interface ContextPackage {
   contact: {
     contact_id: string | null;
     contact_name: string | null;
+    contact_phone: string | null;
     phone_e164_last4: string | null;
+    contact_type: string | null;
+    is_internal: boolean;
+    company_entity_id: string | null;
+    channel: string | null;
     floater_flag: boolean; // Backwards compat: derived from fanout_class
     fanout_class: string; // v1.5.0: anchored|semi_anchored|drifter|floater|unknown
     effective_fanout: number; // v1.5.0: number of active projects
@@ -1351,17 +1364,20 @@ Deno.serve(async (req: Request) => {
     let contact_name: string | null = null;
     let contact_phone: string | null = null;
     let event_at_utc: string | null = null;
+    let interaction_channel: string | null = null;
     let interaction_project_id: string | null = null;
     let contact_trade: string | null = null;
     let contact_role: string | null = null;
+    let contact_type: string | null = null;
+    let company_entity_id: string | null = null;
     let contact_is_internal = false; // v2.0.0: for floater modifier
     let fanout_class = "unknown";
     let effective_fanout = 0;
     let floater_flag = false; // Backwards compat: derived from fanout_class
 
     const interactionContactColumns = DISABLE_INTERACTION_PROJECT_ID_FALLBACKS
-      ? "contact_id, contact_name, contact_phone, event_at_utc"
-      : "contact_id, contact_name, contact_phone, event_at_utc, project_id";
+      ? "contact_id, contact_name, contact_phone, event_at_utc, channel"
+      : "contact_id, contact_name, contact_phone, event_at_utc, channel, project_id";
     const { data: interaction } = await db
       .from("interactions")
       .select(interactionContactColumns)
@@ -1373,15 +1389,36 @@ Deno.serve(async (req: Request) => {
       contact_name = interaction.contact_name;
       contact_phone = interaction.contact_phone;
       event_at_utc = interaction.event_at_utc;
+      interaction_channel = interaction.channel || null;
       if (!DISABLE_INTERACTION_PROJECT_ID_FALLBACKS) {
         interaction_project_id = interaction.project_id || null;
+      }
+    }
+
+    if (!contact_id && contact_phone) {
+      const { data: lookupRows, error: lookupError } = await db.rpc(
+        "lookup_contact_by_phone",
+        { p_phone: contact_phone },
+      );
+      const resolvedContact = Array.isArray(lookupRows) ? (lookupRows[0] as LookupContactRow | undefined) : undefined;
+
+      if (!lookupError && resolvedContact?.contact_id) {
+        contact_id = resolvedContact.contact_id;
+        if (!contact_name || contact_name === contact_phone) {
+          contact_name = resolvedContact.contact_name || contact_name;
+        }
+        sources_used.push(
+          interaction_channel === "sms_thread" ? "sms_thread_contact_resolution" : "phone_contact_resolution",
+        );
+      } else if (lookupError && interaction_channel === "sms_thread") {
+        warnings.push(`sms_thread_contact_resolution_failed:${lookupError.message}`);
       }
     }
 
     if (contact_id) {
       const { data: contactRow } = await db
         .from("contacts")
-        .select("trade, role, is_internal, floats_between_projects")
+        .select("trade, role, is_internal, floats_between_projects, contact_type, company_entity_id")
         .eq("id", contact_id)
         .single();
 
@@ -1389,6 +1426,8 @@ Deno.serve(async (req: Request) => {
         if (contactRow.trade) contact_trade = String(contactRow.trade);
         if (contactRow.role) contact_role = String(contactRow.role);
         contact_is_internal = !!contactRow.is_internal;
+        if (contactRow.contact_type) contact_type = String(contactRow.contact_type);
+        if (contactRow.company_entity_id) company_entity_id = String(contactRow.company_entity_id);
       }
     }
 
@@ -3396,7 +3435,12 @@ Deno.serve(async (req: Request) => {
       contact: {
         contact_id,
         contact_name,
+        contact_phone,
         phone_e164_last4,
+        contact_type,
+        is_internal: contact_is_internal,
+        company_entity_id,
+        channel: interaction_channel,
         floater_flag,
         fanout_class,
         effective_fanout,

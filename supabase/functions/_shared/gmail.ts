@@ -93,13 +93,13 @@ export function parseServiceAccountFromEnv(env: Record<string, string> | Deno.En
   }
 
   const clientEmail = readEnv(env, "GMAIL_SERVICE_ACCOUNT_EMAIL") || readEnv(env, "GOOGLE_SERVICE_ACCOUNT_EMAIL");
-  const privateKey = readEnv(env, "GMAIL_SERVICE_ACCOUNT_PRIVATE_KEY")
-    || readEnv(env, "GOOGLE_SERVICE_ACCOUNT_PRIVATE_KEY");
-  const subject = readEnv(env, "GMAIL_IMPERSONATED_USER")
-    || readEnv(env, "GMAIL_SERVICE_ACCOUNT_SUBJECT")
-    || readEnv(env, "GOOGLE_IMPERSONATED_USER")
-    || readEnv(env, "GOOGLE_SERVICE_ACCOUNT_SUBJECT")
-    || null;
+  const privateKey = readEnv(env, "GMAIL_SERVICE_ACCOUNT_PRIVATE_KEY") ||
+    readEnv(env, "GOOGLE_SERVICE_ACCOUNT_PRIVATE_KEY");
+  const subject = readEnv(env, "GMAIL_IMPERSONATED_USER") ||
+    readEnv(env, "GMAIL_SERVICE_ACCOUNT_SUBJECT") ||
+    readEnv(env, "GOOGLE_IMPERSONATED_USER") ||
+    readEnv(env, "GOOGLE_SERVICE_ACCOUNT_SUBJECT") ||
+    null;
   if (!clientEmail || !privateKey) return null;
   return { client_email: clientEmail, private_key: privateKey, subject };
 }

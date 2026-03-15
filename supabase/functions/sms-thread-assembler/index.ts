@@ -48,6 +48,14 @@ interface Thread {
   messages: SmsMessage[];
 }
 
+interface LookupContactRow {
+  contact_id: string;
+  contact_name: string | null;
+  contact_company: string | null;
+  contact_type: string | null;
+  matched_on: string | null;
+}
+
 Deno.serve(async (req: Request) => {
   if (req.method === "OPTIONS") {
     return new Response(null, { status: 204 });
@@ -161,6 +169,13 @@ Deno.serve(async (req: Request) => {
     const interactionId = buildInteractionId(thread);
     const threadKey = `${thread.phone}_${Math.floor(new Date(thread.messages[0].sent_at).getTime() / 1000)}`;
     const hasOutbound = thread.messages.some((m) => m.direction === "outbound");
+    const contactLookup = await lookupContactByPhone(supabase, thread.phone);
+    const resolvedContactName = contactLookup.contact_name || thread.contactName;
+    const resolvedContactId = contactLookup.contact_id;
+
+    if (contactLookup.warning) {
+      warnings.push(`contact_lookup_warning:${interactionId}:${contactLookup.warning}`);
+    }
 
     // ── Upsert calls_raw (fail closed) ──
     const { error: crError } = await supabase
@@ -171,10 +186,10 @@ Deno.serve(async (req: Request) => {
         zap_version: VERSION,
         thread_key: threadKey,
         direction: hasOutbound ? "outbound" : "inbound",
-        other_party_name: thread.contactName,
+        other_party_name: resolvedContactName,
         other_party_phone: thread.phone,
         event_at_utc: thread.messages[0].sent_at,
-        summary: `SMS thread: ${thread.contactName} (${thread.messages.length} msgs)`,
+        summary: `SMS thread: ${resolvedContactName} (${thread.messages.length} msgs)`,
         transcript,
         ingested_at_utc: new Date().toISOString(),
         capture_source: VERSION,
@@ -208,12 +223,13 @@ Deno.serve(async (req: Request) => {
         interaction_id: interactionId,
         channel: "sms_thread",
         source_zap: VERSION,
-        contact_name: thread.contactName,
+        contact_name: resolvedContactName,
         contact_phone: thread.phone,
+        contact_id: resolvedContactId,
         thread_key: threadKey,
         event_at_utc: thread.messages[0].sent_at,
         ingested_at_utc: new Date().toISOString(),
-        human_summary: `SMS thread: ${thread.contactName} (${thread.messages.length} msgs)`,
+        human_summary: `SMS thread: ${resolvedContactName} (${thread.messages.length} msgs)`,
         transcript_chars: transcript.length,
         is_nonsegmentable: transcript.length === 0,
         is_shadow: false,
@@ -351,4 +367,29 @@ async function invokeSegmentCall(
       warning: `segment_call_failed:${payload.interaction_id}:${msg}`,
     };
   }
+}
+
+async function lookupContactByPhone(
+  supabase: ReturnType<typeof createClient>,
+  phone: string | null,
+): Promise<{ contact_id: string | null; contact_name: string | null; warning?: string }> {
+  const normalizedPhone = String(phone || "").trim();
+  if (!normalizedPhone || normalizedPhone === "unknown") {
+    return { contact_id: null, contact_name: null };
+  }
+
+  const { data, error } = await supabase.rpc("lookup_contact_by_phone", { p_phone: normalizedPhone });
+  if (error) {
+    return {
+      contact_id: null,
+      contact_name: null,
+      warning: error.message,
+    };
+  }
+
+  const row = Array.isArray(data) ? (data[0] as LookupContactRow | undefined) : undefined;
+  return {
+    contact_id: row?.contact_id || null,
+    contact_name: row?.contact_name || null,
+  };
 }

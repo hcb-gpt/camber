@@ -139,6 +139,31 @@ Deno.test("classifyCandidateByRules routes tax forms to accept_non_extract", () 
   assertEquals(classification?.decision, "accept_non_extract");
 });
 
+// --- BuilderTrend internal notification noise tests ---
+
+Deno.test("classifyCandidateByRules rejects BuilderTrend notification emails as noise", () => {
+  const classification = classifyCandidateByRules(makeCandidate({
+    fromHeader: '"heartwoodcustombuildersllc" <heartwoodcustombuildersllc@buildertrend.com>',
+    subject: "Invoice Created - _Test_Job",
+    bodyExcerpt: "An invoice has been created for _Test_Job. Amount: $27,530.00",
+  }));
+
+  assertEquals(classification?.docType, "noise");
+  assertEquals(classification?.decision, "reject");
+  assertEquals(classification?.decisionReason, "rules_noise_fastpath");
+});
+
+Deno.test("classifyCandidateByRules rejects BuilderTrend overdue notifications as noise", () => {
+  const classification = classifyCandidateByRules(makeCandidate({
+    fromHeader: '"Heartwood Custom Builders" <notifications@buildertrend.com>',
+    subject: "Invoice Overdue - Winship Residence",
+    bodyExcerpt: "The following invoice is overdue. Amount: $48,480.56",
+  }));
+
+  assertEquals(classification?.docType, "noise");
+  assertEquals(classification?.decision, "reject");
+});
+
 Deno.test("classifyCandidate falls back to review when classifier is unavailable", async () => {
   await withoutOpenAiKey(async () => {
     const warnings: string[] = [];
@@ -171,22 +196,27 @@ Deno.test("classifyCandidate retries retryable LLM failures and records metrics"
     if (callCount === 1) {
       return Promise.resolve(new Response("rate limited", { status: 429 }));
     }
-    return Promise.resolve(new Response(JSON.stringify({
-      choices: [{
-        message: {
-          content: JSON.stringify({
-            decision: "accept_extract",
-            decision_reason: "llm_invoice",
-            doc_type: "vendor_invoice",
-            finance_relevance_score: 0.91,
-            signals: ["invoice"],
-          }),
+    return Promise.resolve(
+      new Response(
+        JSON.stringify({
+          choices: [{
+            message: {
+              content: JSON.stringify({
+                decision: "accept_extract",
+                decision_reason: "llm_invoice",
+                doc_type: "vendor_invoice",
+                finance_relevance_score: 0.91,
+                signals: ["invoice"],
+              }),
+            },
+          }],
+        }),
+        {
+          headers: { "Content-Type": "application/json" },
+          status: 200,
         },
-      }],
-    }), {
-      headers: { "Content-Type": "application/json" },
-      status: 200,
-    }));
+      ),
+    );
   }, async () => {
     const warnings: string[] = [];
     const metrics = createClassifierMetrics();
@@ -214,16 +244,21 @@ Deno.test("classifyCandidate retries retryable LLM failures and records metrics"
 
 Deno.test("classifyCandidate records parse failures and falls back to review", async () => {
   await withMockClassifierEnv(() =>
-    Promise.resolve(new Response(JSON.stringify({
-      choices: [{
-        message: {
-          content: "{ definitely not valid json",
+    Promise.resolve(
+      new Response(
+        JSON.stringify({
+          choices: [{
+            message: {
+              content: "{ definitely not valid json",
+            },
+          }],
+        }),
+        {
+          headers: { "Content-Type": "application/json" },
+          status: 200,
         },
-      }],
-    }), {
-      headers: { "Content-Type": "application/json" },
-      status: 200,
-    })), async () => {
+      ),
+    ), async () => {
     const warnings: string[] = [];
     const metrics = createClassifierMetrics();
     const classification = await classifyCandidate(

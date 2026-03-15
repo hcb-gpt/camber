@@ -81,7 +81,9 @@ final class SupabaseService {
     func fetchContactsList() async throws -> [Contact] {
         try requireValidConfiguration()
 
-        var components = URLComponents(url: edgeFunctionBaseURL, resolvingAgainstBaseURL: false)!
+        guard var components = URLComponents(url: edgeFunctionBaseURL, resolvingAgainstBaseURL: false) else {
+            throw ServiceError.apiError("Invalid edge function base URL")
+        }
         components.queryItems = [
             URLQueryItem(name: "action", value: "contacts"),
             URLQueryItem(name: "refresh", value: "1"),
@@ -149,7 +151,9 @@ final class SupabaseService {
             return cached
         }
 
-        var components = URLComponents(url: edgeFunctionBaseURL, resolvingAgainstBaseURL: false)!
+        guard var components = URLComponents(url: edgeFunctionBaseURL, resolvingAgainstBaseURL: false) else {
+            throw ServiceError.apiError("Invalid edge function base URL")
+        }
         components.queryItems = [
             URLQueryItem(name: "contact_id", value: contactId.uuidString.lowercased()),
             URLQueryItem(name: "limit", value: String(limit)),
@@ -216,7 +220,9 @@ final class SupabaseService {
     func fetchTruthGraph(interactionId: String) async throws -> TruthGraphResponse {
         try requireValidConfiguration()
 
-        var components = URLComponents(url: edgeFunctionBaseURL, resolvingAgainstBaseURL: false)!
+        guard var components = URLComponents(url: edgeFunctionBaseURL, resolvingAgainstBaseURL: false) else {
+            throw ServiceError.apiError("Invalid edge function base URL")
+        }
         components.queryItems = [
             URLQueryItem(name: "action", value: "truth_graph"),
             URLQueryItem(name: "interaction_id", value: interactionId),
@@ -313,7 +319,9 @@ final class SupabaseService {
     func resetGradingClock() async throws {
         try requireValidConfiguration()
 
-        var components = URLComponents(url: edgeFunctionBaseURL, resolvingAgainstBaseURL: false)!
+        guard var components = URLComponents(url: edgeFunctionBaseURL, resolvingAgainstBaseURL: false) else {
+            throw ServiceError.apiError("Invalid edge function base URL")
+        }
         components.queryItems = [
             URLQueryItem(name: "action", value: "reset_clock"),
             URLQueryItem(name: "_ts", value: String(Int(Date().timeIntervalSince1970))),
@@ -467,11 +475,11 @@ final class SupabaseService {
             throw ServiceError.apiError(errorMessage)
         }
 
-        guard decoded?.ok == true else {
+        guard let result = decoded, result.ok == true else {
             throw ServiceError.apiError(errorMessage)
         }
 
-        return decoded!
+        return result
     }
 
     private func reviewResolveAccessToken() async throws -> String {

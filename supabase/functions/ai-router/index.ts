@@ -151,6 +151,16 @@ import { applyBethanyRoadWinshipGuardrail } from "./bethany_winship_guardrail.ts
 import { applyBizDevCommitmentGate } from "./bizdev_guardrails.ts";
 import { evaluateClientOverride } from "./client_override_gate.ts";
 import { evaluateHomeownerOverride } from "./homeowner_override_gate.ts";
+import {
+  buildSnapshotsFromScores,
+  chooseDecisionFromScores,
+  type CombinedProjectScore,
+  combineProjectScores,
+  evaluateTranscriptSignal,
+  type ModelCandidateScore,
+  normalizeModelCandidateScores,
+  type ScoringContribution,
+} from "./layered_scoring.ts";
 import { applyNameContentGuardrail } from "./name_content_guardrail.ts";
 import {
   applyWorldModelReferenceGuardrail,
@@ -162,8 +172,8 @@ import {
   type WorldModelReference,
 } from "./world_model_facts.ts";
 
-const PROMPT_VERSION_BASE = "v1.13.0";
-const FUNCTION_VERSION = "v1.19.1";
+const PROMPT_VERSION_BASE = "v1.14.0";
+const FUNCTION_VERSION = "v1.20.0";
 const DEFAULT_MODEL_ID = Deno.env.get("AI_ROUTER_MODEL") || "gpt-4o-mini";
 const DEFAULT_MAX_TOKENS = 1024;
 const DEFAULT_TEMPERATURE = 0;
@@ -273,6 +283,30 @@ interface JournalReference {
   relevance: string;
 }
 
+interface CandidateScore {
+  project_id: string;
+  confidence: number;
+  anchor_type?: string | null;
+}
+
+interface ScoringRuleRow {
+  layer: string;
+  rule_name: string;
+  enabled: boolean;
+  confidence_value: number | string | null;
+  parameters: Record<string, unknown> | null;
+}
+
+interface InteractionSnapshot {
+  interaction_id: string;
+  channel: string | null;
+  event_at_utc: string | null;
+  event_at_local?: string | null;
+  contact_id: string | null;
+  contact_phone: string | null;
+  transcript_chars: number | null;
+}
+
 interface AttributionResult {
   span_id: string;
   project_id: string | null;
@@ -340,10 +374,15 @@ interface ContextPackage {
   contact: {
     contact_id: string | null;
     contact_name: string | null;
+    contact_phone?: string | null;
+    contact_type?: string | null;
+    is_internal?: boolean;
+    company_entity_id?: string | null;
+    channel?: string | null;
     floater_flag: boolean;
     fanout_class?: string;
     effective_fanout?: number;
-    recent_projects: Array<{ project_id: string; project_name: string }>;
+    recent_projects: Array<{ project_id: string; project_name: string; last_seen?: string | null }>;
   };
   candidates: Array<{
     project_id: string;
@@ -502,7 +541,17 @@ function buildTopCandidateSnapshot(opts: {
   chosen_project_id: string | null;
   chosen_confidence: number | null;
   chosen_anchor_type: string | null;
+  project_scores?: CombinedProjectScore[] | null;
 }): { top_candidates: CandidateSnapshot[]; runner_up_confidence: number | null; candidate_count: number } {
+  if (Array.isArray(opts.project_scores) && opts.project_scores.length > 0) {
+    return buildSnapshotsFromScores({
+      scores: opts.project_scores,
+      chosen_project_id: opts.chosen_project_id,
+      chosen_confidence: opts.chosen_confidence,
+      chosen_anchor_type: opts.chosen_anchor_type,
+    });
+  }
+
   const sourceCandidates = Array.isArray(opts.candidates) ? opts.candidates : [];
   const ranked: Array<CandidateSnapshot & { rank: number }> = [];
   const seenProjectIds = new Set<string>();
@@ -999,6 +1048,7 @@ function evaluateHighConfidenceGapAssign(opts: {
   confidence: number;
   anchors: Anchor[];
   candidates: ContextPackage["candidates"];
+  project_scores?: Array<{ project_id: string; confidence: number }> | null;
 }): { promoted: boolean; reason: string | null; runner_up_confidence: number | null } {
   if (opts.decision !== "review" || !opts.project_id) {
     return { promoted: false, reason: null, runner_up_confidence: null };
@@ -1010,16 +1060,14 @@ function evaluateHighConfidenceGapAssign(opts: {
     return { promoted: false, reason: null, runner_up_confidence: null };
   }
 
-  // Compute runner-up confidence from context candidates
-  const candidateConfidences: Array<{ project_id: string; confidence: number }> = [];
-  for (const candidate of opts.candidates) {
-    const pid = String(candidate?.project_id || "").trim();
-    if (!pid) continue;
-    candidateConfidences.push({
-      project_id: pid,
+  // Compute runner-up confidence from model/layered scores when available,
+  // otherwise fall back to context evidence confidence.
+  const candidateConfidences = Array.isArray(opts.project_scores) && opts.project_scores.length > 0
+    ? opts.project_scores
+    : opts.candidates.map((candidate) => ({
+      project_id: String(candidate?.project_id || "").trim(),
       confidence: deriveCandidateEvidenceConfidence(candidate),
-    });
-  }
+    })).filter((candidate) => candidate.project_id.length > 0);
 
   // Find the highest confidence among non-chosen candidates
   let runnerUpConfidence = 0;

@@ -1,3 +1,5 @@
+import { isGarbageInvoice } from "./invoice_extract.ts";
+
 export interface AliasRow {
   alias: string;
   job_name: string | null;
@@ -244,13 +246,38 @@ export function normalizeVendorName(raw: string | null): string | null {
   return normalized || null;
 }
 
+/** Terms that are never valid standalone vendor names. */
+const VENDOR_REJECT_TERMS = new Set([
+  "accounts receivable",
+  "accounts payable",
+  "billing",
+  "no reply",
+  "noreply",
+  "notification",
+  "notifications",
+  "quickbooks",
+  "system",
+]);
+
+/** Patterns matching owner / internal company names that must never be extracted as vendor. */
+const INTERNAL_VENDOR_PATTERNS: RegExp[] = [
+  /^hcb$/,
+  /^heartwood/,
+];
+
 export function extractVendor(
   fromHeader: string | null,
   subject: string | null,
   bodyText: string,
   vendorHints: string[],
+  mailboxDomain: string | null = null,
+  registryOverrides?: {
+    rejectSet?: Set<string>;
+    internalPatterns?: RegExp[];
+  },
 ): { vendor: string | null; vendor_normalized: string | null; source: string | null } {
   const combined = `${subject || ""}\n${fromHeader || ""}\n${bodyText}`.toLowerCase();
+  const normalizedCombined = normalizeVendorName(combined) || "";
   const normalizedHints = vendorHints
     .map((hint) => ({
       raw: hint,
@@ -258,9 +285,16 @@ export function extractVendor(
     }))
     .filter((item) => item.normalized);
 
-  const matchingHints = normalizedHints
-    .sort((a, b) => String(b.raw).length - String(a.raw).length)
-    .filter((hint) => findTermInText(combined, hint.raw.toLowerCase()) >= 0);
+  // Sort longest-first so specific vendors win over short substrings
+  const sortedHints = normalizedHints
+    .sort((a, b) => String(b.raw).length - String(a.raw).length);
+
+  // Try raw match first, then fall back to normalized match (E-5 fix)
+  const matchingHints = sortedHints
+    .filter((hint) =>
+      findTermInText(combined, hint.raw.toLowerCase()) >= 0 ||
+      (hint.normalized && findTermInText(normalizedCombined, hint.normalized) >= 0)
+    );
 
   const preferredHint = matchingHints.find((hint) => hint.normalized !== "hcb") ||
     matchingHints[0];
@@ -270,22 +304,48 @@ export function extractVendor(
 
   const display = extractEmailDisplayName(fromHeader);
   const displayNormalized = normalizeVendorName(display);
-  if (display && displayNormalized) {
-    if (displayNormalized === "quickbooks" && combined.includes("hcb")) {
-      return { vendor: "HCB", vendor_normalized: "hcb", source: "quickbooks_hcb_override" };
+
+  // Suppress from-header fallback when domain matches the mailbox owner
+  if (display && displayNormalized && mailboxDomain) {
+    const fromDomain = extractFromDomain(fromHeader);
+    if (fromDomain && fromDomain.toLowerCase() === mailboxDomain.toLowerCase()) {
+      return { vendor: null, vendor_normalized: null, source: "from_header_suppressed_owner_domain" };
     }
+  }
+
+  // Reject accounting boilerplate terms as vendor names
+  const rejectSet = registryOverrides?.rejectSet ?? VENDOR_REJECT_TERMS;
+  if (displayNormalized && rejectSet.has(displayNormalized)) {
+    return { vendor: null, vendor_normalized: null, source: "from_header_rejected_boilerplate" };
+  }
+
+  // Reject internal / owner-company names (catches concatenated variants like "heartwoodcustombuildersllc")
+  const internalPatterns = registryOverrides?.internalPatterns ?? INTERNAL_VENDOR_PATTERNS;
+  if (displayNormalized && internalPatterns.some((p) => p.test(displayNormalized))) {
+    return { vendor: null, vendor_normalized: null, source: "from_header_rejected_internal_vendor" };
+  }
+
+  if (display && displayNormalized) {
     return { vendor: display, vendor_normalized: displayNormalized, source: "from_header" };
   }
 
   return { vendor: null, vendor_normalized: null, source: null };
 }
 
+function extractFromDomain(fromHeader: string | null): string | null {
+  const raw = String(fromHeader || "");
+  const match = raw.match(/@([^>\s]+)/);
+  return match ? match[1].toLowerCase() : null;
+}
+
 export function extractAmount(text: string): ParsedAmount {
   const hay = String(text || "");
-  const moneyPattern = String.raw`(\(\s*(?:\$\s*[0-9][0-9,]*(?:\.\d{2})?|[0-9][0-9,]*\.\d{2})\s*\)|-\s*(?:\$\s*[0-9][0-9,]*(?:\.\d{2})?|[0-9][0-9,]*\.\d{2})|\$\s*[0-9][0-9,]*(?:\.\d{2})?|[0-9][0-9,]*\.\d{2})`;
+  const moneyPattern = String
+    .raw`(\(\s*(?:\$\s*[0-9][0-9,]*(?:\.\d{2})?|[0-9][0-9,]*\.\d{2})\s*\)|-\s*(?:\$\s*[0-9][0-9,]*(?:\.\d{2})?|[0-9][0-9,]*\.\d{2})|\$\s*[0-9][0-9,]*(?:\.\d{2})?|[0-9][0-9,]*\.\d{2})`;
   const contextualPatterns = [
     new RegExp(
-      String.raw`\b(?:grand total|invoice total|total amount|total due|amount due|balance due|payment due|total)\b[\s:]*${moneyPattern}`,
+      String
+        .raw`\b(?:grand total|invoice total|total amount|total due|amount due|balance due|payment due|total)\b[\s:]*${moneyPattern}`,
       "ig",
     ),
     new RegExp(
@@ -326,8 +386,16 @@ export function extractAmount(text: string): ParsedAmount {
 export function extractInvoiceOrTransaction(subject: string | null, text: string): string | null {
   const hay = `${subject || ""}\n${text}`;
   const patterns = [
+    // Precise: "invoice #123", "inv: ABC-456", "invoice number 22004"
     /\b(?:invoice|inv)\b(?:\s+(?:number|no)\b)?\s*(?:#|:|-)\s*([A-Z0-9-]{3,})\b/i,
     /\b(?:invoice|inv)\b\s+(?:number|no)\s+([A-Z0-9-]{3,})\b/i,
+    // Loose: "invoice 1400", "Invoice F89303", "Invoice I19347" (must contain a digit)
+    /\b(?:invoice|inv)\b\s+([A-Z0-9]*\d[A-Z0-9-]{1,})\b/i,
+    // Receipt: "Payment Receipt P14574", "Receipt #12345"
+    /\b(?:payment\s+)?receipt\s*[#:=-]?\s*([A-Z0-9][A-Z0-9-]{2,})\b/i,
+    // Order: "order 46553-000", "order #12345"
+    /\border\s*(?:number|no|#)?\s*[:#-]?\s*([A-Z0-9][A-Z0-9-]{2,})\b/i,
+    // Transaction / reference (existing)
     /\btransaction\s*(?:id|number|#)?\s*[:#-]?\s*([A-Z0-9-]{3,})\b/i,
     /\bref(?:erence)?\s*(?:id|number|#)?\s*[:#-]?\s*([A-Z0-9-]{3,})\b/i,
   ];
@@ -336,7 +404,7 @@ export function extractInvoiceOrTransaction(subject: string | null, text: string
     const match = hay.match(pattern);
     if (!match) continue;
     const value = normalizeWhitespace(match[1] || "");
-    if (value) return value;
+    if (value && !isGarbageInvoice(value)) return value;
   }
 
   return null;
@@ -389,6 +457,11 @@ export function extractReceiptRecord(input: {
   bodyText: string;
   fallbackIso: string | null;
   fromHeader: string | null;
+  mailboxDomain?: string | null;
+  registryOverrides?: {
+    rejectSet?: Set<string>;
+    internalPatterns?: RegExp[];
+  };
   subject: string | null;
   vendorHints: string[];
 }): ParsedReceipt {
@@ -400,7 +473,14 @@ export function extractReceiptRecord(input: {
     matched_alias: null,
     project_id: null,
   });
-  const vendor = extractVendor(input.fromHeader, input.subject, bodyText, input.vendorHints);
+  const vendor = extractVendor(
+    input.fromHeader,
+    input.subject,
+    bodyText,
+    input.vendorHints,
+    input.mailboxDomain ?? null,
+    input.registryOverrides,
+  );
   const amount = extractAmount(`${input.subject || ""}\n${bodyText}`);
   const invoice = extractInvoiceOrTransaction(input.subject, bodyText);
   const receiptDate = extractReceiptDate(bodyText, input.fallbackIso);

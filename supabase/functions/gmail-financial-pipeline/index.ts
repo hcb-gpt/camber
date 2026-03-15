@@ -23,11 +23,19 @@ import {
   summarizeRetrievalCounts,
   summarizeTargets,
 } from "./search.ts";
+import { classifyCandidate, createClassifierMetrics, type GmailFinanceClassification } from "./classification.ts";
 import {
-  classifyCandidate,
-  createClassifierMetrics,
-  type GmailFinanceClassification,
-} from "./classification.ts";
+  buildInternalPatterns,
+  buildInternalVendorNormals,
+  buildRejectSet,
+  buildVendorHintList,
+  canonicalizeVendorDisplay,
+  flagUnknownVendor,
+  loadVendorRegistry,
+  lookupVendor,
+  type VendorRegistryRow,
+} from "./vendor_registry.ts";
+import { autoPromoteByVendorRegistry } from "./review_resolution.ts";
 
 const FUNCTION_SLUG = "gmail-financial-pipeline";
 const FUNCTION_VERSION = "v1.0.0";
@@ -67,6 +75,23 @@ const KNOWN_VENDOR_HINTS = [
   "Window Concepts",
 ];
 const INTERNAL_VENDOR_NORMALS = new Set(["hcb", "heartwood custom builders"]);
+// Fallback constants — used if vendor_registry table is unavailable
+const VENDOR_REJECT_TERMS_FALLBACK = new Set([
+  "accounts receivable",
+  "accounts payable",
+  "billing",
+  "no reply",
+  "noreply",
+  "notification",
+  "notifications",
+  "quickbooks",
+  "system",
+]);
+const INTERNAL_VENDOR_PATTERNS_FALLBACK: RegExp[] = [/^hcb$/, /^heartwood/];
+const INTERNAL_VENDOR_NORMALS_FALLBACK = new Set([
+  "hcb",
+  "heartwood custom builders",
+]);
 const GENERIC_PROJECT_ALIAS_STOPLIST = new Set([
   "admin",
   "chad",
@@ -232,9 +257,12 @@ function isMeaningfulProjectAlias(alias: string | null): boolean {
   return normalized.length >= 5 || /[\s0-9&/_-]/.test(normalized);
 }
 
-function isMeaningfulTarget(target: SearchTarget): boolean {
+function isMeaningfulTarget(
+  target: SearchTarget,
+  internalNormals: Set<string> = INTERNAL_VENDOR_NORMALS,
+): boolean {
   const normalizedVendor = normalizeVendorName(target.vendor_name);
-  return !!normalizedVendor && !INTERNAL_VENDOR_NORMALS.has(normalizedVendor);
+  return !!normalizedVendor && !internalNormals.has(normalizedVendor);
 }
 
 function resolveMailboxScope(
@@ -464,12 +492,13 @@ function buildCandidateAffinitySignals(
   candidate: CandidateWorkItem,
   aliasRows: AliasRow[],
   searchTargets: SearchTarget[],
+  internalNormals?: Set<string>,
 ): CandidateAffinitySignals {
   const bodyText = candidate.bodyText || candidate.bodyExcerpt || candidate.snippet || "";
   const matchedTargets = searchTargets.length > 0
     ? matchTargetsToMessage(searchTargets, candidate.rawHeaders, bodyText)
     : [];
-  const meaningfulTargets = matchedTargets.filter(isMeaningfulTarget);
+  const meaningfulTargets = matchedTargets.filter((t) => isMeaningfulTarget(t, internalNormals));
   const subjectProject = findProjectMatch(candidate.subject || "", aliasRows);
   const bodyProject = subjectProject.project_id
     ? { job_name: null, matched_alias: null, project_id: null }
@@ -620,7 +649,14 @@ async function hydrateListedMessages(args: {
             ? `gmail_get_failed:${listed.id}:http_${msgResp.status}`
             : `gmail_get_failed:${listed.id}:network`,
         );
-        return { candidate: null, decodeWarnings: 0, examined: 0, internalDateMs: null, skippedOther: 1, warnings: localWarnings };
+        return {
+          candidate: null,
+          decodeWarnings: 0,
+          examined: 0,
+          internalDateMs: null,
+          skippedOther: 1,
+          warnings: localWarnings,
+        };
       }
 
       const message = normalizeBody(msgResp.json);
@@ -671,8 +707,17 @@ async function hydrateListedMessages(args: {
         warnings: localWarnings,
       };
     } catch (error) {
-      localWarnings.push(`gmail_get_failed:${listed.id}:unexpected:${String((error as Error)?.message || error).slice(0, 80)}`);
-      return { candidate: null, decodeWarnings: 0, examined: 0, internalDateMs: null, skippedOther: 1, warnings: localWarnings };
+      localWarnings.push(
+        `gmail_get_failed:${listed.id}:unexpected:${String((error as Error)?.message || error).slice(0, 80)}`,
+      );
+      return {
+        candidate: null,
+        decodeWarnings: 0,
+        examined: 0,
+        internalDateMs: null,
+        skippedOther: 1,
+        warnings: localWarnings,
+      };
     }
   });
 
@@ -684,7 +729,9 @@ async function hydrateListedMessages(args: {
     args.warnings.push(...result.warnings);
 
     if (result.internalDateMs !== null) {
-      maxInternalDateMs = maxInternalDateMs === null ? result.internalDateMs : Math.max(maxInternalDateMs, result.internalDateMs);
+      maxInternalDateMs = maxInternalDateMs === null
+        ? result.internalDateMs
+        : Math.max(maxInternalDateMs, result.internalDateMs);
     }
     if (result.candidate) candidates.push(result.candidate);
   }
@@ -959,6 +1006,17 @@ export async function handleRequest(
     failedMessages: 0,
   };
 
+  // Action: resolve_reviews — auto-promote review candidates whose vendors are now in the registry
+  if (body.action === "resolve_reviews") {
+    const promoResult = await autoPromoteByVendorRegistry(db, warnings);
+    return json({
+      ok: true,
+      action: "resolve_reviews",
+      ...promoResult,
+      warnings,
+    });
+  }
+
   if (legacySearchMode) warnings.push(`deprecated_search_mode_used:${legacySearchMode}`);
   if (mirrorLabels) warnings.push("mirror_labels_requested_but_gmail_scope_is_readonly");
 
@@ -1105,9 +1163,28 @@ export async function handleRequest(
       workCandidates = await loadCandidatesForMode(db, runMode, candidateLimit);
     }
 
+    let vendorRegistry: VendorRegistryRow[] = [];
+    let vendorRejectSet: Set<string> = VENDOR_REJECT_TERMS_FALLBACK;
+    let vendorInternalPatterns: RegExp[] = INTERNAL_VENDOR_PATTERNS_FALLBACK;
+    let vendorInternalNormals: Set<string> = INTERNAL_VENDOR_NORMALS_FALLBACK;
+    let vendorHintNames: string[] = [...KNOWN_VENDOR_HINTS];
+
     if (doClassify || doExtract) {
       aliasRows = await loadAliasRows(db);
       searchTargets = await loadSearchTargets(db, maxTargets);
+
+      try {
+        vendorRegistry = await loadVendorRegistry(db);
+        vendorRejectSet = buildRejectSet(vendorRegistry);
+        vendorInternalPatterns = buildInternalPatterns(vendorRegistry);
+        vendorInternalNormals = buildInternalVendorNormals(vendorRegistry);
+        vendorHintNames = buildVendorHintList(vendorRegistry);
+        warnings.push(`vendor_registry_loaded:${vendorRegistry.length}_entries`);
+      } catch (err) {
+        warnings.push(
+          `vendor_registry_fallback:${String((err as Error)?.message || err).slice(0, 80)}`,
+        );
+      }
     }
 
     const classificationCounts: Record<string, number> = {};
@@ -1118,21 +1195,26 @@ export async function handleRequest(
         if (!candidate.candidateId) continue;
         if (runMode === "full" && shouldSkipClassificationInFullMode(candidate)) continue;
         try {
-          const affinity = buildCandidateAffinitySignals(candidate, aliasRows, searchTargets);
-          const classification = await classifyCandidate({
-            bodyExcerpt: candidate.bodyExcerpt,
-            fromHeader: candidate.fromHeader,
-            matchedClassHints: candidate.matchedClassHints,
-            matchedProjectAliases: affinity.matchedProjectAliases,
-            matchedProjectIds: affinity.matchedProjectIds,
-            matchedProjectNames: affinity.matchedProjectNames,
-            matchedProfileSlugs: candidate.matchedProfileSlugs,
-            matchedTargetIds: affinity.matchedTargetIds,
-            matchedTargetTypes: affinity.matchedTargetTypes,
-            matchedVendorNames: affinity.matchedVendorNames,
-            snippet: candidate.snippet,
-            subject: candidate.subject,
-          }, warnings, classifierMetrics);
+          const affinity = buildCandidateAffinitySignals(candidate, aliasRows, searchTargets, vendorInternalNormals);
+          const classification = await classifyCandidate(
+            {
+              bodyExcerpt: candidate.bodyExcerpt,
+              fromHeader: candidate.fromHeader,
+              matchedClassHints: candidate.matchedClassHints,
+              matchedProjectAliases: affinity.matchedProjectAliases,
+              matchedProjectIds: affinity.matchedProjectIds,
+              matchedProjectNames: affinity.matchedProjectNames,
+              matchedProfileSlugs: candidate.matchedProfileSlugs,
+              matchedTargetIds: affinity.matchedTargetIds,
+              matchedTargetTypes: affinity.matchedTargetTypes,
+              matchedVendorNames: affinity.matchedVendorNames,
+              snippet: candidate.snippet,
+              subject: candidate.subject,
+            },
+            warnings,
+            classifierMetrics,
+            vendorInternalNormals,
+          );
 
           if (dryRun) {
             applyCandidateClassificationState(candidate, classification, "classified");
@@ -1176,20 +1258,50 @@ export async function handleRequest(
 
       for (const candidate of extractableCandidates) {
         try {
-          const affinity = buildCandidateAffinitySignals(candidate, aliasRows, searchTargets);
+          const affinity = buildCandidateAffinitySignals(candidate, aliasRows, searchTargets, vendorInternalNormals);
           const matchedTargets = affinity.matchedTargets;
-          const vendorHints = mergeVendorHints(KNOWN_VENDOR_HINTS, matchedTargets);
+          const vendorHints = mergeVendorHints(vendorHintNames, matchedTargets);
           const receipt = applyTargetAffinity(
             extractReceiptRecord({
               aliasRows,
               bodyText: candidate.bodyText || candidate.bodyExcerpt || candidate.snippet || "",
               fallbackIso: candidate.internalDateIso,
               fromHeader: candidate.fromHeader,
+              mailboxDomain: mailboxScope,
+              registryOverrides: {
+                rejectSet: vendorRejectSet,
+                internalPatterns: vendorInternalPatterns,
+              },
               subject: candidate.subject,
               vendorHints,
             }),
             matchedTargets,
           );
+
+          // Option B: flag unknown vendors for review
+          if (receipt.vendor_normalized && vendorRegistry.length > 0) {
+            const known = lookupVendor(vendorRegistry, receipt.vendor_normalized);
+            if (!known) {
+              await flagUnknownVendor(db, {
+                vendor_name: receipt.vendor || receipt.vendor_normalized,
+                vendor_normalized: receipt.vendor_normalized,
+                source_email_from: candidate.fromHeader || null,
+                source_candidate_id: candidate.candidateId || null,
+              }, warnings);
+            }
+          }
+
+          // Canonicalize vendor display name via registry
+          if (receipt.vendor && receipt.vendor_normalized && vendorRegistry.length > 0) {
+            const canonical = canonicalizeVendorDisplay(
+              vendorRegistry,
+              receipt.vendor_normalized,
+              receipt.vendor,
+            );
+            if (canonical && canonical !== receipt.vendor) {
+              receipt.vendor = canonical;
+            }
+          }
 
           const evidenceLocator = candidate.threadId
             ? `gmail:thread/${candidate.threadId}#msg=${candidate.messageId}`
@@ -1270,7 +1382,7 @@ export async function handleRequest(
             receipt_date: receipt.receipt_date,
             sample_from: candidate.fromHeader,
             sample_subject: candidate.subject,
-            source: "gmail_camber_scrape",
+            source: "gmail_scrape",
             source_message_ids: [candidate.messageId],
             source_thread_ids: candidate.threadId ? [candidate.threadId] : [],
             total: receipt.amount.total,

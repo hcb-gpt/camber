@@ -90,6 +90,7 @@ const NOISE_PATTERNS = [
   /\bcost to complete\b/i,
   /\bseptic records\b/i,
   /\bpermit application\b/i,
+  /@buildertrend\.com/i,
 ];
 
 const RECEIPT_PATTERNS = [
@@ -244,12 +245,14 @@ function hasMeaningfulProjectAlias(alias: string): boolean {
 function hasAutoExtractAffinity(
   candidate: GmailFinanceCandidateInput,
   docType: GmailFinanceDocType,
+  internalVendorNormals?: Set<string>,
 ): boolean {
   if (candidate.matchedProjectAliases.some(hasMeaningfulProjectAlias)) return true;
+  const internals = internalVendorNormals ?? INTERNAL_VENDOR_NORMALS;
   if (
     candidate.matchedVendorNames.some((name) => {
       const normalized = normalizeVendorName(name);
-      return !!normalized && !INTERNAL_VENDOR_NORMALS.has(normalized);
+      return !!normalized && !internals.has(normalized);
     })
   ) {
     return true;
@@ -266,6 +269,7 @@ function chooseDecision(
   docType: GmailFinanceDocType,
   requestedDecision: unknown,
   score: number,
+  internalVendorNormals?: Set<string>,
 ): GmailFinanceDecision {
   const normalized = String(requestedDecision || "").trim().toLowerCase();
   if (docType === "noise" || score <= 0.2) return "reject";
@@ -274,7 +278,7 @@ function chooseDecision(
   if (normalized === "review") return "review";
   if (normalized === "accept_non_extract") return "review";
   if (extractableDocType(docType)) {
-    return hasAutoExtractAffinity(candidate, docType) ? "accept_extract" : "review";
+    return hasAutoExtractAffinity(candidate, docType, internalVendorNormals) ? "accept_extract" : "review";
   }
   return "review";
 }
@@ -287,9 +291,11 @@ function buildClassification(
   requestedDecision: unknown,
   classifierVersion: string,
   classifierMeta: Record<string, unknown>,
+  internalVendorNormals?: Set<string>,
 ): GmailFinanceClassification {
-  const affinityGatePassed = !extractableDocType(docType) || hasAutoExtractAffinity(candidate, docType);
-  const decision = chooseDecision(candidate, docType, requestedDecision, score);
+  const affinityGatePassed = !extractableDocType(docType) ||
+    hasAutoExtractAffinity(candidate, docType, internalVendorNormals);
+  const decision = chooseDecision(candidate, docType, requestedDecision, score, internalVendorNormals);
   return {
     classifierMeta: {
       ...classifierMeta,
@@ -303,9 +309,7 @@ function buildClassification(
     },
     classifierVersion,
     decision,
-    decisionReason: !affinityGatePassed && extractableDocType(docType)
-      ? `${reason}_affinity_gate_review`
-      : reason,
+    decisionReason: !affinityGatePassed && extractableDocType(docType) ? `${reason}_affinity_gate_review` : reason,
     docType,
     financeRelevanceScore: score,
   };
@@ -321,6 +325,7 @@ function fastPathReason(
 
 export function classifyCandidateByRules(
   candidate: GmailFinanceCandidateInput,
+  internalVendorNormals?: Set<string>,
 ): GmailFinanceClassification | null {
   const combined = [
     candidate.subject || "",
@@ -339,6 +344,7 @@ export function classifyCandidateByRules(
       "reject",
       `${CLASSIFIER_VERSION}_rules`,
       { fast_path: noiseReason, matched_profiles: candidate.matchedProfileSlugs },
+      internalVendorNormals,
     );
   }
 
@@ -352,6 +358,7 @@ export function classifyCandidateByRules(
       "accept_non_extract",
       `${CLASSIFIER_VERSION}_rules`,
       { fast_path: taxReason, matched_profiles: candidate.matchedProfileSlugs },
+      internalVendorNormals,
     );
   }
 
@@ -365,6 +372,7 @@ export function classifyCandidateByRules(
       "accept_extract",
       `${CLASSIFIER_VERSION}_rules`,
       { fast_path: payAppReason, matched_profiles: candidate.matchedProfileSlugs },
+      internalVendorNormals,
     );
   }
 
@@ -378,6 +386,7 @@ export function classifyCandidateByRules(
       "accept_extract",
       `${CLASSIFIER_VERSION}_rules`,
       { fast_path: drawReason, matched_profiles: candidate.matchedProfileSlugs },
+      internalVendorNormals,
     );
   }
 
@@ -391,6 +400,7 @@ export function classifyCandidateByRules(
       "accept_extract",
       `${CLASSIFIER_VERSION}_rules`,
       { fast_path: receiptReason, matched_profiles: candidate.matchedProfileSlugs },
+      internalVendorNormals,
     );
   }
 
@@ -404,6 +414,7 @@ export function classifyCandidateByRules(
       "accept_extract",
       `${CLASSIFIER_VERSION}_rules`,
       { fast_path: reminderReason, matched_profiles: candidate.matchedProfileSlugs },
+      internalVendorNormals,
     );
   }
 
@@ -417,6 +428,7 @@ export function classifyCandidateByRules(
       "accept_extract",
       `${CLASSIFIER_VERSION}_rules`,
       { fast_path: statementReason, matched_profiles: candidate.matchedProfileSlugs },
+      internalVendorNormals,
     );
   }
 
@@ -434,6 +446,7 @@ export function classifyCandidateByRules(
         matched_class_hints: candidate.matchedClassHints,
         matched_profiles: candidate.matchedProfileSlugs,
       },
+      internalVendorNormals,
     );
   }
 
@@ -468,6 +481,7 @@ async function classifyCandidateWithLlm(
   candidate: GmailFinanceCandidateInput,
   warnings: string[],
   metrics: ClassifierMetrics,
+  internalVendorNormals?: Set<string>,
 ): Promise<GmailFinanceClassification | null> {
   const openaiKey = Deno.env.get("OPENAI_API_KEY");
   if (!openaiKey) {
@@ -535,7 +549,9 @@ async function classifyCandidateWithLlm(
         parsed = parseLlmJson<RawLlmClassification>(rawContent);
       } catch (error) {
         metrics.parseFailures++;
-        warnings.push(`gmail_finance_classifier_parse_failed:${String((error as Error)?.message || error).slice(0, 120)}`);
+        warnings.push(
+          `gmail_finance_classifier_parse_failed:${String((error as Error)?.message || error).slice(0, 120)}`,
+        );
         return null;
       }
 
@@ -556,6 +572,7 @@ async function classifyCandidateWithLlm(
           parse_mode: parsed.parseMode,
           signals: Array.isArray(parsed.value.signals) ? parsed.value.signals : [],
         },
+        internalVendorNormals,
       );
     } catch (error) {
       const detail = String((error as Error)?.message || error).slice(0, 120);
@@ -593,11 +610,12 @@ export async function classifyCandidate(
   candidate: GmailFinanceCandidateInput,
   warnings: string[],
   metrics: ClassifierMetrics = createClassifierMetrics(),
+  internalVendorNormals?: Set<string>,
 ): Promise<GmailFinanceClassification> {
-  const fastPath = classifyCandidateByRules(candidate);
+  const fastPath = classifyCandidateByRules(candidate, internalVendorNormals);
   if (fastPath) return fastPath;
 
-  const llmResult = await classifyCandidateWithLlm(candidate, warnings, metrics);
+  const llmResult = await classifyCandidateWithLlm(candidate, warnings, metrics, internalVendorNormals);
   if (llmResult) return llmResult;
   metrics.fallbackReviews++;
 
@@ -612,5 +630,6 @@ export async function classifyCandidate(
       matched_class_hints: candidate.matchedClassHints,
       matched_profiles: candidate.matchedProfileSlugs,
     },
+    internalVendorNormals,
   );
 }
