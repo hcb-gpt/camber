@@ -1,7 +1,0 @@
-{
-  "http_status": 403,
-  "response": {
-    "ok": false,
-    "error": "source_not_allowed"
-  }
-}
