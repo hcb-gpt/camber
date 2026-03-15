@@ -763,13 +763,13 @@ struct TruthGraphHydration: Decodable, Hashable {
     }
 
     init(
-        callsRaw: Bool,
-        interactions: Bool,
-        conversationSpans: Bool,
-        evidenceEvents: Bool,
-        spanAttributions: Bool,
-        journalClaims: Bool,
-        reviewQueue: Bool
+        callsRaw: Bool = false,
+        interactions: Bool = false,
+        conversationSpans: Bool = false,
+        evidenceEvents: Bool = false,
+        spanAttributions: Bool = false,
+        journalClaims: Bool = false,
+        reviewQueue: Bool = false
     ) {
         self.callsRaw = callsRaw
         self.interactions = interactions
@@ -780,15 +780,7 @@ struct TruthGraphHydration: Decodable, Hashable {
         self.reviewQueue = reviewQueue
     }
 
-    static let empty = TruthGraphHydration(
-        callsRaw: false,
-        interactions: false,
-        conversationSpans: false,
-        evidenceEvents: false,
-        spanAttributions: false,
-        journalClaims: false,
-        reviewQueue: false
-    )
+    static let empty = TruthGraphHydration()
 
     init(from decoder: Decoder) throws {
         let container = try decoder.container(keyedBy: CodingKeys.self)
