@@ -60,3 +60,5 @@ DerivedData/
 *.ipa
 *.dSYM.zip
 *.dSYM
+artifacts/ios_simulator_smoke/20260302T211109Z/app.log
+artifacts/ios_simulator_smoke/20260302T205003Z/app.log
