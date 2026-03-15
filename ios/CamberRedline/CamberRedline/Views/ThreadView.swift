@@ -94,6 +94,7 @@ struct ThreadView: View {
     var viewModel: ThreadViewModel
     let contact: Contact
     let orderedContacts: [Contact]
+    @AppStorage("internal_truth_graph_status_card_enabled") private var isTruthGraphStatusCardEnabled = true
     @State private var hasScrolledToLatest = false
     @State private var didTriggerTopPagination = false
     @State private var hasUserScrolledThread = false
@@ -103,8 +104,7 @@ struct ThreadView: View {
     @State private var activeNoteContext: ThreadNoteContext?
     @State private var noteDraft = ""
     @State private var isContactInfoPresented = false
-    @AppStorage(RedlineInternalSettings.Keys.truthGraphStatusCardEnabled)
-    private var truthGraphStatusCardEnabled = false
+    @State private var isRunningTruthGraphRepair = false
     private let bottomAnchorID = "thread-bottom-anchor"
     private let topLoadThreshold: CGFloat = -80
     private static let smsStripeColors: [Color] = [
@@ -274,24 +274,14 @@ struct ThreadView: View {
 
                     let missingCount = missingAttributions(in: groups)
                     if missingCount > 0 {
-                        if truthGraphStatusCardEnabled, let interactionId = truthGraphInteractionId(in: groups) {
-                            TruthGraphStatusCard(missingCount: missingCount, interactionId: interactionId)
+                        if isTruthGraphStatusCardEnabled {
+                            truthGraphStatusCard(missingCount: missingCount)
                                 .padding(.horizontal, 16)
                                 .padding(.bottom, 10)
                         } else {
-                            HStack(spacing: 8) {
-                                Image(systemName: "exclamationmark.triangle.fill")
-                                Text("\(missingCount) attribution\(missingCount == 1 ? "" : "s") still missing in this thread")
-                                    .font(.caption)
-                                    .fontWeight(.semibold)
-                                Spacer()
-                            }
-                            .foregroundStyle(Color(red: 0.95, green: 0.62, blue: 0.23))
-                            .padding(.horizontal, 12)
-                            .padding(.vertical, 8)
-                            .background(Color(red: 0.20, green: 0.12, blue: 0.05), in: RoundedRectangle(cornerRadius: 10))
-                            .padding(.horizontal, 16)
-                            .padding(.bottom, 10)
+                            legacyMissingAttributionBanner(missingCount: missingCount)
+                                .padding(.horizontal, 16)
+                                .padding(.bottom, 10)
                         }
                     }
 
@@ -552,19 +542,6 @@ struct ThreadView: View {
 
     // MARK: - Date separator logic
 
-    private func truthGraphInteractionId(in groups: [DisplayGroup]) -> String? {
-        let callGroups = groups.compactMap { group -> CallHeaderEntry? in
-            guard case .callGroup(let header, _) = group else { return nil }
-            return header
-        }
-
-        if let pending = callGroups.first(where: { $0.pendingAttributionCount > 0 }) {
-            return pending.interactionId
-        }
-
-        return callGroups.first?.interactionId
-    }
-
     private func missingAttributions(in groups: [DisplayGroup]) -> Int {
         groups.reduce(0) { partial, group in
             switch group {
@@ -592,6 +569,111 @@ struct ThreadView: View {
                 return partial + max(0, pendingQueueIds.count - optimisticResolvedQueueIds.count)
             case .voicemail, .aiSummary:
                 return partial
+            }
+        }
+    }
+
+    @ViewBuilder
+    private func legacyMissingAttributionBanner(missingCount: Int) -> some View {
+        HStack(spacing: 8) {
+            Image(systemName: "exclamationmark.triangle.fill")
+            Text("\(missingCount) attribution\(missingCount == 1 ? "" : "s") still missing in this thread")
+                .font(.caption)
+                .fontWeight(.semibold)
+            Spacer()
+        }
+        .foregroundStyle(Color(red: 0.95, green: 0.62, blue: 0.23))
+        .padding(.horizontal, 12)
+        .padding(.vertical, 8)
+        .background(Color(red: 0.20, green: 0.12, blue: 0.05), in: RoundedRectangle(cornerRadius: 10))
+    }
+
+    @ViewBuilder
+    private func truthGraphStatusCard(missingCount: Int) -> some View {
+        VStack(alignment: .leading, spacing: 10) {
+            HStack(spacing: 8) {
+                Image(systemName: "point.3.connected.trianglepath.dotted")
+                    .font(.subheadline)
+                    .foregroundStyle(Color(red: 0.95, green: 0.62, blue: 0.23))
+                Text("Truth Graph status")
+                    .font(.caption)
+                    .fontWeight(.semibold)
+                    .foregroundStyle(.white)
+                Text("INTERNAL")
+                    .font(.caption2)
+                    .fontWeight(.bold)
+                    .foregroundStyle(Color.black.opacity(0.85))
+                    .padding(.horizontal, 6)
+                    .padding(.vertical, 2)
+                    .background(Color(red: 0.95, green: 0.62, blue: 0.23), in: Capsule())
+                Spacer()
+                if isRunningTruthGraphRepair {
+                    ProgressView()
+                        .tint(Color(red: 0.95, green: 0.62, blue: 0.23))
+                        .scaleEffect(0.8)
+                }
+            }
+
+            Text("\(missingCount) attribution\(missingCount == 1 ? "" : "s") still missing. Evidence is visible and repairable from this thread.")
+                .font(.caption)
+                .foregroundStyle(Color(.systemGray2))
+
+            Text("Repair routes: refresh thread state, refresh project candidates, then resolve missing items in call cards below.")
+                .font(.caption2)
+                .foregroundStyle(Color(.systemGray3))
+
+            HStack(spacing: 8) {
+                Button {
+                    runTruthGraphRepair(refreshProjects: false)
+                } label: {
+                    Label("Refresh Thread", systemImage: "arrow.clockwise")
+                        .font(.caption2)
+                        .fontWeight(.semibold)
+                }
+                .buttonStyle(.borderedProminent)
+                .tint(Color(red: 0.95, green: 0.62, blue: 0.23))
+                .disabled(isRunningTruthGraphRepair)
+
+                Button {
+                    runTruthGraphRepair(refreshProjects: true)
+                } label: {
+                    Label("Refresh + Projects", systemImage: "wand.and.stars")
+                        .font(.caption2)
+                        .fontWeight(.semibold)
+                }
+                .buttonStyle(.bordered)
+                .tint(Color(red: 0.95, green: 0.62, blue: 0.23))
+                .disabled(isRunningTruthGraphRepair)
+            }
+        }
+        .padding(12)
+        .background(
+            LinearGradient(
+                colors: [
+                    Color(red: 0.14, green: 0.10, blue: 0.06),
+                    Color(red: 0.09, green: 0.08, blue: 0.12),
+                ],
+                startPoint: .topLeading,
+                endPoint: .bottomTrailing
+            ),
+            in: RoundedRectangle(cornerRadius: 12)
+        )
+        .overlay(
+            RoundedRectangle(cornerRadius: 12)
+                .stroke(Color(red: 0.95, green: 0.62, blue: 0.23).opacity(0.35), lineWidth: 1)
+        )
+    }
+
+    private func runTruthGraphRepair(refreshProjects: Bool) {
+        guard !isRunningTruthGraphRepair else { return }
+        isRunningTruthGraphRepair = true
+        Task {
+            await viewModel.loadThread(contactId: contact.contactId)
+            if refreshProjects {
+                await viewModel.loadReviewProjectsIfNeeded()
+            }
+            await MainActor.run {
+                isRunningTruthGraphRepair = false
             }
         }
     }
@@ -832,33 +914,19 @@ private struct ContactHeader: View {
     }
 }
 
-private enum SpanOverlayAction {
-    case confirm
-    case reject
-    case correct
-    case comment
-}
-
-private struct SpanOverlay: View {
-    let targetType: String
-    let targetId: String
-    let onAction: (SpanOverlayAction) -> Void
+private struct NoteIconButton: View {
+    let label: String
+    let action: () -> Void
 
     var body: some View {
-        HStack(spacing: 10) {
-            Button("Confirm") { onAction(.confirm) }
-            Button("Reject") { onAction(.reject) }
-            Button("Correct") { onAction(.correct) }
-            Button("Comment") { onAction(.comment) }
-            Spacer()
-            Text("\(targetType):\(targetId.prefix(6))")
-                .font(.caption2)
-                .foregroundStyle(Color(.systemGray3))
+        Button(action: action) {
+            Image(systemName: "square.and.pencil")
+                .font(.caption)
+                .foregroundStyle(Color(.systemGray2))
+                .frame(width: 30, height: 30)
         }
-        .font(.caption2)
-        .foregroundStyle(Color(.systemGray2))
         .buttonStyle(.plain)
-        .padding(.top, 6)
+        .accessibilityLabel(Text(label))
     }
 }
 
@@ -1296,10 +1364,6 @@ private struct SpanBlock: View {
         return Self.spanColors[colorIndex % Self.spanColors.count]
     }
 
-    private var unknownAssignment: SMSProjectAssignment {
-        SMSProjectAssignment(projectId: nil, name: "Unknown Project", colorIndex: nil)
-    }
-
     private var parsedTurns: [SpeakerTurn] {
         guard let segment = span.transcriptSegment, !segment.isEmpty else { return [] }
         return TranscriptParser.parse(segment, contactName: contactName)
@@ -1317,6 +1381,11 @@ private struct SpanBlock: View {
                         .font(.caption)
                         .fontWeight(.semibold)
                         .foregroundStyle(color)
+                } else if span.needsAttribution && selectedAssignment == nil {
+                    Text("Unassigned")
+                        .font(.caption)
+                        .fontWeight(.semibold)
+                        .foregroundStyle(Color(red: 0.95, green: 0.62, blue: 0.23))
                 }
                 Spacer()
 
@@ -1339,6 +1408,13 @@ private struct SpanBlock: View {
                         .clipShape(Capsule())
                     }
                     .buttonStyle(.plain)
+                }
+
+                NoteIconButton(label: "Add note") {
+                    onAddNote(
+                        "Notes — Conversation segment",
+                        [ThreadNoteTarget(type: .span, id: span.spanId.uuidString)]
+                    )
                 }
 
                 Image(systemName: isExpanded ? "chevron.up" : "chevron.down")
@@ -1400,26 +1476,6 @@ private struct SpanBlock: View {
                         }
                     }
             }
-
-            SpanOverlay(
-                targetType: "span",
-                targetId: span.spanId.uuidString,
-                onAction: { action in
-                    switch action {
-                    case .confirm:
-                        onSelectProject(currentProject.projectId == nil ? unknownAssignment : currentProject)
-                    case .reject:
-                        onSelectProject(unknownAssignment)
-                    case .correct:
-                        showProjectSheet = true
-                    case .comment:
-                        onAddNote(
-                            "Notes — Conversation segment",
-                            [ThreadNoteTarget(type: .span, id: span.spanId.uuidString)]
-                        )
-                    }
-                }
-            )
         }
         .padding(10)
         .background(color.opacity(currentProject.colorIndex == nil ? 0.16 : 0.10))
@@ -1464,10 +1520,6 @@ private struct SMSStripeGroup: View {
 
     @State private var showProjectSheet = false
 
-    private var unknownAssignment: SMSProjectAssignment {
-        SMSProjectAssignment(projectId: nil, name: "Unknown Project", colorIndex: nil)
-    }
-
     private var stripeShape: RoundedRectangle {
         RoundedRectangle(cornerRadius: 12, style: .continuous)
     }
@@ -1481,27 +1533,32 @@ private struct SMSStripeGroup: View {
 
             VStack(alignment: .leading, spacing: 0) {
                 if let stripeLabel {
-                    if unresolvedCount == 0 {
-                        Button {
-                            onOpenPicker()
-                            showProjectSheet = true
-                        } label: {
+                    HStack(spacing: 8) {
+                        if unresolvedCount == 0 {
+                            Button {
+                                onOpenPicker()
+                                showProjectSheet = true
+                            } label: {
+                                Text(stripeLabel)
+                                    .font(.caption2)
+                                    .foregroundStyle(Color(.systemGray2))
+                            }
+                            .buttonStyle(.plain)
+                        } else {
                             Text(stripeLabel)
                                 .font(.caption2)
                                 .foregroundStyle(Color(.systemGray2))
                         }
-                        .buttonStyle(.plain)
-                        .padding(.horizontal, 10)
-                        .padding(.top, 6)
-                        .padding(.bottom, 4)
-                    } else {
-                        Text(stripeLabel)
-                            .font(.caption2)
-                            .foregroundStyle(Color(.systemGray2))
-                            .padding(.horizontal, 10)
-                            .padding(.top, 6)
-                            .padding(.bottom, 4)
+
+                        Spacer()
+
+                        NoteIconButton(label: "Add note") {
+                            onAddNote()
+                        }
                     }
+                    .padding(.horizontal, 10)
+                    .padding(.top, 6)
+                    .padding(.bottom, 4)
                 }
 
                 if unresolvedCount > 0 {
@@ -1513,6 +1570,10 @@ private struct SMSStripeGroup: View {
                             .fontWeight(.semibold)
 
                         Spacer()
+
+                        NoteIconButton(label: "Add note") {
+                            onAddNote()
+                        }
 
                         Button {
                             onOpenPicker()
@@ -1541,32 +1602,6 @@ private struct SMSStripeGroup: View {
                 ForEach(Array(entries.enumerated()), id: \.element.id) { idx, entry in
                     MessageBubble(entry: entry, showTimestamp: true)
                         .padding(.bottom, bubbleSpacing(at: idx))
-                }
-
-                if let first = entries.first {
-                    SpanOverlay(
-                        targetType: "sms",
-                        targetId: first.messageId,
-                        onAction: { action in
-                            switch action {
-                            case .confirm:
-                                if let assignment {
-                                    onAssignProject(assignment)
-                                } else {
-                                    showProjectSheet = true
-                                }
-                            case .reject:
-                                onAssignProject(unknownAssignment)
-                            case .correct:
-                                onOpenPicker()
-                                showProjectSheet = true
-                            case .comment:
-                                onAddNote()
-                            }
-                        }
-                    )
-                    .padding(.horizontal, 10)
-                    .padding(.bottom, 6)
                 }
             }
         }

@@ -1,11 +1,13 @@
 /**
- * zapier-call-ingest Edge Function v1.8.0
+ * zapier-call-ingest Edge Function v1.8.1
  *
  * Auth model (consolidated):
  * - Canonical: X-Edge-Secret === EDGE_SHARED_SECRET
  * - Transitional legacy fallback: X-Secret === ZAPIER_INGEST_SECRET|ZAPIER_SECRET
  *
  * Forward: Calls process-call internally using SUPABASE_SERVICE_ROLE_KEY + X-Edge-Secret.
+ *
+ * v1.8.1: Remove Beside auth bypass (Beside payloads must authenticate).
  *
  * v1.8.0: Beside passthrough now forwards to process-call after upsert for full
  * pipeline normalization (interactions row, contact link, AI attribution).
@@ -14,13 +16,22 @@
  * v1.7.1: Fix beside auth bypass — move body parse + beside detection BEFORE auth gate.
  * v1.7.0: Recovered BESIDE_RAW_PASSTHROUGH from lost v1.6.0 deploy (Charter §10).
  *
- * @version 1.8.0
+ * @version 1.8.1
  * @date 2026-02-28
  */
 import "jsr:@supabase/functions-js/edge-runtime.d.ts";
 import { createClient } from "jsr:@supabase/supabase-js@2";
 
-const VERSION = "v1.8.0";
+const VERSION = "v1.8.1";
+
+function constantTimeEqual(a: string, b: string): boolean {
+  if (a.length !== b.length) return false;
+  let result = 0;
+  for (let i = 0; i < a.length; i++) {
+    result |= a.charCodeAt(i) ^ b.charCodeAt(i);
+  }
+  return result === 0;
+}
 
 async function logDiagnostic(
   message: string,
@@ -132,11 +143,52 @@ Deno.serve(async (req: Request) => {
   };
   payload._zapier_ingest_meta = zapierMeta;
 
+  // ---- Auth materials (canonical + legacy) ----
+  const incomingXEdgeSecret = req.headers.get("X-Edge-Secret") || "";
+  const incomingXSecret = req.headers.get("X-Secret") || "";
+  const expectedEdgeSecret = Deno.env.get("EDGE_SHARED_SECRET") || "";
+  const expectedLegacySecret = Deno.env.get("ZAPIER_INGEST_SECRET") || Deno.env.get("ZAPIER_SECRET") || "";
+
+  if (!expectedEdgeSecret) {
+    await logDiagnostic("AUTH_CONFIG_MISSING", {
+      expected: { edge_shared_secret_set: false },
+    });
+    return new Response(
+      JSON.stringify({ error: "server_misconfigured", version: VERSION }),
+      { status: 500, headers: { "Content-Type": "application/json" } },
+    );
+  }
+
+  const canonicalValid = incomingXEdgeSecret.length > 0 && constantTimeEqual(incomingXEdgeSecret, expectedEdgeSecret);
+  const legacyValid = expectedLegacySecret.length > 0 &&
+    incomingXSecret.length > 0 &&
+    constantTimeEqual(incomingXSecret, expectedLegacySecret);
+
   // ---- BESIDE_RAW_PASSTHROUGH: detect Beside-format and insert directly ----
-  // Beside payloads bypass auth — they arrive from Zapier without edge secret
-  // headers. Detection is body-based (fromPhoneNumber/toPhoneNumber/noteUrl).
-  // v1.7.1: Moved BEFORE auth gate. v1.7.0 had it after auth (still 401'd).
+  // Beside payloads must authenticate (canonical X-Edge-Secret or legacy X-Secret).
+  // Detection is body-based (fromPhoneNumber/toPhoneNumber/noteUrl).
   if (isBesidePayload(payload)) {
+    if (!canonicalValid && !legacyValid) {
+      await logDiagnostic("BESIDE_AUTH_MISMATCH", {
+        incoming: {
+          x_edge_secret_len: incomingXEdgeSecret.length,
+          x_secret_len: incomingXSecret.length,
+        },
+        expected: {
+          edge_shared_secret_set: true,
+          zapier_legacy_secret_set: expectedLegacySecret.length > 0,
+        },
+      });
+
+      return new Response(
+        JSON.stringify({
+          error: "invalid_token",
+          version: VERSION,
+        }),
+        { status: 401, headers: { "Content-Type": "application/json" } },
+      );
+    }
+
     const supabaseUrl = Deno.env.get("SUPABASE_URL")!;
     const serviceRoleKey = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!;
     const sb = createClient(supabaseUrl, serviceRoleKey);
@@ -175,7 +227,7 @@ Deno.serve(async (req: Request) => {
     let forwardError: string | null = null;
     try {
       const pcUrl = `${supabaseUrl}/functions/v1/process-call`;
-      const edgeSecret = Deno.env.get("EDGE_SHARED_SECRET") || "";
+      const edgeSecret = expectedEdgeSecret;
       const pcResp = await fetch(pcUrl, {
         method: "POST",
         headers: {
@@ -217,26 +269,6 @@ Deno.serve(async (req: Request) => {
 
   // ---- Auth gate (canonical + transitional legacy fallback) ----
   // Non-beside payloads must authenticate to reach process-call.
-  const incomingXEdgeSecret = req.headers.get("X-Edge-Secret") || "";
-  const incomingXSecret = req.headers.get("X-Secret") || "";
-  const expectedEdgeSecret = Deno.env.get("EDGE_SHARED_SECRET") || "";
-  const expectedLegacySecret = Deno.env.get("ZAPIER_INGEST_SECRET") || Deno.env.get("ZAPIER_SECRET") || "";
-
-  if (!expectedEdgeSecret) {
-    await logDiagnostic("AUTH_CONFIG_MISSING", {
-      expected: { edge_shared_secret_set: false },
-    });
-    return new Response(
-      JSON.stringify({ error: "server_misconfigured", version: VERSION }),
-      { status: 500, headers: { "Content-Type": "application/json" } },
-    );
-  }
-
-  const canonicalValid = incomingXEdgeSecret.length > 0 && incomingXEdgeSecret === expectedEdgeSecret;
-  const legacyValid = expectedLegacySecret.length > 0 &&
-    incomingXSecret.length > 0 &&
-    incomingXSecret === expectedLegacySecret;
-
   if (!canonicalValid && !legacyValid) {
     await logDiagnostic("AUTH_MISMATCH", {
       incoming: {
