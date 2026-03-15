@@ -1,0 +1,13 @@
+2026-03-03 01:07:02.038 Df CamberRedline[1858:17eadbf] [CamberRedline:smoke] SMOKE_EVENT START
+2026-03-03 01:07:03.050 Df CamberRedline[1858:17eadbf] [CamberRedline:smoke] SMOKE_EVENT OPEN_TRIAGE
+2026-03-03 01:07:07.052 Df CamberRedline[1858:17eadbf] [CamberRedline:smoke] SMOKE_EVENT TRIAGE_TARGET queue=0ffa6d6a-b5d8-4b80-aad4-5ae8df83075c interaction=cll_SYNTH_SYNTH_FLOATER_CONTIN_1772335448 event_at=2026-03-01T03:25:50Z
+2026-03-03 01:07:07.052 Df CamberRedline[1858:17eadbf] [CamberRedline:smoke] SMOKE_EVENT TRIAGE_RESOLVE queue=0ffa6d6a-b5d8-4b80-aad4-5ae8df83075c interaction=cll_SYNTH_SYNTH_FLOATER_CONTIN_1772335448 project=d8091a15-6a69-4634-8d5b-117abea35aa6
+2026-03-03 01:07:07.289 Df CamberRedline[1858:17eadbf] [CamberRedline:smoke] SMOKE_EVENT TRIAGE_WRITE_LOCKED banner=Attribution writes temporarily locked (needs privileged auth). Reads still available. (bootstrap-review_v1.3.2, request_id: 019cb24e-af7b-7e76-b8cd-f56c332f225e)
+2026-03-03 01:07:07.289 Df CamberRedline[1858:17eadbf] [CamberRedline:smoke] SMOKE_EVENT TRIAGE_DONE remaining=14
+2026-03-03 01:07:07.347 Df CamberRedline[1858:17eadbf] [CamberRedline:smoke] SMOKE_EVENT TRIAGE_PHASE_COMPLETE
+2026-03-03 01:07:07.347 Df CamberRedline[1858:17eadbf] [CamberRedline:smoke] SMOKE_EVENT TRIAGE_PROOF_HOLD seconds=6
+2026-03-03 01:07:14.156 Df CamberRedline[1858:17eadbf] [CamberRedline:smoke] SMOKE_EVENT OPEN_ASSISTANT
+2026-03-03 01:07:14.999 Df CamberRedline[1858:17eadbf] [CamberRedline:smoke] SMOKE_EVENT ASSISTANT_OPEN_CONTEXT_PACKET
+2026-03-03 01:07:14.999 Df CamberRedline[1858:17eadbf] [CamberRedline:smoke] SMOKE_EVENT ASSISTANT_CONTEXT_FETCH
+2026-03-03 01:07:18.856 Df CamberRedline[1858:17eadbf] [CamberRedline:smoke] SMOKE_EVENT ASSISTANT_CONTEXT request_id=019cb24e-d4ad-78ff-8186-520eb935e5d9 version=assistant-context_v1.0.0
+2026-03-03 01:07:18.938 Df CamberRedline[1858:17eadbf] [CamberRedline:smoke] SMOKE_EVENT ASSISTANT_CONTEXT request_id=019cb24e-ce7c-7dcf-90f9-49ece31ec095 version=assistant-context_v1.0.0

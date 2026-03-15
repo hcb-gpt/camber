@@ -1,0 +1,5 @@
+bundle_id=com.heartwoodcustombuilders.CamberRedline
+device_udid=F27127D7-C087-4351-AF3A-7A57D1E1635C
+out_dir=/Users/chadbarlow/gh/hcb-gpt/_worktrees/camber-ios-picker-first/artifacts/ios_simulator_smoke/20260303T055006Z_locked_focused
+launch_args=--smoke-drive
+edge_secret_present=0

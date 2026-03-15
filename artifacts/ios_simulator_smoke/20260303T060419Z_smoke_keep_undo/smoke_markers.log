@@ -1,0 +1,18 @@
+2026-03-03 01:05:14.942 Df CamberRedline[94343:17e6514] [CamberRedline:smoke] SMOKE_EVENT START
+2026-03-03 01:05:15.954 Df CamberRedline[94343:17e6514] [CamberRedline:smoke] SMOKE_EVENT OPEN_TRIAGE
+2026-03-03 01:05:18.898 Df CamberRedline[94343:17e6514] [CamberRedline:smoke] SMOKE_EVENT TRIAGE_TARGET queue=fda260ad-8c24-45aa-990c-8351c5ed8875 interaction=cll_SYNTH_SYNTH_NAME_COINCIDEN_1772335530 event_at=2026-03-01T03:25:56Z
+2026-03-03 01:05:18.898 Df CamberRedline[94343:17e6514] [CamberRedline:smoke] SMOKE_EVENT TRIAGE_RESOLVE queue=fda260ad-8c24-45aa-990c-8351c5ed8875 interaction=cll_SYNTH_SYNTH_NAME_COINCIDEN_1772335530 project=d8091a15-6a69-4634-8d5b-117abea35aa6
+2026-03-03 01:05:20.553 Df CamberRedline[94343:17e6514] [CamberRedline:smoke] SMOKE_EVENT TRIAGE_ACTION kind=resolve queue=fda260ad-8c24-45aa-990c-8351c5ed8875 interaction=cll_SYNTH_SYNTH_NAME_COINCIDEN_1772335530 request_id=019cb24d-08f0-78de-92a2-b137140b8b4d
+2026-03-03 01:05:20.553 Df CamberRedline[94343:17e6514] [CamberRedline:smoke] SMOKE_EVENT TRIAGE_UNDO_AVAILABLE queue=fda260ad-8c24-45aa-990c-8351c5ed8875
+2026-03-03 01:05:20.553 Df CamberRedline[94343:17e6514] [CamberRedline:smoke] SMOKE_EVENT TRIAGE_DONE remaining=14
+2026-03-03 01:05:20.566 Df CamberRedline[94343:17e6514] [CamberRedline:smoke] SMOKE_EVENT TRIAGE_PHASE_COMPLETE
+2026-03-03 01:05:20.566 Df CamberRedline[94343:17e6514] [CamberRedline:smoke] SMOKE_EVENT TRIAGE_PROOF_HOLD seconds=6
+2026-03-03 01:05:27.473 Df CamberRedline[94343:17e6514] [CamberRedline:smoke] SMOKE_EVENT OPEN_ASSISTANT
+2026-03-03 01:05:28.275 Df CamberRedline[94343:17e6514] [CamberRedline:smoke] SMOKE_EVENT ASSISTANT_OPEN_CONTEXT_PACKET
+2026-03-03 01:05:28.275 Df CamberRedline[94343:17e6514] [CamberRedline:smoke] SMOKE_EVENT ASSISTANT_CONTEXT_FETCH
+2026-03-03 01:05:34.507 Df CamberRedline[94343:17e6514] [CamberRedline:smoke] SMOKE_EVENT ASSISTANT_CONTEXT request_id=019cb24d-2e64-7171-b12c-b6c21dd7d862 version=assistant-context_v1.0.0
+2026-03-03 01:05:34.573 Df CamberRedline[94343:17e6514] [CamberRedline:smoke] SMOKE_EVENT ASSISTANT_CONTEXT request_id=019cb24d-2d91-7248-aaf0-c1fc32c4573c version=assistant-context_v1.0.0
+2026-03-03 01:05:39.609 Df CamberRedline[94343:17e6514] [CamberRedline:smoke] SMOKE_EVENT ASSISTANT_PROMPT prompt=Winship hardscape
+2026-03-03 01:05:43.643 Df CamberRedline[94343:17e6514] [CamberRedline:smoke] SMOKE_EVENT ASSISTANT_REQUEST_ID request_id=78b4ab73-d9e0-4f28-a9dd-103b744b8930 prompt=Winship hardscape
+2026-03-03 01:05:44.673 Df CamberRedline[94343:17e6514] [CamberRedline:smoke] SMOKE_EVENT ASSISTANT_PROMPT prompt=What projects do you have
+2026-03-03 01:05:45.305 Df CamberRedline[94343:17e6514] [CamberRedline:smoke] SMOKE_EVENT ASSISTANT_REQUEST_ID request_id=048d2ea8-4afd-4a21-ac09-f4bb1ca4ba86 prompt=What projects do you have

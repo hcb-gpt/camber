@@ -1,0 +1,11 @@
+bundle_id=com.heartwoodcustombuilders.CamberRedline
+device_udid=F27127D7-C087-4351-AF3A-7A57D1E1635C
+out_dir=/Users/chadbarlow/gh/hcb-gpt/_worktrees/camber-ios-picker-first/artifacts/ios_simulator_smoke/20260303T055327Z
+screens=/Users/chadbarlow/gh/hcb-gpt/_worktrees/camber-ios-picker-first/artifacts/ios_simulator_smoke/20260303T055327Z/screens
+video=/Users/chadbarlow/gh/hcb-gpt/_worktrees/camber-ios-picker-first/artifacts/ios_simulator_smoke/20260303T055327Z/session.mp4
+build_log=/Users/chadbarlow/gh/hcb-gpt/_worktrees/camber-ios-picker-first/artifacts/ios_simulator_smoke/20260303T055327Z/build.log
+app_log=/Users/chadbarlow/gh/hcb-gpt/_worktrees/camber-ios-picker-first/artifacts/ios_simulator_smoke/20260303T055327Z/app.log
+smoke_markers=/Users/chadbarlow/gh/hcb-gpt/_worktrees/camber-ios-picker-first/artifacts/ios_simulator_smoke/20260303T055327Z/smoke_markers.log
+synthetic_ids=
+launch_args=--smoke-drive
+edge_secret_present=1

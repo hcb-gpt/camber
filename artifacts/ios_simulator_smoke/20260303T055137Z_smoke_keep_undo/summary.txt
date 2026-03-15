@@ -1,0 +1,11 @@
+bundle_id=com.heartwoodcustombuilders.CamberRedline
+device_udid=F27127D7-C087-4351-AF3A-7A57D1E1635C
+out_dir=/Users/chadbarlow/gh/hcb-gpt/_worktrees/camber-ios-picker-first/artifacts/ios_simulator_smoke/20260303T055137Z_smoke_keep_undo
+screens=/Users/chadbarlow/gh/hcb-gpt/_worktrees/camber-ios-picker-first/artifacts/ios_simulator_smoke/20260303T055137Z_smoke_keep_undo/screens
+video=/Users/chadbarlow/gh/hcb-gpt/_worktrees/camber-ios-picker-first/artifacts/ios_simulator_smoke/20260303T055137Z_smoke_keep_undo/session.mp4
+build_log=/Users/chadbarlow/gh/hcb-gpt/_worktrees/camber-ios-picker-first/artifacts/ios_simulator_smoke/20260303T055137Z_smoke_keep_undo/build.log
+app_log=/Users/chadbarlow/gh/hcb-gpt/_worktrees/camber-ios-picker-first/artifacts/ios_simulator_smoke/20260303T055137Z_smoke_keep_undo/app.log
+smoke_markers=/Users/chadbarlow/gh/hcb-gpt/_worktrees/camber-ios-picker-first/artifacts/ios_simulator_smoke/20260303T055137Z_smoke_keep_undo/smoke_markers.log
+synthetic_ids=
+launch_args=--smoke-drive --smoke-triage-keep-undo
+edge_secret_present=1
