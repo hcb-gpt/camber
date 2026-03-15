@@ -1,10 +1,14 @@
 /**
- * journal-extract Edge Function v1.3.2
+ * journal-extract Edge Function v1.3.3
  * Extracts structured epistemic claims from attributed conversation spans
  *
- * @version 1.3.2
- * @date 2026-02-14
+ * @version 1.3.3
+ * @date 2026-03-15
  * @purpose D1 deliverable - journal claim extraction from spans
+ *
+ * v1.3.3 changes (DEV-4):
+ *   - Normalize loop_type keys (hyphens/spaces → underscores) in open-loop dedup
+ *     to prevent false-positive duplicate inserts from formatting variance.
  *
  * v1.3.2 changes (DEV-3):
  *   - Dedup open-loop inserts by (call_id, project_id, loop_type, description, status=open)
@@ -1000,13 +1004,14 @@ Deno.serve(async (req: Request) => {
           if (existingLoopsErr) {
             console.warn("[journal-extract] journal_open_loops dedup lookup failed:", existingLoopsErr.message);
           } else if (existingLoops && existingLoops.length > 0) {
+            const normalizeKey = (lt: string) => lt.trim().toLowerCase().replaceAll("-", "_").replaceAll(" ", "_");
             const existingKeys = new Set(
               existingLoops.map((row: any) =>
-                `${String(row.loop_type || "").trim().toLowerCase()}|${String(row.description || "").trim()}`
+                `${normalizeKey(String(row.loop_type || ""))}|${String(row.description || "").trim()}`
               ),
             );
             loopRows = loopRowsRaw.filter((row) =>
-              !existingKeys.has(`${row.loop_type.trim().toLowerCase()}|${row.description.trim()}`)
+              !existingKeys.has(`${normalizeKey(row.loop_type)}|${row.description.trim()}`)
             );
           }
 
