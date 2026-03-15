@@ -1,3 +1,5 @@
+import { authorizeEdgeSecretRequest } from "../_shared/edge_secret_contract.ts";
+
 export type TopLevelGateResult =
   | { ok: true; status: 200; auth: "edge_secret" | "bearer" }
   | {
@@ -105,28 +107,27 @@ async function validateSupabaseAnonKeyViaRest(
 
 export function checkTopLevelEdgeSecret(
   req: Request,
-  expectedEdgeSecret = Deno.env.get("EDGE_SHARED_SECRET"),
+  // expectedEdgeSecret parameter kept for backwards compatibility but ignored
+  _expectedEdgeSecret?: string,
 ): TopLevelGateResult {
-  if (!expectedEdgeSecret) {
-    return {
-      ok: false,
-      status: 500,
-      error_code: "server_misconfigured",
-      error: "EDGE_SHARED_SECRET not set",
-    };
-  }
-
-  const providedSecret = req.headers.get("X-Edge-Secret");
-  if (!providedSecret) {
-    return {
-      ok: false,
-      status: 401,
-      error_code: "missing_auth",
-      error: "Valid X-Edge-Secret required",
-    };
-  }
-
-  if (!constantTimeEqual(providedSecret, expectedEdgeSecret)) {
+  const authResult = authorizeEdgeSecretRequest(req);
+  if (!authResult.ok) {
+    if (authResult.error_code === "edge_secret_missing" && authResult.status === 500) {
+      return {
+        ok: false,
+        status: 500,
+        error_code: "server_misconfigured",
+        error: "EDGE_SHARED_SECRET not set",
+      };
+    }
+    if (authResult.status === 401) {
+      return {
+        ok: false,
+        status: 401,
+        error_code: "missing_auth",
+        error: "Valid X-Edge-Secret required",
+      };
+    }
     return {
       ok: false,
       status: 403,
@@ -140,12 +141,12 @@ export function checkTopLevelEdgeSecret(
 
 export async function checkTopLevelEdgeSecretOrAnonKey(
   req: Request,
-  expectedEdgeSecret = Deno.env.get("EDGE_SHARED_SECRET"),
+  _expectedEdgeSecret?: string,
   expectedAnonKey = Deno.env.get("CANONICAL_SUPABASE_ANON_KEY") ?? Deno.env.get("SUPABASE_ANON_KEY"),
   supabaseUrl = Deno.env.get("SUPABASE_URL"),
 ): Promise<TopLevelGateResult> {
-  const providedSecret = req.headers.get("X-Edge-Secret");
-  if (expectedEdgeSecret && providedSecret && constantTimeEqual(providedSecret, expectedEdgeSecret)) {
+  const authResult = authorizeEdgeSecretRequest(req);
+  if (authResult.ok) {
     return { ok: true, status: 200, auth: "edge_secret" };
   }
 

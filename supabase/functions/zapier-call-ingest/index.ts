@@ -171,7 +171,7 @@ Deno.serve(async (req: Request) => {
 
   const authResult = authorizeEdgeSecretRequest(req);
   const canonicalValid = authResult.ok;
-  
+
   if (!authResult.ok && authResult.error_code === "edge_secret_missing" && authResult.status === 500) {
     await logDiagnostic("AUTH_CONFIG_MISSING", {
       expected: { edge_shared_secret_set: false },
