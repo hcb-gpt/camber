@@ -87,3 +87,96 @@ entrypoint = "./functions/redline-assistant/index.ts"
 enabled = true
 verify_jwt = true
 entrypoint = "./functions/assistant-feedback/index.ts"
+
+[functions.review-resolve]
+verify_jwt = true
+[functions.sync-google-contacts]
+verify_jwt = true
+[functions.test-tma-fetch]
+verify_jwt = true
+[functions.transcribe-audio]
+verify_jwt = true
+[functions.transcribe-whisper]
+verify_jwt = true
+[functions.transcribe-claude]
+verify_jwt = true
+[functions.transcribe-assemblyai]
+verify_jwt = true
+[functions.transcribe-deepgram]
+verify_jwt = true
+[functions.dlq-enqueue]
+verify_jwt = true
+[functions.eval-ai-router]
+verify_jwt = true
+[functions.journal-consolidate]
+verify_jwt = false
+[functions.morning-digest]
+verify_jwt = false
+[functions.loop-closure]
+verify_jwt = false
+[functions.review-triage]
+verify_jwt = false
+[functions.alias-review]
+verify_jwt = false
+[functions.alias-hygiene]
+verify_jwt = false
+[functions.alias-scout]
+verify_jwt = false
+[functions.chat-proxy]
+verify_jwt = false
+[functions.project-query]
+verify_jwt = true
+[functions.brief-serve]
+verify_jwt = false
+[functions.auto-review-resolver]
+verify_jwt = true
+[functions.sms-openphone-sync]
+verify_jwt = false
+[functions.zapier-sms-ingest]
+verify_jwt = false
+[functions.financial-receipt-ingest]
+verify_jwt = true
+[functions.audit-attribution]
+verify_jwt = false
+[functions.audit-attribution-reviewer]
+verify_jwt = false
+[functions.embed-facts]
+verify_jwt = false
+[functions.morning-manifest-ui]
+verify_jwt = true
+[functions.morning-manifest-site]
+verify_jwt = false
+[functions.operator-validation]
+verify_jwt = false
+[functions.audit-regress-runner]
+verify_jwt = false
+[functions.operator-validation-ui]
+verify_jwt = false
+[functions.review-swarm-runner]
+verify_jwt = false
+[functions.morning-manifest-d3]
+verify_jwt = false
+[functions.morning-brief]
+verify_jwt = false
+[functions.review-swarm-scheduler]
+verify_jwt = false
+[functions.reattribute-spans]
+verify_jwt = false
+[functions.sms-thread-assembler]
+verify_jwt = false
+[functions.training-data-export]
+verify_jwt = false
+[functions.assistant-context]
+verify_jwt = true
+[functions.report-data-issue]
+verify_jwt = false
+[functions.reconcile-missing-interactions]
+verify_jwt = false
+[functions.resolve-scheduler-time]
+verify_jwt = false
+[functions.triage-telemetry]
+verify_jwt = false
+[functions.receipts]
+verify_jwt = false
+[functions.secret-registry-sync]
+verify_jwt = false
