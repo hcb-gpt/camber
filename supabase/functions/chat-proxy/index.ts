@@ -49,6 +49,16 @@ Deno.serve(async (req) => {
     });
   }
 
+  const expectedSecret = Deno.env.get("EDGE_SECRET");
+  const providedSecret = req.headers.get("x-edge-secret");
+
+  if (!expectedSecret || providedSecret !== expectedSecret) {
+    return new Response(JSON.stringify({ error: "unauthorized_proxy_access" }), {
+      status: 401,
+      headers: { ...corsHeaders(origin || "*"), "Content-Type": "application/json" },
+    });
+  }
+
   if (req.method !== "POST") {
     return new Response(JSON.stringify({ error: "method_not_allowed" }), {
       status: 405,
