@@ -180,3 +180,7 @@ verify_jwt = false
 verify_jwt = false
 [functions.secret-registry-sync]
 verify_jwt = false
+[functions.gmail-fleet-proxy]
+verify_jwt = false
+[functions.gmail-financial-pipeline]
+verify_jwt = false
